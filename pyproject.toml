@@ -1,0 +1,11 @@
+[tool.ruff]
+target-version = "py312"
+# Lint the shipped component, the HA bridge and the devcontainer helper. The
+# tools/ scripts are ad-hoc capture/diagnostic helpers and references/ holds
+# read-only third-party clones; keep both out of the lint surface. force-exclude
+# makes pre-commit honour these even when it passes file paths explicitly.
+extend-exclude = ["tools", "references"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "SIM", "B", "RUF"]
