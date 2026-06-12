@@ -1,0 +1,118 @@
+# Single-brush example for the Oclean external component.
+#
+# Standalone: set your brush MAC (secrets.yaml) and flash. To embed in an
+# existing ESP32 node instead, copy the external_components, ble_client, oclean
+# and the entity platform blocks into that node's yaml (ble_client pulls in
+# esp32_ble_tracker). The default esp-idf max_connections is 3, so each extra
+# brush past that needs a max_connections bump.
+#
+# secrets.yaml (next to this file, gitignored) supplies wifi_ssid, wifi_password,
+# api_encryption_key, ota_password and brush_mac.
+
+esphome:
+  name: oclean-example
+  # Component requires ESPHome 2026.1.0 or newer (select current_option API).
+  min_version: 2026.1.0
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+# Encrypted API and password-protected OTA. Both keys stay in secrets.yaml; never
+# inline them in a committed file, and never ship a node with a blank ota:.
+api:
+  encryption:
+    key: !secret api_encryption_key
+  # The component fires an esphome.oclean_session event per brushing session.
+  homeassistant_services: true
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# Local time source: needed for the sync-clock button and the freshness/clock
+# entities. Home Assistant time is convenient; sntp also works.
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# Consuming the component as a package instead of a local clone:
+#   external_components:
+#     - source: github://dzikus/esphome-oclean@v1.0.0
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [oclean]
+
+ble_client:
+  - id: ble_brush
+    mac_address: !secret brush_mac
+
+# Connect-poll-disconnect hub. update_interval is the gap between poll cycles
+# (min 60s); the brush buffers sessions internally so a slow cadence is enough
+# and keeps battery drain low.
+oclean:
+  - id: brush_hub
+    ble_client_id: ble_brush
+    update_interval: 4h
+    time_id: ha_time
+
+sensor:
+  - platform: oclean
+    oclean_id: brush_hub
+    battery:
+      name: Battery
+    last_session_score:
+      name: Score
+    last_session_coverage:
+      name: Coverage
+
+binary_sensor:
+  - platform: oclean
+    oclean_id: brush_hub
+    charging:
+      name: Charging
+
+text_sensor:
+  - platform: oclean
+    oclean_id: brush_hub
+    last_session_time:
+      name: Last session
+    last_seen:
+      name: Last seen
+
+switch:
+  - platform: oclean
+    oclean_id: brush_hub
+    area_reminder:
+      name: Area reminder
+    over_pressure:
+      name: Over-pressure alert
+
+number:
+  - platform: oclean
+    oclean_id: brush_hub
+    head_max_days:
+      name: Head replacement days
+
+select:
+  - platform: oclean
+    oclean_id: brush_hub
+    brush_scheme:
+      name: Brushing mode
+
+button:
+  - platform: oclean
+    oclean_id: brush_hub
+    reset_head:
+      name: Reset brush head
+    sync_time:
+      name: Sync clock

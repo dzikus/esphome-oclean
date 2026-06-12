@@ -1,0 +1,13 @@
+{
+  "domain": "oclean_stats",
+  "name": "Oclean session long-term statistics bridge",
+  "version": "1.0.0",
+  "documentation": "https://github.com/dzikus/esphome-oclean",
+  "issue_tracker": "https://github.com/dzikus/esphome-oclean/issues",
+  "dependencies": ["recorder"],
+  "after_dependencies": ["esphome"],
+  "codeowners": ["@dzikus"],
+  "requirements": [],
+  "iot_class": "local_push",
+  "integration_type": "service"
+}

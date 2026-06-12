@@ -1,0 +1,96 @@
+esphome:
+  name: oclean-intellisense
+  min_version: 2026.1.0
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+# The component uses api (session-history event) and time (clock); both need a
+# network, so a dummy wifi is here purely to satisfy compile validation. Nothing
+# connects at build time. This compiles the real with-api, with-time code path.
+wifi:
+  ssid: "esphome-ci"
+  password: "esphome-ci-password"
+
+api:
+  # fire_homeassistant_event() (session-history events) needs this flag.
+  homeassistant_services: true
+
+time:
+  - platform: sntp
+    id: probe_time
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [oclean]
+
+esp32_ble_tracker:
+
+ble_client:
+  - id: ble_probe
+    mac_address: 00:00:00:00:00:00
+
+oclean:
+  - id: hub_probe
+    ble_client_id: ble_probe
+    time_id: probe_time
+    # Exercise the charging-aware adaptive-poll codegen (set_adaptive_poll /
+    # set_charging_interval / set_battery_interval).
+    update_interval: 3600s
+    charging_interval: 600s
+    # Force the dev-gated branches to compile too, for full TU coverage.
+    expose_dev_sensors: true
+
+sensor:
+  - platform: oclean
+    oclean_id: hub_probe
+    battery:
+      name: Battery
+    last_session_score:
+      name: Score
+
+binary_sensor:
+  - platform: oclean
+    oclean_id: hub_probe
+    charging:
+      name: Charging
+
+text_sensor:
+  - platform: oclean
+    oclean_id: hub_probe
+    model:
+      name: Model
+    hw_revision:
+      name: Hardware revision
+    sw_version:
+      name: Software version
+
+switch:
+  - platform: oclean
+    oclean_id: hub_probe
+    area_reminder:
+      name: Area reminder
+
+number:
+  - platform: oclean
+    oclean_id: hub_probe
+    head_max_days:
+      name: Head replacement days
+
+select:
+  - platform: oclean
+    oclean_id: hub_probe
+    brush_scheme:
+      name: Brushing mode
+
+button:
+  - platform: oclean
+    oclean_id: hub_probe
+    sync_time:
+      name: Sync clock
