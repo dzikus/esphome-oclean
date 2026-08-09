@@ -151,12 +151,11 @@ needs **ESPHome 2026.1.0 or newer**. Pin it with
 erroring deep in code generation.
 
 Replace the MAC with the brush's MAC (any BLE scanner shows it while the brush
-is awake). `v1.0.0` is the first release tag, cut by the release workflow when
-the repo is published; drop the pin to track main.
+is awake). Append `@<tag>` to the source to pin a release.
 
 ```yaml
 external_components:
-  - source: github://dzikus/esphome-oclean@v1.0.0
+  - source: github://dzikus/esphome-oclean
     components: [oclean]
 
 time:
@@ -406,10 +405,57 @@ sensor:
   - platform: oclean
     oclean_id: hub_b
     device_id: dev_brush_b
+
+binary_sensor:
+  - platform: oclean
+    oclean_id: hub_a
+    device_id: dev_brush_a
+  - platform: oclean
+    oclean_id: hub_b
+    device_id: dev_brush_b
+
+text_sensor:
+  - platform: oclean
+    oclean_id: hub_a
+    device_id: dev_brush_a
+  - platform: oclean
+    oclean_id: hub_b
+    device_id: dev_brush_b
+
+switch:
+  - platform: oclean
+    oclean_id: hub_a
+    device_id: dev_brush_a
+  - platform: oclean
+    oclean_id: hub_b
+    device_id: dev_brush_b
+
+number:
+  - platform: oclean
+    oclean_id: hub_a
+    device_id: dev_brush_a
+  - platform: oclean
+    oclean_id: hub_b
+    device_id: dev_brush_b
+
+select:
+  - platform: oclean
+    oclean_id: hub_a
+    device_id: dev_brush_a
+  - platform: oclean
+    oclean_id: hub_b
+    device_id: dev_brush_b
+
+button:
+  - platform: oclean
+    oclean_id: hub_a
+    device_id: dev_brush_a
+  - platform: oclean
+    oclean_id: hub_b
+    device_id: dev_brush_b
 ```
 
-Repeat the platform pair for binary_sensor, text_sensor, switch, number,
-select and button. Boot polls are staggered automatically.
+Boot polls are staggered automatically.
 
 `device_id` decides which HA device an entity belongs to, but it does not make
 the entity's **name** unique, and on some transports the name is the identity.

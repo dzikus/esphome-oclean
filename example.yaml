@@ -45,7 +45,7 @@ time:
 
 # Consuming the component as a package instead of a local clone:
 #   external_components:
-#     - source: github://dzikus/esphome-oclean@v1.0.0
+#     - source: github://dzikus/esphome-oclean
 external_components:
   - source:
       type: local
