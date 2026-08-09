@@ -1,13 +1,15 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import number
-from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG
+from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG, UNIT_SECOND
 
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_name_prefix,
+    UNIT_DAY,
+    apply_entity_prefix,
     hub_name_prefix,
+    inject_entity_defaults,
     oclean_ns,
 )
 
@@ -58,7 +60,7 @@ CUSTOM_PARAMS = [
             f"Custom step {i + 1} duration",
             1,
             i,
-            "s",
+            UNIT_SECOND,
             "mdi:timer-outline",
             5,
             120,
@@ -70,26 +72,13 @@ CUSTOM_PARAMS = [
 ]
 
 
+_DEFAULT_NAMES = [(CONF_HEAD_MAX_DAYS, DEFAULT_HEAD_MAX_DAYS_NAME)] + [
+    (key, name) for key, name, *_row in CUSTOM_PARAMS
+]
+
+
 def _inject_defaults(config):
-    # Copy before mutating: the validator may run against a shared dict.
-    config = dict(config)
-    platform_dev = config.get(CONF_DEVICE_ID)
-    keys = [(CONF_HEAD_MAX_DAYS, DEFAULT_HEAD_MAX_DAYS_NAME)]
-    keys += [(row[0], row[1]) for row in CUSTOM_PARAMS]
-    for key, default_name in keys:
-        sub = config.get(key)
-        if sub is None:
-            # Auto-create so the entities appear without listing them in the
-            # yaml.
-            sub = {}
-        elif isinstance(sub, dict):
-            sub = dict(sub)
-        if isinstance(sub, dict):
-            sub.setdefault("name", default_name)
-            if platform_dev is not None and CONF_DEVICE_ID not in sub:
-                sub[CONF_DEVICE_ID] = platform_dev
-        config[key] = sub
-    return config
+    return inject_entity_defaults(config, _DEFAULT_NAMES)
 
 
 def _custom_param_schema(unit, icon):
@@ -108,7 +97,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DEVICE_ID): cv.sub_device_id,
             cv.Optional(CONF_HEAD_MAX_DAYS): number.number_schema(
                 OcleanHeadDaysNumber,
-                unit_of_measurement="d",
+                unit_of_measurement=UNIT_DAY,
                 icon="mdi:toothbrush",
                 entity_category=ENTITY_CATEGORY_CONFIG,
             ).extend(
@@ -131,20 +120,14 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    platform_device_id = config.get(CONF_DEVICE_ID)
-
-    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
-
-    def _with_device(sub):
-        if platform_device_id is not None and CONF_DEVICE_ID not in sub:
-            return {**sub, CONF_DEVICE_ID: platform_device_id}
-        return sub
+    config = apply_entity_prefix(
+        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
+    )
 
     sub = config.get(CONF_HEAD_MAX_DAYS)
     if sub is not None:
-        sub = apply_name_prefix(sub, DEFAULT_HEAD_MAX_DAYS_NAME, prefix)
         num = await number.new_number(
-            _with_device(sub),
+            sub,
             min_value=HEAD_DAYS_MIN,
             max_value=HEAD_DAYS_MAX,
             step=HEAD_DAYS_STEP,
@@ -154,7 +137,7 @@ async def to_code(config):
 
     for (
         key,
-        default_name,
+        _default_name,
         kind,
         idx,
         _unit,
@@ -164,10 +147,10 @@ async def to_code(config):
         vstep,
         initial,
     ) in CUSTOM_PARAMS:
-        sub = apply_name_prefix(config[key], default_name, prefix)
-        num = await number.new_number(
-            _with_device(sub), min_value=vmin, max_value=vmax, step=vstep
-        )
+        sub = config.get(key)
+        if sub is None:
+            continue
+        num = await number.new_number(sub, min_value=vmin, max_value=vmax, step=vstep)
         await cg.register_component(num, sub)
         await cg.register_parented(num, hub)
         cg.add(num.set_param(kind, idx))
