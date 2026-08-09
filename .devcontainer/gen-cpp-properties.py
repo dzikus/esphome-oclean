@@ -6,8 +6,12 @@ no longer leaves it at the build root, and its entries point at the build-tree
 copies of the sources instead of the workspace files open in the editor. So:
 run pio compiledb, filter the component TUs, remap their paths back to the
 workspace, and point cpptools at the result.
+
+The component name and the build directory are discovered, so this file is the
+same in every one of the sibling component repos.
 """
 
+import glob
 import json
 import os
 import shlex
@@ -16,12 +20,35 @@ import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE = os.path.dirname(HERE)
-BUILD = os.path.join(WORKSPACE, ".esphome", "build", "oclean-intellisense")
-DB = os.path.join(BUILD, "compile_commands.json")
-DEFINES_H = os.path.join(BUILD, "src", "esphome", "core", "defines.h")
-BUILD_COMPONENT = os.path.join(BUILD, "src", "esphome", "components", "oclean")
-WS_COMPONENT = os.path.join(WORKSPACE, "components", "oclean")
 DEST_DIR = os.path.join(WORKSPACE, ".vscode")
+
+
+def _component():
+    root = os.path.join(WORKSPACE, "components")
+    names = [
+        d
+        for d in sorted(os.listdir(root))
+        if os.path.isdir(os.path.join(root, d)) and not d.startswith((".", "__"))
+    ]
+    return names[0] if names else ""
+
+
+def _build_dir():
+    builds = os.path.join(WORKSPACE, ".esphome", "build")
+    hits = sorted(glob.glob(os.path.join(builds, "*intellisense*")))
+    if hits:
+        return hits[0]
+    hits = [d for d in sorted(glob.glob(os.path.join(builds, "*"))) if os.path.isdir(d)]
+    return hits[0] if hits else os.path.join(builds, "intellisense")
+
+
+COMPONENT = _component()
+BUILD = _build_dir()
+DB = os.path.join(BUILD, "compile_commands.json")
+# esp-idf builds: cmake writes this one, pio compiledb does not.
+CMAKE_DB = os.path.join(BUILD, "build", "compile_commands.json")
+DEFINES_H = os.path.join(BUILD, "src", "esphome", "core", "defines.h")
+WS_COMPONENT = os.path.join(WORKSPACE, "components", COMPONENT)
 
 
 def _resolve_compiler(raw):
@@ -38,13 +65,17 @@ def _resolve_compiler(raw):
 
 
 def _component_entries(db):
+    marker = os.path.join("src", "esphome", "components", COMPONENT) + os.sep
     out = []
     for e in db:
         f = e.get("file", "")
         if not os.path.isabs(f):
             f = os.path.normpath(os.path.join(e.get("directory", ""), f))
-        if f.startswith(BUILD_COMPONENT + os.sep):
-            out.append({**e, "file": WS_COMPONENT + f[len(BUILD_COMPONENT) :]})
+        idx = f.find(marker)
+        if idx != -1:
+            out.append(
+                {**e, "file": os.path.join(WS_COMPONENT, f[idx + len(marker) :])}
+            )
         elif f.startswith(WS_COMPONENT + os.sep):
             out.append(e)
     return out
@@ -68,24 +99,49 @@ def _unity_src(tests_dir):
     return None
 
 
+def _test_std(tests_dir):
+    # Read it rather than repeat it: a second copy here would keep resolving
+    # symbols the real test build rejects. platformio.ini for the pio suites,
+    # the shell runner for the ones built straight with g++.
+    runners = sorted(
+        os.path.basename(p) for p in glob.glob(os.path.join(tests_dir, "*.sh"))
+    )
+    for name in ("platformio.ini", *runners):
+        try:
+            with open(os.path.join(tests_dir, name)) as fh:
+                for line in fh:
+                    for token in line.split():
+                        if token.strip("\\'\"").startswith("-std="):
+                            return token.strip("\\'\"")
+        except OSError:
+            continue
+    return "-std=gnu++17"
+
+
+def _test_sources(tests_dir):
+    found = sorted(glob.glob(os.path.join(tests_dir, "*.cpp")))
+    found += sorted(glob.glob(os.path.join(tests_dir, "*", "*.cpp")))
+    return found
+
+
 def _native_test_entries():
     tests_dir = os.path.join(WORKSPACE, "tests")
-    test_main = os.path.join(tests_dir, "test_protocol", "test_main.cpp")
-    if not os.path.exists(test_main):
+    sources = _test_sources(tests_dir)
+    if not sources:
         return []
-    args = [
-        shutil.which("g++") or "g++",
-        "-std=gnu++17",
-        "-I" + os.path.join(WORKSPACE, "components", "oclean"),
-    ]
+    args = [shutil.which("g++") or "g++", _test_std(tests_dir), "-I" + WS_COMPONENT]
     unity_src = _unity_src(tests_dir)
     if unity_src:
         args.append("-I" + unity_src)
-    args += ["-c", test_main]
-    return [{"directory": tests_dir, "file": test_main, "arguments": args}]
+    return [
+        {"directory": tests_dir, "file": src, "arguments": [*args, "-c", src]}
+        for src in sources
+    ]
 
 
-def main():
+def _find_db():
+    if os.path.exists(CMAKE_DB):
+        return CMAKE_DB
     subprocess.run(
         ["pio", "run", "-d", BUILD, "-t", "compiledb"],
         check=False,
@@ -93,14 +149,25 @@ def main():
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    if not os.path.exists(DB):
-        print(f"gen-cpp-properties: {DB} not found (pio compiledb failed?)")
+    if os.path.exists(DB):
+        return DB
+    return CMAKE_DB if os.path.exists(CMAKE_DB) else None
+
+
+def main():
+    if not COMPONENT:
+        print(f"gen-cpp-properties: no component under {WORKSPACE}/components")
         return 1
-    with open(DB) as fh:
+    db_path = _find_db()
+    if db_path is None:
+        print(f"gen-cpp-properties: no compile_commands.json at {CMAKE_DB} or {DB}")
+        print("gen-cpp-properties: run 'esphome compile .intellisense.yaml' first")
+        return 1
+    with open(db_path) as fh:
         db = json.load(fh)
     entries = _component_entries(db)
     if not entries:
-        print(f"gen-cpp-properties: no component TUs in {DB}")
+        print(f"gen-cpp-properties: no {COMPONENT} TUs in {db_path}")
         return 1
 
     cmd = entries[0].get("command", "")
@@ -119,7 +186,7 @@ def main():
         "compileCommands": os.path.join(DEST_DIR, "compile_commands.json"),
     }
     # force-include the esphome defines per component TU, not globally, so it
-    # never reaches the native test entry whose file has no esphome includes
+    # never reaches the native test entries whose files have no esphome includes
     if os.path.exists(DEFINES_H):
         for e in entries:
             if e.get("command"):
@@ -127,8 +194,8 @@ def main():
             elif e.get("arguments"):
                 e["arguments"] = [*e["arguments"], "-include", DEFINES_H]
 
-    # pio compiledb omits test TUs; synthesize one so cpptools resolves it with
-    # native flags per file instead of falling back to the ESP32 config
+    # pio compiledb omits test TUs; synthesize them so cpptools resolves each
+    # with native flags instead of falling back to the ESP32 config
     entries += _native_test_entries()
 
     os.makedirs(DEST_DIR, exist_ok=True)
