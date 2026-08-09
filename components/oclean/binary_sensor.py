@@ -3,7 +3,6 @@ import esphome.config_validation as cv
 from esphome.components import binary_sensor
 from esphome.const import (
     CONF_DEVICE_ID,
-    CONF_DISABLED_BY_DEFAULT,
     DEVICE_CLASS_BATTERY_CHARGING,
     DEVICE_CLASS_CONNECTIVITY,
     ENTITY_CATEGORY_DIAGNOSTIC,
@@ -13,9 +12,10 @@ from . import (
     CONF_OCLEAN_ID,
     HIDDEN_BINARY_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_name_prefix,
+    apply_entity_prefix,
     hub_expose_dev,
     hub_name_prefix,
+    inject_entity_defaults,
 )
 
 # Settings readbacks with no observable effect on the owned brushes: created
@@ -121,26 +121,13 @@ def _binary_sensor_schema(device_class, icon, entity_category):
     return binary_sensor.binary_sensor_schema(**kwargs)
 
 
+_DEFAULT_NAMES = [(key, name) for key, *_row, name in BINARY_SENSORS]
+
+
 def _inject_defaults(config):
-    # Copy before mutating: the validator may run against a shared dict.
-    config = dict(config)
-    platform_dev = config.get(CONF_DEVICE_ID)
-    for key, _setter, _dc, _icon, _ec, default_name in BINARY_SENSORS:
-        sub = config.get(key)
-        if sub is None:
-            sub = {}
-        elif isinstance(sub, dict):
-            sub = dict(sub)
-        if not isinstance(sub, dict):
-            config[key] = sub
-            continue
-        sub.setdefault("name", default_name)
-        if platform_dev is not None and CONF_DEVICE_ID not in sub:
-            sub[CONF_DEVICE_ID] = platform_dev
-        if key in HIDDEN_BINARY_SENSOR_KEYS:
-            sub.setdefault(CONF_DISABLED_BY_DEFAULT, True)
-        config[key] = sub
-    return config
+    return inject_entity_defaults(
+        config, _DEFAULT_NAMES, hidden=HIDDEN_BINARY_SENSOR_KEYS
+    )
 
 
 CONFIG_SCHEMA = cv.All(
@@ -159,14 +146,14 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    platform_device_id = config.get(CONF_DEVICE_ID)
+    config = apply_entity_prefix(
+        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
+    )
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
-    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
-    for key, setter, _dc, _icon, _ec, default_name in BINARY_SENSORS:
+    for key, setter, *_row in BINARY_SENSORS:
+        if key not in config:
+            continue
         if key in DEV_BINARY_SENSOR_KEYS and not expose_dev:
             continue
-        sub = apply_name_prefix(config[key], default_name, prefix)
-        if platform_device_id is not None and CONF_DEVICE_ID not in sub:
-            sub = {**sub, CONF_DEVICE_ID: platform_device_id}
-        bs = await binary_sensor.new_binary_sensor(sub)
+        bs = await binary_sensor.new_binary_sensor(config[key])
         cg.add(getattr(hub, setter)(bs))

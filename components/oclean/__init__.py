@@ -1,7 +1,14 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
 from esphome.components import ble_client, time
-from esphome.const import CONF_ID, CONF_NAME, CONF_TIME_ID
+from esphome.const import (
+    CONF_DEVICE_ID,
+    CONF_DISABLED_BY_DEFAULT,
+    CONF_ID,
+    CONF_NAME,
+    CONF_TIME_ID,
+)
 from esphome.core import CORE
 
 CODEOWNERS = ["@dzikus"]
@@ -38,6 +45,8 @@ CONF_CHARGING_INTERVAL = "charging_interval"
 CONF_HOLD_CONNECTION_WHILE_DOCKED = "hold_connection_while_docked"
 
 CONF_NAME_PREFIX = "name_prefix"
+
+UNIT_DAY = "d"
 
 MIN_UPDATE_INTERVAL_MS = 60000
 
@@ -110,8 +119,8 @@ def hub_expose_dev(hub_id):
 
 
 def hub_name_prefix(hub_id):
-    # An entity name is its identity on mqtt (state topic, discovery topic,
-    # unique_id) and hashes into the api key, neither of which carries a device.
+    # mqtt topics and unique_id are built from the name alone; the api key is a
+    # hash of it. No device in either.
     explicit = _hub_conf(hub_id).get(CONF_NAME_PREFIX)
     if explicit is not None:
         return explicit.strip()
@@ -132,11 +141,43 @@ def _prefix_from_hub_id(hub_id):
     return " ".join(w[:1].upper() + w[1:] for w in text.split())
 
 
-def apply_name_prefix(sub_config, default_name, prefix):
+def inject_entity_defaults(config, rows, hidden=frozenset(), opt_in=frozenset()):
+    # Copy before mutating: the validator may run against a shared dict.
+    config = dict(config)
+    platform_device = config.get(CONF_DEVICE_ID)
+    for key, default_name in rows:
+        want = config.get(key, ...)
+        if want is False or (want is ... and key in opt_in):
+            config.pop(key, None)
+            continue
+        # is, not ==: a stray 'battery: 1' equals True and must not read as one.
+        sub = {} if (want is ... or want is None or want is True) else want
+        if not isinstance(sub, dict):
+            raise cv.Invalid(
+                f"'{key}' takes true, false, or the options for one entity. "
+                f"To rename it write 'name: {sub}' under it.",
+                path=[key],
+            )
+        sub = dict(sub)
+        sub.setdefault(CONF_NAME, default_name)
+        if platform_device is not None and CONF_DEVICE_ID not in sub:
+            sub[CONF_DEVICE_ID] = platform_device
+        if key in hidden:
+            sub.setdefault(CONF_DISABLED_BY_DEFAULT, True)
+        config[key] = sub
+    return config
+
+
+def apply_entity_prefix(config, rows, prefix):
     # Matching the injected default is what proves the name was not hand-written.
-    if not prefix or sub_config.get(CONF_NAME) != default_name:
-        return sub_config
-    return {**sub_config, CONF_NAME: f"{prefix} {default_name}"}
+    if not prefix:
+        return config
+    config = dict(config)
+    for key, default_name in rows:
+        sub = config.get(key)
+        if isinstance(sub, dict) and sub.get(CONF_NAME) == default_name:
+            config[key] = {**sub, CONF_NAME: f"{prefix} {default_name}"}
+    return config
 
 
 def _validate_auto_sync_time(config):
@@ -206,6 +247,23 @@ CONFIG_SCHEMA = cv.All(
     _validate_adaptive_poll,
     cv.require_esphome_version(2026, 1, 0),
 )
+
+
+def _one_hub_per_ble_client(config):
+    claimed = {}
+    for hub in fv.full_config.get().get("oclean", []):
+        ble_id = str(hub[ble_client.CONF_BLE_CLIENT_ID])
+        hub_id = str(hub[CONF_ID])
+        if ble_id in claimed:
+            raise cv.Invalid(
+                f"oclean '{hub_id}' and '{claimed[ble_id]}' both use ble_client "
+                f"'{ble_id}'. Give each brush its own ble_client."
+            )
+        claimed[ble_id] = hub_id
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _one_hub_per_ble_client
 
 
 async def to_code(config):

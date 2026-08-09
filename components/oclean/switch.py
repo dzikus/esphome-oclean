@@ -9,9 +9,10 @@ from esphome.core import CORE
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_name_prefix,
+    apply_entity_prefix,
     hub_expose_dev,
     hub_name_prefix,
+    inject_entity_defaults,
     oclean_ns,
 )
 
@@ -36,7 +37,7 @@ def _record_explicit_dev(config):
         _EXPLICIT_DEV_SWITCHES.clear()
     hub_id = config.get(CONF_OCLEAN_ID)
     hub_key = str(hub_id) if hub_id is not None else "__default__"
-    present = {k for k in DEV_SWITCH_KEYS if config.get(k) is not None}
+    present = {k for k in DEV_SWITCH_KEYS if k in config}
     if present:
         _EXPLICIT_DEV_SWITCHES.setdefault(hub_key, set()).update(present)
 
@@ -55,6 +56,7 @@ OcleanBleSwitch = oclean_ns.class_(
 )
 
 CONF_BLUETOOTH = "bluetooth"
+DEFAULT_BLUETOOTH_NAME = "Bluetooth"
 
 # Hub setters that register a back-pointer so the settings readback can correct
 # each switch to the brush's real state.
@@ -122,37 +124,15 @@ SWITCHES = [
 ]
 
 
+_DEFAULT_NAMES = [
+    (key, name) for key, _b0, _b1, _icon, name, _label, _off in SWITCHES
+] + [(CONF_BLUETOOTH, DEFAULT_BLUETOOTH_NAME)]
+
+
 def _inject_defaults(config):
-    # Copy before mutating: the validator may run against a shared dict.
-    config = dict(config)
     # Note explicit dev switches before auto-create hides which were user-listed.
     _record_explicit_dev(config)
-    platform_dev = config.get(CONF_DEVICE_ID)
-    for key in [k for k, *_ in SWITCHES] + [CONF_BLUETOOTH]:
-        sub = config.get(key)
-        if sub is None:
-            # auto-create: entities appear without a yaml entry, dev-gated rows
-            # are still skipped at codegen
-            sub = {}
-        elif isinstance(sub, dict):
-            sub = dict(sub)
-        if not isinstance(sub, dict):
-            config[key] = sub
-            continue
-        sub.setdefault("name", _default_name_for(key))
-        if platform_dev is not None and CONF_DEVICE_ID not in sub:
-            sub[CONF_DEVICE_ID] = platform_dev
-        config[key] = sub
-    return config
-
-
-def _default_name_for(key):
-    if key == CONF_BLUETOOTH:
-        return "Bluetooth"
-    for k, _b0, _b1, _icon, default_name, _label, _off in SWITCHES:
-        if k == key:
-            return default_name
-    return key
+    return inject_entity_defaults(config, _DEFAULT_NAMES)
 
 
 CONFIG_SCHEMA = cv.All(
@@ -184,11 +164,14 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    platform_device_id = config.get(CONF_DEVICE_ID)
+    config = apply_entity_prefix(
+        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
+    )
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     explicit_dev = _EXPLICIT_DEV_SWITCHES.get(str(config[CONF_OCLEAN_ID]), set())
-    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
-    for key, b0, b1, _icon, default_name, label, off_value in SWITCHES:
+    for key, b0, b1, _icon, _default_name, label, off_value in SWITCHES:
+        if key not in config:
+            continue
         if key in DEV_SWITCH_KEYS and not expose_dev:
             # Only auto-created dev rows are dropped quietly; a user who listed
             # one explicitly gets told why it is missing.
@@ -200,10 +183,7 @@ async def to_code(config):
                     config[CONF_OCLEAN_ID],
                 )
             continue
-        sub = apply_name_prefix(config[key], default_name, prefix)
-        if platform_device_id is not None and CONF_DEVICE_ID not in sub:
-            sub = {**sub, CONF_DEVICE_ID: platform_device_id}
-        sw = await switch.new_switch(sub)
+        sw = await switch.new_switch(config[key])
         await cg.register_parented(sw, hub)
         cg.add(sw.set_opcode(b0, b1))
         cg.add(sw.set_label(label))
@@ -216,9 +196,6 @@ async def to_code(config):
 
     bt = config.get(CONF_BLUETOOTH)
     if bt is not None:
-        bt = apply_name_prefix(bt, _default_name_for(CONF_BLUETOOTH), prefix)
-        if platform_device_id is not None and CONF_DEVICE_ID not in bt:
-            bt = {**bt, CONF_DEVICE_ID: platform_device_id}
         sw = await switch.new_switch(bt)
         await cg.register_parented(sw, hub)
         # Component-derived: needs a setup() slot to apply the restored state.

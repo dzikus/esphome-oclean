@@ -6,8 +6,9 @@ from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_name_prefix,
+    apply_entity_prefix,
     hub_name_prefix,
+    inject_entity_defaults,
     oclean_ns,
 )
 
@@ -176,27 +177,14 @@ def _validate_unique_labels(modes):
     return modes
 
 
+_DEFAULT_NAMES = [
+    (CONF_BRUSH_SCHEME, DEFAULT_BRUSH_SCHEME_NAME),
+    (CONF_DEVICE_LANGUAGE, DEFAULT_DEVICE_LANGUAGE_NAME),
+]
+
+
 def _inject_defaults(config):
-    # Copy before mutating: the validator may run against a shared dict.
-    config = dict(config)
-    platform_dev = config.get(CONF_DEVICE_ID)
-    for key, default_name in (
-        (CONF_BRUSH_SCHEME, DEFAULT_BRUSH_SCHEME_NAME),
-        (CONF_DEVICE_LANGUAGE, DEFAULT_DEVICE_LANGUAGE_NAME),
-    ):
-        sub = config.get(key)
-        if sub is None:
-            # Auto-create so the entities appear without listing them in the
-            # yaml.
-            sub = {}
-        elif isinstance(sub, dict):
-            sub = dict(sub)
-        if isinstance(sub, dict):
-            sub.setdefault("name", default_name)
-            if platform_dev is not None and CONF_DEVICE_ID not in sub:
-                sub[CONF_DEVICE_ID] = platform_dev
-        config[key] = sub
-    return config
+    return inject_entity_defaults(config, _DEFAULT_NAMES)
 
 
 CONFIG_SCHEMA = cv.All(
@@ -229,45 +217,38 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    platform_device_id = config.get(CONF_DEVICE_ID)
-
-    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
-
-    def _with_device(sub):
-        if platform_device_id is not None and CONF_DEVICE_ID not in sub:
-            return {**sub, CONF_DEVICE_ID: platform_device_id}
-        return sub
-
-    sub = apply_name_prefix(
-        config[CONF_BRUSH_SCHEME], DEFAULT_BRUSH_SCHEME_NAME, prefix
+    config = apply_entity_prefix(
+        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
     )
-    # Named yaml modes get ids right after the runtime custom id, in list order.
-    modes = []
-    for i, mode in enumerate(sub.get(CONF_CUSTOM_MODES, [])):
-        steps = [(st[CONF_GEAR], st[CONF_DURATION]) for st in mode[CONF_PROGRAM]]
-        modes.append((CUSTOM_PNUM + 1 + i, _label(mode[CONF_NAME], steps), steps))
-    options = (
-        SCHEME_OPTIONS
-        + [label for _pnum, label, _steps in modes]
-        + [CUSTOM_OPTION_LABEL]
-    )
-    sel = await select.new_select(_with_device(sub), options=options)
-    await cg.register_parented(sel, hub)
-    cg.add(hub.set_scheme_select(sel))
-    for pnum in sorted(SCHEMES):
-        _name, steps = SCHEMES[pnum]
-        flat = [v for gear_dur in steps for v in gear_dur]
-        cg.add(sel.add_scheme(pnum, _scheme_label(pnum), flat))
-    for pnum, label, steps in modes:
-        flat = [v for gear_dur in steps for v in gear_dur]
-        cg.add(sel.add_scheme(pnum, label, flat))
-    cg.add(sel.set_custom_option(CUSTOM_PNUM, CUSTOM_OPTION_LABEL))
 
-    sub = apply_name_prefix(
-        config[CONF_DEVICE_LANGUAGE], DEFAULT_DEVICE_LANGUAGE_NAME, prefix
-    )
-    sel = await select.new_select(_with_device(sub), options=LANGUAGE_OPTIONS)
-    await cg.register_parented(sel, hub)
-    cg.add(hub.set_language_select(sel))
-    for lang_id in sorted(LANGUAGES):
-        cg.add(sel.add_language(lang_id, LANGUAGES[lang_id]))
+    sub = config.get(CONF_BRUSH_SCHEME)
+    if sub is not None:
+        # Named yaml modes get ids right after the runtime custom id, in list order.
+        modes = []
+        for i, mode in enumerate(sub.get(CONF_CUSTOM_MODES, [])):
+            steps = [(st[CONF_GEAR], st[CONF_DURATION]) for st in mode[CONF_PROGRAM]]
+            modes.append((CUSTOM_PNUM + 1 + i, _label(mode[CONF_NAME], steps), steps))
+        options = (
+            SCHEME_OPTIONS
+            + [label for _pnum, label, _steps in modes]
+            + [CUSTOM_OPTION_LABEL]
+        )
+        sel = await select.new_select(sub, options=options)
+        await cg.register_parented(sel, hub)
+        cg.add(hub.set_scheme_select(sel))
+        for pnum in sorted(SCHEMES):
+            _name, steps = SCHEMES[pnum]
+            flat = [v for gear_dur in steps for v in gear_dur]
+            cg.add(sel.add_scheme(pnum, _scheme_label(pnum), flat))
+        for pnum, label, steps in modes:
+            flat = [v for gear_dur in steps for v in gear_dur]
+            cg.add(sel.add_scheme(pnum, label, flat))
+        cg.add(sel.set_custom_option(CUSTOM_PNUM, CUSTOM_OPTION_LABEL))
+
+    sub = config.get(CONF_DEVICE_LANGUAGE)
+    if sub is not None:
+        sel = await select.new_select(sub, options=LANGUAGE_OPTIONS)
+        await cg.register_parented(sel, hub)
+        cg.add(hub.set_language_select(sel))
+        for lang_id in sorted(LANGUAGES):
+            cg.add(sel.add_language(lang_id, LANGUAGES[lang_id]))

@@ -3,7 +3,6 @@ import esphome.config_validation as cv
 from esphome.components import text_sensor
 from esphome.const import (
     CONF_DEVICE_ID,
-    CONF_DISABLED_BY_DEFAULT,
     DEVICE_CLASS_TIMESTAMP,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
@@ -11,8 +10,9 @@ from esphome.const import (
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_name_prefix,
+    apply_entity_prefix,
     hub_name_prefix,
+    inject_entity_defaults,
 )
 
 # Static device identity values and the poll freshness stamp: things a user
@@ -114,28 +114,13 @@ TEXT_SENSORS = [
 ]
 
 
+_DEFAULT_NAMES = [(key, name) for key, _s, _icon, _ec, name, _dc in TEXT_SENSORS]
+
+
 def _inject_defaults(config):
-    # Copy before mutating: the validator may run against a shared dict.
-    config = dict(config)
-    platform_dev = config.get(CONF_DEVICE_ID)
-    for key, _setter, _icon, _ec, default_name, _dc in TEXT_SENSORS:
-        sub = config.get(key)
-        if sub is None:
-            # Auto-create every row so the entities appear without listing
-            # them in the yaml, same as the sensor and binary_sensor platforms.
-            sub = {}
-        elif isinstance(sub, dict):
-            sub = dict(sub)
-        if not isinstance(sub, dict):
-            config[key] = sub
-            continue
-        sub.setdefault("name", default_name)
-        if platform_dev is not None and CONF_DEVICE_ID not in sub:
-            sub[CONF_DEVICE_ID] = platform_dev
-        if key in HIDDEN_TEXT_SENSOR_KEYS:
-            sub.setdefault(CONF_DISABLED_BY_DEFAULT, True)
-        config[key] = sub
-    return config
+    return inject_entity_defaults(
+        config, _DEFAULT_NAMES, hidden=HIDDEN_TEXT_SENSOR_KEYS
+    )
 
 
 CONFIG_SCHEMA = cv.All(
@@ -158,11 +143,11 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    platform_device_id = config.get(CONF_DEVICE_ID)
-    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
-    for key, setter, _icon, _ec, default_name, _dc in TEXT_SENSORS:
-        sub = apply_name_prefix(config[key], default_name, prefix)
-        if platform_device_id is not None and CONF_DEVICE_ID not in sub:
-            sub = {**sub, CONF_DEVICE_ID: platform_device_id}
-        ts = await text_sensor.new_text_sensor(sub)
+    config = apply_entity_prefix(
+        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
+    )
+    for key, setter, *_row in TEXT_SENSORS:
+        if key not in config:
+            continue
+        ts = await text_sensor.new_text_sensor(config[key])
         cg.add(getattr(hub, setter)(ts))

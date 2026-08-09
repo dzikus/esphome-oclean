@@ -3,7 +3,6 @@ import esphome.config_validation as cv
 from esphome.components import button
 from esphome.const import (
     CONF_DEVICE_ID,
-    CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     CONF_TIME_ID,
     ENTITY_CATEGORY_CONFIG,
@@ -14,9 +13,10 @@ from esphome.core import CORE
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_name_prefix,
+    apply_entity_prefix,
     hub_expose_dev,
     hub_name_prefix,
+    inject_entity_defaults,
     oclean_ns,
 )
 
@@ -67,31 +67,18 @@ CONF_POLL_NOW = "poll_now"
 DEFAULT_POLL_NOW_NAME = "Poll now"
 
 
+_DEFAULT_NAMES = [
+    (CONF_CAPTURE_SESSIONS, DEFAULT_CAPTURE_NAME),
+    (CONF_RESET_HEAD, DEFAULT_RESET_HEAD_NAME),
+    (CONF_SYNC_TIME, DEFAULT_SYNC_TIME_NAME),
+    (CONF_POLL_NOW, DEFAULT_POLL_NOW_NAME),
+]
+
+
 def _inject_defaults(config):
-    # Copy before mutating: the validator may run against a shared dict.
-    config = dict(config)
-    platform_dev = config.get(CONF_DEVICE_ID)
-    for key, default_name in (
-        (CONF_CAPTURE_SESSIONS, DEFAULT_CAPTURE_NAME),
-        (CONF_RESET_HEAD, DEFAULT_RESET_HEAD_NAME),
-        (CONF_SYNC_TIME, DEFAULT_SYNC_TIME_NAME),
-        (CONF_POLL_NOW, DEFAULT_POLL_NOW_NAME),
-    ):
-        sub = config.get(key)
-        if sub is None:
-            # Auto-create so the entities appear without listing them in the
-            # yaml; dev-gated rows are still skipped at codegen time.
-            sub = {}
-        elif isinstance(sub, dict):
-            sub = dict(sub)
-        if isinstance(sub, dict):
-            sub.setdefault("name", default_name)
-            if platform_dev is not None and CONF_DEVICE_ID not in sub:
-                sub[CONF_DEVICE_ID] = platform_dev
-            if key == CONF_POLL_NOW:
-                sub.setdefault(CONF_DISABLED_BY_DEFAULT, True)
-        config[key] = sub
-    return config
+    return inject_entity_defaults(
+        config, _DEFAULT_NAMES, hidden=frozenset({CONF_POLL_NOW})
+    )
 
 
 CONFIG_SCHEMA = cv.All(
@@ -116,7 +103,7 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_POLL_NOW): button.button_schema(
                 OcleanPollNowButton,
-                icon="mdi:bluetooth-connect",
+                icon="mdi:refresh",
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
         }
@@ -126,39 +113,31 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
+    config = apply_entity_prefix(
+        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
+    )
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
-    platform_device_id = config.get(CONF_DEVICE_ID)
-
-    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
-
-    def _with_dev(sub, default_name):
-        sub = apply_name_prefix(sub, default_name, prefix)
-        if platform_device_id is not None and CONF_DEVICE_ID not in sub:
-            return {**sub, CONF_DEVICE_ID: platform_device_id}
-        return sub
 
     # Capture is a dev hook, gated behind expose_dev_sensors.
     sub = config.get(CONF_CAPTURE_SESSIONS)
     if sub is not None and expose_dev:
-        btn = await button.new_button(_with_dev(sub, DEFAULT_CAPTURE_NAME))
+        btn = await button.new_button(sub)
         await cg.register_parented(btn, hub)
         cg.add(hub.set_capture_button(btn))
 
-    # Reset-head is a real config action, always created.
-    sub = config[CONF_RESET_HEAD]
-    btn = await button.new_button(_with_dev(sub, DEFAULT_RESET_HEAD_NAME))
-    await cg.register_parented(btn, hub)
+    sub = config.get(CONF_RESET_HEAD)
+    if sub is not None:
+        btn = await button.new_button(sub)
+        await cg.register_parented(btn, hub)
 
     # Sync-clock writes the brush clock on press only; skip it when the hub has
     # no time source, since it could only warn at runtime.
     sub = config.get(CONF_SYNC_TIME)
     if sub is not None and _hub_has_time(config[CONF_OCLEAN_ID]):
-        btn = await button.new_button(_with_dev(sub, DEFAULT_SYNC_TIME_NAME))
+        btn = await button.new_button(sub)
         await cg.register_parented(btn, hub)
 
-    # Poll-now is read-only on the brush, so it is always created; it is
-    # hidden by default in Home Assistant instead of dev-gated.
     sub = config.get(CONF_POLL_NOW)
     if sub is not None:
-        btn = await button.new_button(_with_dev(sub, DEFAULT_POLL_NOW_NAME))
+        btn = await button.new_button(sub)
         await cg.register_parented(btn, hub)
