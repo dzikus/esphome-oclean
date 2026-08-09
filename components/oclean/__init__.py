@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import ble_client, time
-from esphome.const import CONF_ID, CONF_TIME_ID
+from esphome.const import CONF_ID, CONF_NAME, CONF_TIME_ID
 from esphome.core import CORE
 
 CODEOWNERS = ["@dzikus"]
@@ -36,6 +36,8 @@ CONF_UPDATE_INTERVAL = "update_interval"
 CONF_CHARGING_INTERVAL = "charging_interval"
 
 CONF_HOLD_CONNECTION_WHILE_DOCKED = "hold_connection_while_docked"
+
+CONF_NAME_PREFIX = "name_prefix"
 
 MIN_UPDATE_INTERVAL_MS = 60000
 
@@ -92,16 +94,49 @@ def _reset_run_state():
         _ALL_HUBS.clear()
 
 
-def hub_expose_dev(hub_id):
+def _hub_conf(hub_id):
     # Must not depend on to_code order: under MULTI_CONF a platform's to_code can
     # run before the hub fills HUB_CONFIGS, which silently dropped dev entities.
     # CORE.config is complete before any to_code runs.
     target = str(hub_id)
     for hub_conf in CORE.config.get("oclean", []):
         if str(hub_conf.get(CONF_ID)) == target:
-            return bool(hub_conf.get(CONF_EXPOSE_DEV_SENSORS, False))
-    hub_conf = HUB_CONFIGS.get(target, {})
-    return bool(hub_conf.get(CONF_EXPOSE_DEV_SENSORS, False))
+            return hub_conf
+    return HUB_CONFIGS.get(target, {})
+
+
+def hub_expose_dev(hub_id):
+    return bool(_hub_conf(hub_id).get(CONF_EXPOSE_DEV_SENSORS, False))
+
+
+def hub_name_prefix(hub_id):
+    # An entity name is its identity on mqtt (state topic, discovery topic,
+    # unique_id) and hashes into the api key, neither of which carries a device.
+    explicit = _hub_conf(hub_id).get(CONF_NAME_PREFIX)
+    if explicit is not None:
+        return explicit.strip()
+    # A lone brush cannot collide with itself, and prefixing it would rename
+    # every entity of every existing single-brush install.
+    if len(CORE.config.get("oclean", [])) < 2:
+        return ""
+    return _prefix_from_hub_id(str(hub_id))
+
+
+def _prefix_from_hub_id(hub_id):
+    text = hub_id
+    if text.startswith("oclean_"):
+        text = text[len("oclean_") :]
+    text = text.replace("_", " ").replace("-", " ")
+    # Only the leading letter of each word is touched, so an id like oclean_XPro
+    # keeps its own capitalisation.
+    return " ".join(w[:1].upper() + w[1:] for w in text.split())
+
+
+def apply_name_prefix(sub_config, default_name, prefix):
+    # Matching the injected default is what proves the name was not hand-written.
+    if not prefix or sub_config.get(CONF_NAME) != default_name:
+        return sub_config
+    return {**sub_config, CONF_NAME: f"{prefix} {default_name}"}
 
 
 def _validate_auto_sync_time(config):
@@ -154,6 +189,7 @@ CONFIG_SCHEMA = cv.All(
                 CONF_CHARGING_INTERVAL, default="600s"
             ): _min_interval_validator(CONF_CHARGING_INTERVAL),
             cv.Optional(CONF_HOLD_CONNECTION_WHILE_DOCKED, default=True): cv.boolean,
+            cv.Optional(CONF_NAME_PREFIX): cv.All(cv.string_strict, cv.Length(max=48)),
             cv.Optional(CONF_TIME_ID): cv.use_id(time.RealTimeClock),
             cv.Optional(CONF_TZINDEX, default=DEFAULT_TZINDEX): cv.int_range(
                 min=1, max=33

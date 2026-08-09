@@ -6,6 +6,8 @@ from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
+    apply_name_prefix,
+    hub_name_prefix,
     oclean_ns,
 )
 
@@ -131,6 +133,8 @@ async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
     platform_device_id = config.get(CONF_DEVICE_ID)
 
+    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
+
     def _with_device(sub):
         if platform_device_id is not None and CONF_DEVICE_ID not in sub:
             return {**sub, CONF_DEVICE_ID: platform_device_id}
@@ -138,6 +142,7 @@ async def to_code(config):
 
     sub = config.get(CONF_HEAD_MAX_DAYS)
     if sub is not None:
+        sub = apply_name_prefix(sub, DEFAULT_HEAD_MAX_DAYS_NAME, prefix)
         num = await number.new_number(
             _with_device(sub),
             min_value=HEAD_DAYS_MIN,
@@ -149,7 +154,7 @@ async def to_code(config):
 
     for (
         key,
-        _name,
+        default_name,
         kind,
         idx,
         _unit,
@@ -159,7 +164,7 @@ async def to_code(config):
         vstep,
         initial,
     ) in CUSTOM_PARAMS:
-        sub = config[key]
+        sub = apply_name_prefix(config[key], default_name, prefix)
         num = await number.new_number(
             _with_device(sub), min_value=vmin, max_value=vmax, step=vstep
         )

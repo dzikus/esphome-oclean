@@ -11,6 +11,8 @@ from esphome.const import (
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
+    apply_name_prefix,
+    hub_name_prefix,
 )
 
 # Static device identity values and the poll freshness stamp: things a user
@@ -157,8 +159,9 @@ CONFIG_SCHEMA = cv.All(
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
     platform_device_id = config.get(CONF_DEVICE_ID)
-    for key, setter, _icon, _ec, _default_name, _dc in TEXT_SENSORS:
-        sub = config[key]
+    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
+    for key, setter, _icon, _ec, default_name, _dc in TEXT_SENSORS:
+        sub = apply_name_prefix(config[key], default_name, prefix)
         if platform_device_id is not None and CONF_DEVICE_ID not in sub:
             sub = {**sub, CONF_DEVICE_ID: platform_device_id}
         ts = await text_sensor.new_text_sensor(sub)

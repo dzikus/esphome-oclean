@@ -17,7 +17,9 @@ from . import (
     CONF_OCLEAN_ID,
     HIDDEN_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
+    apply_name_prefix,
     hub_expose_dev,
+    hub_name_prefix,
 )
 
 # Raw settings indices with no use on the owned brushes: created only on hubs
@@ -245,10 +247,11 @@ async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
     platform_device_id = config.get(CONF_DEVICE_ID)
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
-    for key, setter, *_ in SENSORS:
+    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
+    for key, setter, *_, default_name in SENSORS:
         if key in DEV_SENSOR_KEYS and not expose_dev:
             continue
-        sub_config = config[key]
+        sub_config = apply_name_prefix(config[key], default_name, prefix)
         if platform_device_id is not None and CONF_DEVICE_ID not in sub_config:
             sub_config = {**sub_config, CONF_DEVICE_ID: platform_device_id}
         sens = await sensor.new_sensor(sub_config)

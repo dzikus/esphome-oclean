@@ -6,6 +6,8 @@ from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
+    apply_name_prefix,
+    hub_name_prefix,
     oclean_ns,
 )
 
@@ -229,12 +231,16 @@ async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
     platform_device_id = config.get(CONF_DEVICE_ID)
 
+    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
+
     def _with_device(sub):
         if platform_device_id is not None and CONF_DEVICE_ID not in sub:
             return {**sub, CONF_DEVICE_ID: platform_device_id}
         return sub
 
-    sub = config[CONF_BRUSH_SCHEME]
+    sub = apply_name_prefix(
+        config[CONF_BRUSH_SCHEME], DEFAULT_BRUSH_SCHEME_NAME, prefix
+    )
     # Named yaml modes get ids right after the runtime custom id, in list order.
     modes = []
     for i, mode in enumerate(sub.get(CONF_CUSTOM_MODES, [])):
@@ -257,7 +263,9 @@ async def to_code(config):
         cg.add(sel.add_scheme(pnum, label, flat))
     cg.add(sel.set_custom_option(CUSTOM_PNUM, CUSTOM_OPTION_LABEL))
 
-    sub = config[CONF_DEVICE_LANGUAGE]
+    sub = apply_name_prefix(
+        config[CONF_DEVICE_LANGUAGE], DEFAULT_DEVICE_LANGUAGE_NAME, prefix
+    )
     sel = await select.new_select(_with_device(sub), options=LANGUAGE_OPTIONS)
     await cg.register_parented(sel, hub)
     cg.add(hub.set_language_select(sel))
