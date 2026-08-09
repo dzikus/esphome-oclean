@@ -9,7 +9,9 @@ from esphome.core import CORE
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
+    apply_name_prefix,
     hub_expose_dev,
+    hub_name_prefix,
     oclean_ns,
 )
 
@@ -185,8 +187,8 @@ async def to_code(config):
     platform_device_id = config.get(CONF_DEVICE_ID)
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     explicit_dev = _EXPLICIT_DEV_SWITCHES.get(str(config[CONF_OCLEAN_ID]), set())
-    for key, b0, b1, _icon, _default_name, label, off_value in SWITCHES:
-        sub = config[key]
+    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
+    for key, b0, b1, _icon, default_name, label, off_value in SWITCHES:
         if key in DEV_SWITCH_KEYS and not expose_dev:
             # Only auto-created dev rows are dropped quietly; a user who listed
             # one explicitly gets told why it is missing.
@@ -198,6 +200,7 @@ async def to_code(config):
                     config[CONF_OCLEAN_ID],
                 )
             continue
+        sub = apply_name_prefix(config[key], default_name, prefix)
         if platform_device_id is not None and CONF_DEVICE_ID not in sub:
             sub = {**sub, CONF_DEVICE_ID: platform_device_id}
         sw = await switch.new_switch(sub)
@@ -213,6 +216,7 @@ async def to_code(config):
 
     bt = config.get(CONF_BLUETOOTH)
     if bt is not None:
+        bt = apply_name_prefix(bt, _default_name_for(CONF_BLUETOOTH), prefix)
         if platform_device_id is not None and CONF_DEVICE_ID not in bt:
             bt = {**bt, CONF_DEVICE_ID: platform_device_id}
         sw = await switch.new_switch(bt)

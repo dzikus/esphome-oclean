@@ -40,12 +40,11 @@ your ESPHome device YAML:
 ```yaml
 external_components:
   - source: github://dzikus/esphome-oclean
-    ref: v1.0.0
     components: [oclean]
 ```
 
-Pinning `ref` to a release tag is the recommended form: a floating `main`
-(optionally with `refresh: 1d`) pulls whatever is on the branch at build time.
+Add `ref:` with a release tag to pin a version; without it the build follows
+`main` (optionally with `refresh: 1d`).
 Manual alternative: copy `components/oclean/` next to your device YAML and use
 `source: components`. Part 1 covers the YAML in full.
 
@@ -223,6 +222,7 @@ Set on the `oclean:` entry, not on the platforms.
 | `auto_sync_time` | bool | on when `time_id` is set, off otherwise | Resync the brush clock during a poll when it has drifted past `sync_drift_threshold`. Explicit `true` without `time_id` fails validation. |
 | `sync_drift_threshold` | time | `120s` | Drift that triggers an auto resync. `0s` resyncs whenever the clocks differ by at least one second. |
 | `expose_dev_sensors` | bool | `false` | Creates the dev-gated entities (see the per-platform tables). |
+| `name_prefix` | string | derived when more than one hub is configured, empty otherwise | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Derived from the hub id with a leading `oclean_` stripped, so `oclean_brush_b` gives `Brush B Score`. Set it explicitly to choose the wording, or to `""` to opt out. Names you write yourself are never touched. See **Two brushes on one ESP32**. |
 
 The brushing-mode select additionally accepts `custom_modes` (a list of named
 programs); that option lives under the `select:` platform, not the hub. See
@@ -410,6 +410,36 @@ sensor:
 
 Repeat the platform pair for binary_sensor, text_sensor, switch, number,
 select and button. Boot polls are staggered automatically.
+
+`device_id` decides which HA device an entity belongs to, but it does not make
+the entity's **name** unique, and on some transports the name is the identity.
+MQTT builds its state topic, discovery topic and `unique_id` from the name
+alone, with no device in any of them, so two brushes both exposing `Battery`
+publish over each other. The native API is unaffected: it passes `device_id`
+next to the key and Home Assistant 2025.8+ tracks entities as
+`(device_id, key)`.
+
+The component therefore prefixes its own default names as soon as a second hub
+is configured, taking the prefix from the hub id:
+
+```
+hub_a -> "Hub A Battery"        oclean_brush_b -> "Brush B Battery"
+```
+
+Set `name_prefix` on each hub to choose the wording:
+
+```yaml
+oclean:
+  - id: hub_a
+    ble_client_id: ble_a
+    name_prefix: "Brush A"
+  - id: hub_b
+    ble_client_id: ble_b
+    name_prefix: "Brush B"
+```
+
+Set it to `""` to keep the bare names, which is safe if you only use the native
+API. A single-brush node is never prefixed.
 
 ### Session history in Home Assistant
 

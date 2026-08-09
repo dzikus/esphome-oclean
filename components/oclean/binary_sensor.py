@@ -13,7 +13,9 @@ from . import (
     CONF_OCLEAN_ID,
     HIDDEN_BINARY_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
+    apply_name_prefix,
     hub_expose_dev,
+    hub_name_prefix,
 )
 
 # Settings readbacks with no observable effect on the owned brushes: created
@@ -159,10 +161,11 @@ async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
     platform_device_id = config.get(CONF_DEVICE_ID)
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
-    for key, setter, _dc, _icon, _ec, _default_name in BINARY_SENSORS:
+    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
+    for key, setter, _dc, _icon, _ec, default_name in BINARY_SENSORS:
         if key in DEV_BINARY_SENSOR_KEYS and not expose_dev:
             continue
-        sub = config[key]
+        sub = apply_name_prefix(config[key], default_name, prefix)
         if platform_device_id is not None and CONF_DEVICE_ID not in sub:
             sub = {**sub, CONF_DEVICE_ID: platform_device_id}
         bs = await binary_sensor.new_binary_sensor(sub)

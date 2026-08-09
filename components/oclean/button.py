@@ -14,7 +14,9 @@ from esphome.core import CORE
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
+    apply_name_prefix,
     hub_expose_dev,
+    hub_name_prefix,
     oclean_ns,
 )
 
@@ -127,7 +129,10 @@ async def to_code(config):
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     platform_device_id = config.get(CONF_DEVICE_ID)
 
-    def _with_dev(sub):
+    prefix = hub_name_prefix(config[CONF_OCLEAN_ID])
+
+    def _with_dev(sub, default_name):
+        sub = apply_name_prefix(sub, default_name, prefix)
         if platform_device_id is not None and CONF_DEVICE_ID not in sub:
             return {**sub, CONF_DEVICE_ID: platform_device_id}
         return sub
@@ -135,25 +140,25 @@ async def to_code(config):
     # Capture is a dev hook, gated behind expose_dev_sensors.
     sub = config.get(CONF_CAPTURE_SESSIONS)
     if sub is not None and expose_dev:
-        btn = await button.new_button(_with_dev(sub))
+        btn = await button.new_button(_with_dev(sub, DEFAULT_CAPTURE_NAME))
         await cg.register_parented(btn, hub)
         cg.add(hub.set_capture_button(btn))
 
     # Reset-head is a real config action, always created.
     sub = config[CONF_RESET_HEAD]
-    btn = await button.new_button(_with_dev(sub))
+    btn = await button.new_button(_with_dev(sub, DEFAULT_RESET_HEAD_NAME))
     await cg.register_parented(btn, hub)
 
     # Sync-clock writes the brush clock on press only; skip it when the hub has
     # no time source, since it could only warn at runtime.
     sub = config.get(CONF_SYNC_TIME)
     if sub is not None and _hub_has_time(config[CONF_OCLEAN_ID]):
-        btn = await button.new_button(_with_dev(sub))
+        btn = await button.new_button(_with_dev(sub, DEFAULT_SYNC_TIME_NAME))
         await cg.register_parented(btn, hub)
 
     # Poll-now is read-only on the brush, so it is always created; it is
     # hidden by default in Home Assistant instead of dev-gated.
     sub = config.get(CONF_POLL_NOW)
     if sub is not None:
-        btn = await button.new_button(_with_dev(sub))
+        btn = await button.new_button(_with_dev(sub, DEFAULT_POLL_NOW_NAME))
         await cg.register_parented(btn, hub)
