@@ -40,12 +40,11 @@ your ESPHome device YAML:
 ```yaml
 external_components:
   - source: github://dzikus/esphome-oclean
-    ref: v1.0.0
     components: [oclean]
 ```
 
-Pinning `ref` to a release tag is the recommended form: a floating `main`
-(optionally with `refresh: 1d`) pulls whatever is on the branch at build time.
+Add `ref:` with a release tag to pin a version; without it the build follows
+`main` (optionally with `refresh: 1d`).
 Manual alternative: copy `components/oclean/` next to your device YAML and use
 `source: components`. Part 1 covers the YAML in full.
 
