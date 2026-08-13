@@ -1,5 +1,8 @@
 #include "oclean_protocol.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace esphome {
 namespace oclean {
 
@@ -227,6 +230,94 @@ bool should_resync_clock(int64_t brush_epoch, int64_t local_epoch, uint32_t thre
 bool poll_is_due(uint32_t since_ms, bool docked, uint32_t charging_interval_ms,
                  uint32_t battery_interval_ms) {
   return since_ms >= (docked ? charging_interval_ms : battery_interval_ms);
+}
+
+bool should_hold_link(bool hold_option, bool ble_enabled, bool docked,
+                      bool round_status_seen) {
+  return hold_option && ble_enabled && docked && round_status_seen;
+}
+
+PollDecision plan_poll_tick(const PollTickState &s) {
+  if (!s.ble_enabled) return {PollAction::SKIP_BLE_OFF, 0};
+  // Skip rather than stack connect attempts; the watchdog ends a stalled cycle.
+  if (s.link_busy) return {PollAction::SKIP_LINK_BUSY, 0};
+  if (!s.boot_stagger_done && s.poll_pending && s.now_ms < s.boot_stagger_ms) {
+    // The radio scans one target at a time, so simultaneous first cycles make
+    // the losing hub burn its whole window.
+    return {PollAction::DEFER_BOOT_STAGGER, s.boot_stagger_ms - s.now_ms};
+  }
+  if (s.adaptive && !s.poll_pending &&
+      !poll_is_due(s.now_ms - s.last_poll_ms, s.docked, s.charging_interval_ms,
+                   s.battery_interval_ms)) {
+    return {PollAction::SKIP_NOT_DUE, 0};
+  }
+  return {PollAction::POLL, 0};
+}
+
+float session_coverage_percent(uint16_t valid_duration_s, uint16_t duration_s) {
+  if (duration_s == 0) return NAN;
+  float pct = roundf(100.0f * (float) valid_duration_s / (float) duration_s);
+  return pct > 100.0f ? 100.0f : pct;
+}
+
+bool accept_inline_record(uint32_t inline_epoch, uint32_t newest_epoch,
+                          int64_t now_local_epoch) {
+  return inline_epoch > newest_epoch &&
+         session_epoch_plausible(inline_epoch, now_local_epoch, SESSION_FUTURE_MARGIN_S);
+}
+
+SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
+                                      uint32_t watermark, uint32_t newest_epoch,
+                                      int64_t now_local_epoch) {
+  SessionIngestPlan plan;
+  plan.new_watermark = watermark;
+  plan.new_newest_epoch = newest_epoch;
+  plan.persist_newest = false;
+  plan.newest_plausible = false;
+  plan.have_newest = false;
+  plan.newest = SessionRecord{};
+
+  for (const auto &rec : records) {
+    uint32_t ts = session_record_epoch(rec);
+    if (ts <= watermark) continue;  // already emitted, possibly before a reboot
+    if (!session_epoch_plausible(ts, now_local_epoch, SESSION_FUTURE_MARGIN_S)) {
+      // A date far in the future would push the watermark past every real
+      // session and mute them for good, so it never advances it.
+      plan.implausible.push_back(rec);
+      continue;
+    }
+    plan.to_publish.push_back(rec);
+    if (ts > plan.new_watermark) plan.new_watermark = ts;
+  }
+  // The ring is not stored chronologically. Field-wise compare, not the epoch:
+  // same ordering without running the days-from-civil arithmetic twice per
+  // comparison.
+  std::sort(plan.to_publish.begin(), plan.to_publish.end(),
+            [](const SessionRecord &a, const SessionRecord &b) {
+              return session_record_newer(b, a);
+            });
+
+  // unordered ring, so the newest is the maximum by timestamp. Ties keep the
+  // earlier slot, same as the reassembler's own scan.
+  for (const auto &rec : records) {
+    if (!plan.have_newest || session_record_newer(rec, plan.newest)) {
+      plan.newest = rec;
+      plan.have_newest = true;
+    }
+  }
+  if (plan.have_newest) {
+    uint32_t epoch = session_record_epoch(plan.newest);
+    plan.newest_plausible =
+        session_epoch_plausible(epoch, now_local_epoch, SESSION_FUTURE_MARGIN_S);
+    // strictly newer only. A peer re-serving one ring every poll would grind the
+    // flash, and an older epoch would lower the gate that keeps a stale record
+    // from overwriting the stored one.
+    if (plan.newest_plausible && epoch > newest_epoch) {
+      plan.persist_newest = true;
+      plan.new_newest_epoch = epoch;
+    }
+  }
+  return plan;
 }
 
 void SessionAssembler::reset() {
