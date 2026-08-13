@@ -6,8 +6,7 @@ from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_entity_prefix,
-    hub_name_prefix,
+    OcleanHub,
     inject_entity_defaults,
     oclean_ns,
 )
@@ -15,9 +14,11 @@ from . import (
 DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
 
-OcleanSchemeSelect = oclean_ns.class_("OcleanSchemeSelect", select.Select, cg.Parented)
+OcleanSchemeSelect = oclean_ns.class_(
+    "OcleanSchemeSelect", select.Select, cg.Parented.template(OcleanHub)
+)
 OcleanLanguageSelect = oclean_ns.class_(
-    "OcleanLanguageSelect", select.Select, cg.Parented
+    "OcleanLanguageSelect", select.Select, cg.Parented.template(OcleanHub)
 )
 
 CONF_BRUSH_SCHEME = "brush_scheme"
@@ -217,9 +218,6 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    config = apply_entity_prefix(
-        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
-    )
 
     sub = config.get(CONF_BRUSH_SCHEME)
     if sub is not None:

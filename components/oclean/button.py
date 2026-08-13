@@ -12,10 +12,10 @@ from esphome.core import CORE
 
 from . import (
     CONF_OCLEAN_ID,
+    DOMAIN,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_entity_prefix,
+    OcleanHub,
     hub_expose_dev,
-    hub_name_prefix,
     inject_entity_defaults,
     oclean_ns,
 )
@@ -25,7 +25,7 @@ def _hub_has_time(hub_id):
     # The sync-clock button writes the brush clock from the hub's time source.
     # Without a time: source it can only warn at runtime, so skip creating it.
     target = str(hub_id)
-    for hub_conf in CORE.config.get("oclean", []):
+    for hub_conf in CORE.config.get(DOMAIN, []):
         if str(hub_conf.get(CONF_ID)) == target:
             return CONF_TIME_ID in hub_conf
     return False
@@ -35,16 +35,16 @@ DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
 
 OcleanCaptureButton = oclean_ns.class_(
-    "OcleanCaptureButton", button.Button, cg.Parented
+    "OcleanCaptureButton", button.Button, cg.Parented.template(OcleanHub)
 )
 OcleanResetHeadButton = oclean_ns.class_(
-    "OcleanResetHeadButton", button.Button, cg.Parented
+    "OcleanResetHeadButton", button.Button, cg.Parented.template(OcleanHub)
 )
 OcleanSyncTimeButton = oclean_ns.class_(
-    "OcleanSyncTimeButton", button.Button, cg.Parented
+    "OcleanSyncTimeButton", button.Button, cg.Parented.template(OcleanHub)
 )
 OcleanPollNowButton = oclean_ns.class_(
-    "OcleanPollNowButton", button.Button, cg.Parented
+    "OcleanPollNowButton", button.Button, cg.Parented.template(OcleanHub)
 )
 
 # Dev-gated. Requests a buffered-session download and holds the link open so
@@ -113,9 +113,6 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    config = apply_entity_prefix(
-        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
-    )
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
 
     # Capture is a dev hook, gated behind expose_dev_sensors.

@@ -4,16 +4,15 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import switch
 from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG
-from esphome.core import CORE
 
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_entity_prefix,
+    OcleanHub,
     hub_expose_dev,
-    hub_name_prefix,
     inject_entity_defaults,
     oclean_ns,
+    run_data,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,37 +21,35 @@ _LOGGER = logging.getLogger(__name__)
 # with expose_dev_sensors so they do not crowd the dashboard as live controls.
 DEV_SWITCH_KEYS = frozenset({"area_reminder", "brush_pause", "brush_mode"})
 
-# expose_dev only resolves at to_code, but explicit-vs-auto is only visible in
-# the raw validator input, so it has to be recorded here for to_code to warn
-# rather than silently drop a switch the user asked for by name.
-_EXPLICIT_DEV_SWITCHES = {}
-_DEV_RUN_TOKEN = None
+
+def _explicit_dev_switches():
+    # expose_dev only resolves at to_code, but explicit-vs-auto is only visible
+    # in the raw validator input, so it has to be recorded there for to_code to
+    # warn rather than silently drop a switch the user asked for by name.
+    # Per-run storage: CORE.config is still None during validation, so its
+    # identity cannot mark the run boundary.
+    return run_data().setdefault("explicit_dev_switches", {})
 
 
 def _record_explicit_dev(config):
-    global _DEV_RUN_TOKEN
-    token = id(CORE.config)
-    if token != _DEV_RUN_TOKEN:
-        _DEV_RUN_TOKEN = token
-        _EXPLICIT_DEV_SWITCHES.clear()
     hub_id = config.get(CONF_OCLEAN_ID)
     hub_key = str(hub_id) if hub_id is not None else "__default__"
     present = {k for k in DEV_SWITCH_KEYS if k in config}
     if present:
-        _EXPLICIT_DEV_SWITCHES.setdefault(hub_key, set()).update(present)
+        _explicit_dev_switches().setdefault(hub_key, set()).update(present)
 
 
 DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
 
 OcleanCommandSwitch = oclean_ns.class_(
-    "OcleanCommandSwitch", switch.Switch, cg.Parented
+    "OcleanCommandSwitch", switch.Switch, cg.Parented.template(OcleanHub)
 )
 
 # Master BLE enable switch: local hub behavior, no opcode written to the brush.
 # Component-derived so its setup() applies the restored state after boot.
 OcleanBleSwitch = oclean_ns.class_(
-    "OcleanBleSwitch", switch.Switch, cg.Parented, cg.Component
+    "OcleanBleSwitch", switch.Switch, cg.Parented.template(OcleanHub), cg.Component
 )
 
 CONF_BLUETOOTH = "bluetooth"
@@ -151,12 +148,13 @@ CONFIG_SCHEMA = cv.All(
             },
             # Master BLE enable. RESTORE_DEFAULT_ON so a reboot never silently
             # leaves the brush unreachable when HA has no persisted OFF.
+            # Component-derived, so it takes the component options too.
             cv.Optional(CONF_BLUETOOTH): switch.switch_schema(
                 OcleanBleSwitch,
                 icon="mdi:bluetooth",
                 entity_category=ENTITY_CATEGORY_CONFIG,
                 default_restore_mode="RESTORE_DEFAULT_ON",
-            ),
+            ).extend(cv.COMPONENT_SCHEMA),
         }
     ),
 )
@@ -164,11 +162,13 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    config = apply_entity_prefix(
-        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
-    )
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
-    explicit_dev = _EXPLICIT_DEV_SWITCHES.get(str(config[CONF_OCLEAN_ID]), set())
+    explicit = _explicit_dev_switches()
+    # A single-hub config may omit oclean_id, so the record lands under the
+    # placeholder key; merge both.
+    explicit_dev = explicit.get(str(config[CONF_OCLEAN_ID]), set()) | explicit.get(
+        "__default__", set()
+    )
     for key, b0, b1, _icon, _default_name, label, off_value in SWITCHES:
         if key not in config:
             continue

@@ -12,9 +12,7 @@ from . import (
     CONF_OCLEAN_ID,
     HIDDEN_BINARY_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_entity_prefix,
     hub_expose_dev,
-    hub_name_prefix,
     inject_entity_defaults,
 )
 
@@ -146,9 +144,6 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    config = apply_entity_prefix(
-        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
-    )
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     for key, setter, *_row in BINARY_SENSORS:
         if key not in config:

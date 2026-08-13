@@ -18,9 +18,7 @@ from . import (
     HIDDEN_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
     UNIT_DAY,
-    apply_entity_prefix,
     hub_expose_dev,
-    hub_name_prefix,
     inject_entity_defaults,
 )
 
@@ -232,9 +230,6 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    config = apply_entity_prefix(
-        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
-    )
     expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     for key, setter, *_row in SENSORS:
         if key not in config:
@@ -248,6 +243,8 @@ async def to_code(config):
         else:
             # Generic setter path requires a setter string. A None sentinel
             # means the row belongs on a dedicated branch above; fail loudly
-            # rather than crashing on getattr(hub, None).
-            assert setter is not None, f"sensor {key} has no generic setter"
+            # rather than crashing on getattr(hub, None). Not an assert: those
+            # are stripped under python -O.
+            if setter is None:
+                raise ValueError(f"oclean sensor {key} has no generic setter")
             cg.add(getattr(hub, setter)(sens))
