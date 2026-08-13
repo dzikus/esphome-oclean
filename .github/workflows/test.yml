@@ -2,9 +2,12 @@ name: tests
 on:
   push:
     branches: [main]
-    paths: ["components/oclean/**", "custom_components/**", "dist/**", "hacs.json", "tests/**", ".github/**", "pyproject.toml", ".pre-commit-config.yaml"]
+    paths: ["components/oclean/**", "custom_components/**", "dist/**", "hacs.json", "tests/**", ".github/**", "example.yaml", "pyproject.toml", ".pre-commit-config.yaml"]
   pull_request:
-    paths: ["components/oclean/**", "custom_components/**", "dist/**", "hacs.json", "tests/**", ".github/**", "pyproject.toml", ".pre-commit-config.yaml"]
+    paths: ["components/oclean/**", "custom_components/**", "dist/**", "hacs.json", "tests/**", ".github/**", "example.yaml", "pyproject.toml", ".pre-commit-config.yaml"]
+  # The release workflow runs these gates instead of keeping its own copy, which
+  # is how the two lists drifted apart before.
+  workflow_call:
 permissions:
   contents: read
 concurrency:
@@ -21,7 +24,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Cache pre-commit
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
@@ -29,7 +32,7 @@ jobs:
           key: ${{ runner.os }}-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
           restore-keys: ${{ runner.os }}-pre-commit-
       - name: Install pre-commit
-        run: pip install pre-commit
+        run: pip install "pre-commit==4.6.0"
       - name: Run pre-commit (ruff lint + format + hygiene)
         run: pre-commit run --all-files --show-diff-on-failure
       - name: Check coverage card parses
@@ -45,7 +48,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Cache PlatformIO
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
@@ -53,7 +56,7 @@ jobs:
           key: ${{ runner.os }}-pio-${{ hashFiles('tests/platformio.ini') }}
           restore-keys: ${{ runner.os }}-pio-
       - name: Install PlatformIO
-        run: pip install platformio
+        run: pip install "platformio==6.1.19"
       - name: Run protocol unit tests
         run: |
           set -euo pipefail
@@ -71,7 +74,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Cache PlatformIO
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
@@ -79,23 +82,75 @@ jobs:
           key: ${{ runner.os }}-esphome-${{ hashFiles('.github/ci-build.yaml') }}
           restore-keys: ${{ runner.os }}-esphome-
       - name: Install ESPHome
-        run: pip install esphome
+        run: pip install "esphome==2026.7.4"
       - name: Compile full component
         run: |
           set -euo pipefail
           esphome compile .github/ci-build.yaml
+      # api: without homeassistant_services is the default shape of a user
+      # config, and the session-event call is compiled out there. Build it so a
+      # wrong guard around that call fails CI instead of the user's first build.
+      # Both variants below transform ci-build.yaml, and a transform that matches
+      # nothing would compile the unmodified config and pass without testing
+      # anything. Each asserts its own effect before compiling.
+      - name: Compile without homeassistant_services
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          src = open(".github/ci-build.yaml").read()
+          out = src.replace("name: ci-build", "name: ci-build-noha")
+          before = out
+          out = "\n".join(
+              line for line in out.split("\n")
+              if line.strip() != "homeassistant_services: true"
+          )
+          assert out != before, "homeassistant_services line not found: the api: block moved or was reindented"
+          assert "homeassistant_services" not in out, "homeassistant_services still present after the strip"
+          assert "\napi:" in out, "api: block disappeared, the transform cut too much"
+          open(".github/ci-build-noha.yaml", "w").write(out)
+          PY
+          esphome compile .github/ci-build-noha.yaml
+      # A read-only node: no switch/number/select/button block, so those
+      # platforms are absent from the build. Keeps the per-platform guards
+      # honest, since main.cpp includes every component header regardless.
+      - name: Compile without the control platforms
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          CONTROL = ("switch", "number", "select", "button")
+          src = open(".github/ci-build.yaml").read().replace("name: ci-build", "name: ci-build-readonly")
+          out, skip = [], False
+          for line in src.split("\n"):
+              if re.match(r"^(%s):\s*$" % "|".join(CONTROL), line):
+                  skip = True
+                  continue
+              # A top-level key or a column-zero comment ends the dropped block.
+              # Treating a comment as part of it swallows the rest of the file.
+              if skip and line and not line[0].isspace():
+                  skip = False
+              if not skip:
+                  out.append(line)
+          text = "\n".join(out)
+          for key in CONTROL:
+              assert not re.search(r"^%s:" % key, text, re.M), f"{key}: block survived the strip"
+          for key in ("sensor", "binary_sensor", "text_sensor", "oclean", "esp32"):
+              assert re.search(r"^%s:" % key, text, re.M), f"{key}: was cut, the transform ate too much"
+          open(".github/ci-build-readonly.yaml", "w").write(text)
+          PY
+          esphome compile .github/ci-build-readonly.yaml
   config-floor:
-    name: config check at the ESPHome floor
+    name: config check and build at the ESPHome floor
     needs: lint
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       # Pin to the declared floor so min_version is actually exercised, and
       # validate the published example (which the compile job never touches).
       - name: Install ESPHome (component floor)
@@ -114,3 +169,9 @@ jobs:
           set -euo pipefail
           esphome config example.yaml
           esphome config .github/ci-build.yaml
+      # min_version claims the C++ builds here too, which config alone never
+      # checks: an API added after the floor would only fail on a user's machine.
+      - name: Compile at the floor
+        run: |
+          set -euo pipefail
+          esphome compile .github/ci-build.yaml

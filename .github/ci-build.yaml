@@ -58,6 +58,12 @@ oclean:
     tzindex: 16
     hold_connection_while_docked: true
     auto_sync_time: true
+    # Compile the per-session automation hook.
+    on_session:
+      - logger.log:
+          format: "session dur=%us valid=%us score=%u"
+          args:
+            ["(unsigned) x.duration_s", "(unsigned) x.valid_duration_s", "(unsigned) x.score"]
   # Second hub: compiles the explicit name_prefix, and makes hub_test derive one.
   - id: hub_second
     ble_client_id: ble_second

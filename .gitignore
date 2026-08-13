@@ -18,3 +18,11 @@ secrets.yaml
 # IDE / editor (devcontainer IntelliSense output)
 .vscode/c_cpp_properties.json
 .vscode/compile_commands.json
+
+# ESPHome writes these into .github when the CI config is built there
+.github/.esphome/
+.github/.gitignore
+
+# CI generates these variants of ci-build.yaml when the compile jobs are run locally
+.github/ci-build-noha.yaml
+.github/ci-build-readonly.yaml
