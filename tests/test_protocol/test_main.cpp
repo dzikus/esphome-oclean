@@ -363,6 +363,32 @@ void test_settings_continuation_brush_a() {
   TEST_ASSERT_EQUAL_UINT16(1223, ds.head_used_times);
 }
 
+void test_settings_clock_invalid_fields_rejected() {
+  // clock_valid is the only thing standing between a garbled settings frame and
+  // an automatic 0201 write of a nonsense clock to the brush: both the drift
+  // sensor and the auto-sync bail out on it. The assembler takes any 0302 frame
+  // without the 23 24 prefix as a continuation, so a truncated or corrupted one
+  // reaching parse_device_settings is a real wire case, not a hypothesis.
+  uint8_t buf[SETTINGS_BUFFER_SIZE] = {};
+  DeviceSettings ds;
+  // All zeroes: month 0 and day 0 are outside the calendar.
+  parse_device_settings(buf, &ds);
+  TEST_ASSERT_FALSE(ds.clock_valid);
+  // A plausible date except for the hour, which the device never sends as 24.
+  buf[16] = 26;  // year - 2000
+  buf[17] = 6;
+  buf[18] = 4;
+  buf[19] = 24;
+  buf[20] = 0;
+  buf[21] = 0;
+  parse_device_settings(buf, &ds);
+  TEST_ASSERT_FALSE(ds.clock_valid);
+  // Same buffer with an hour the device can actually report.
+  buf[19] = 23;
+  parse_device_settings(buf, &ds);
+  TEST_ASSERT_TRUE(ds.clock_valid);
+}
+
 void test_settings_continuation_brush_b() {
   // Real continuation frame, Brush B: over-pressure OFF, area-reminder ON,
   // head used 173 days / 213 sessions, clock 2026-06-04 00:20:10.
@@ -596,6 +622,24 @@ void test_build_scheme_split_frames() {
   TEST_ASSERT_EQUAL_UINT8_ARRAY(pkt2, packets[1].data(), sizeof(pkt2));
 }
 
+void test_build_scheme_split_shortest_second_frame() {
+  // Five steps is 21 payload bytes: the first size that splits, and the one that
+  // leaves the shortest possible continuation frame. A six-step program would
+  // hide an off-by-one in the 16-byte slice; this one does not.
+  std::vector<SchemeStep> steps = {{2, 30}, {2, 30}, {2, 30}, {2, 30}, {2, 30}};
+  auto packets = build_scheme_packets(0x50, steps);
+  TEST_ASSERT_EQUAL_UINT(2, packets.size());
+
+  const uint8_t pkt1[] = {0x02, 0x06, 0x50, 0x05, 0x06, 0x02, 0x1E, 0x06, 0x02,
+                          0x1E, 0x06, 0x02, 0x1E, 0x06, 0x02, 0x1E, 0x2A, 0x2B};
+  TEST_ASSERT_EQUAL_UINT(sizeof(pkt1), packets[0].size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(pkt1, packets[0].data(), sizeof(pkt1));
+
+  const uint8_t pkt2[] = {0x02, 0x0B, 0x06, 0x02, 0x1E, 0x00, 0x05};
+  TEST_ASSERT_EQUAL_UINT(sizeof(pkt2), packets[1].size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(pkt2, packets[1].data(), sizeof(pkt2));
+}
+
 void test_build_scheme_rejects_bad_step_count() {
   // Empty and over-8-step programs are rejected, returning no packets.
   TEST_ASSERT_EQUAL_UINT(0, build_scheme_packets(2, {}).size());
@@ -687,12 +731,38 @@ void test_build_set_clock_winter_sunday_midnight_fields() {
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, cmd.data(), sizeof(expected));
 }
 
+void test_build_set_clock_before_2000_clamps_year_byte() {
+  // Defensive branch: an unsynced clock (1970) must not wrap the year byte into
+  // a plausible-looking future date on the brush.
+  auto cmd = build_set_clock_command(1970, 1, 1, 0, 0, 0, 4, 15);
+  TEST_ASSERT_EQUAL_UINT(10, cmd.size());
+  TEST_ASSERT_EQUAL_UINT8(0x00, cmd[2]);
+}
+
 // === Clock-drift decision (auto clock-sync) ===
 
 void test_civil_to_epoch_matches_record_epoch() {
   // The shared civil helper must produce the same value the record epoch pins.
   // 2026-06-05 16:37:14 UTC -> 1780677434.
   TEST_ASSERT_EQUAL_INT64(1780677434LL, civil_to_epoch(2026, 6, 5, 16, 37, 14));
+}
+
+void test_civil_to_epoch_january_february_branch() {
+  // days-from-civil shifts January and February into the previous March-based
+  // year, a branch no other test reaches (they all use May or June). An error
+  // there is a whole year of drift on winter sessions, which would poison the
+  // dedup watermark for good.
+  TEST_ASSERT_EQUAL_INT64(1767225600LL, civil_to_epoch(2026, 1, 1, 0, 0, 0));
+  TEST_ASSERT_EQUAL_INT64(1772323199LL, civil_to_epoch(2026, 2, 28, 23, 59, 59));
+  // first day past the branch boundary
+  TEST_ASSERT_EQUAL_INT64(1772323200LL, civil_to_epoch(2026, 3, 1, 0, 0, 0));
+}
+
+void test_civil_to_epoch_leap_day() {
+  // 29 February only exists on the leap path through the same branch.
+  TEST_ASSERT_EQUAL_INT64(1709208000LL, civil_to_epoch(2024, 2, 29, 12, 0, 0));
+  // record year floor: byte 0 of a record is year-2000
+  TEST_ASSERT_EQUAL_INT64(946684800LL, civil_to_epoch(2000, 1, 1, 0, 0, 0));
 }
 
 void test_should_resync_below_threshold() {
@@ -724,6 +794,232 @@ void test_should_resync_zero_threshold_syncs_on_any_diff() {
   int64_t local = civil_to_epoch(2026, 6, 6, 12, 0, 0);
   TEST_ASSERT_TRUE(should_resync_clock(local + 1, local, 0));
   TEST_ASSERT_FALSE(should_resync_clock(local, local, 0));
+}
+
+// === Hold-the-link decision ===
+
+void test_should_hold_link_requires_every_condition() {
+  // Full truth table: the link is only held with the option on, BLE enabled, the
+  // brush docked, and this round having actually seen a STATUS reply. Any one of
+  // them missing means disconnect, so a silent brush cannot pin a BLE slot.
+  for (int mask = 0; mask < 16; mask++) {
+    bool option = (mask & 1) != 0;
+    bool ble = (mask & 2) != 0;
+    bool docked = (mask & 4) != 0;
+    bool status = (mask & 8) != 0;
+    bool expected = option && ble && docked && status;
+    TEST_ASSERT_EQUAL(expected, should_hold_link(option, ble, docked, status));
+  }
+}
+
+// === Poll tick decision ===
+
+static PollTickState ready_tick_state() {
+  // A hub past the boot window, off dock, with the slow interval elapsed.
+  PollTickState s{};
+  s.now_ms = 20000000;
+  s.last_poll_ms = 20000000 - 14400000;
+  s.boot_stagger_ms = 90000;
+  s.charging_interval_ms = 600000;
+  s.battery_interval_ms = 14400000;
+  s.ble_enabled = true;
+  s.link_busy = false;
+  s.poll_pending = false;
+  s.adaptive = true;
+  s.docked = false;
+  s.boot_stagger_done = true;
+  return s;
+}
+
+void test_plan_poll_tick_polls_when_due() {
+  TEST_ASSERT_EQUAL(PollAction::POLL, plan_poll_tick(ready_tick_state()).action);
+}
+
+void test_plan_poll_tick_skip_reasons_are_ordered() {
+  // BLE off outranks everything, then a busy link: neither may be masked by the
+  // cadence gate, or a disabled hub would still open connections.
+  PollTickState s = ready_tick_state();
+  s.ble_enabled = false;
+  s.link_busy = true;
+  TEST_ASSERT_EQUAL(PollAction::SKIP_BLE_OFF, plan_poll_tick(s).action);
+  s.ble_enabled = true;
+  TEST_ASSERT_EQUAL(PollAction::SKIP_LINK_BUSY, plan_poll_tick(s).action);
+}
+
+void test_plan_poll_tick_off_dock_waits_for_slow_interval() {
+  PollTickState s = ready_tick_state();
+  s.last_poll_ms = s.now_ms - 600000;  // docked cadence would already be due
+  TEST_ASSERT_EQUAL(PollAction::SKIP_NOT_DUE, plan_poll_tick(s).action);
+  s.docked = true;
+  TEST_ASSERT_EQUAL(PollAction::POLL, plan_poll_tick(s).action);
+}
+
+void test_plan_poll_tick_boot_stagger_defers_once() {
+  // Second hub inside its boot window: defer by the remainder.
+  PollTickState s = ready_tick_state();
+  s.now_ms = 20000;
+  s.poll_pending = true;
+  s.boot_stagger_done = false;
+  PollDecision d = plan_poll_tick(s);
+  TEST_ASSERT_EQUAL(PollAction::DEFER_BOOT_STAGGER, d.action);
+  TEST_ASSERT_EQUAL_UINT32(70000, d.defer_ms);
+  // Latched by the caller: the same tick must then poll, so a millis() wrap
+  // cannot re-defer a hub that is already running.
+  s.boot_stagger_done = true;
+  TEST_ASSERT_EQUAL(PollAction::POLL, plan_poll_tick(s).action);
+}
+
+void test_plan_poll_tick_pending_poll_bypasses_cadence() {
+  // A pending poll (BLE switched back on, poll-now, or a failed connect) lifts
+  // the off-dock gate for one cycle.
+  PollTickState s = ready_tick_state();
+  s.last_poll_ms = s.now_ms;  // just polled
+  TEST_ASSERT_EQUAL(PollAction::SKIP_NOT_DUE, plan_poll_tick(s).action);
+  s.poll_pending = true;
+  TEST_ASSERT_EQUAL(PollAction::POLL, plan_poll_tick(s).action);
+}
+
+// === Session ring ingest plan ===
+
+static SessionRecord ingest_record(uint8_t day, uint8_t hour, uint8_t score) {
+  SessionRecord r{};
+  r.year = 2026;
+  r.month = 6;
+  r.day = day;
+  r.hour = hour;
+  r.scheme = 0;
+  r.duration_s = 120;
+  r.valid_duration_s = 120;
+  r.score = score;
+  r.has_score = true;
+  return r;
+}
+
+void test_plan_ingest_sorts_new_records_oldest_first() {
+  // The ring is unordered; the live state has to settle on the newest session,
+  // so the plan hands them back oldest-first with the newest last.
+  std::vector<SessionRecord> ring = {ingest_record(6, 18, 99), ingest_record(5, 8, 70),
+                                     ingest_record(6, 7, 83)};
+  int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
+  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, now);
+  TEST_ASSERT_EQUAL_UINT(3, plan.to_publish.size());
+  TEST_ASSERT_EQUAL_UINT8(5, plan.to_publish[0].day);
+  TEST_ASSERT_EQUAL_UINT8(7, plan.to_publish[1].hour);
+  TEST_ASSERT_EQUAL_UINT8(18, plan.to_publish[2].hour);
+  TEST_ASSERT_EQUAL_UINT32(session_record_epoch(ring[0]), plan.new_watermark);
+}
+
+void test_plan_ingest_skips_at_or_below_watermark() {
+  // Already-delivered sessions must not fire again after a reboot.
+  std::vector<SessionRecord> ring = {ingest_record(5, 8, 70), ingest_record(6, 7, 83)};
+  int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
+  uint32_t wm = session_record_epoch(ring[0]);
+  SessionIngestPlan plan = plan_session_ingest(ring, wm, 0, now);
+  TEST_ASSERT_EQUAL_UINT(1, plan.to_publish.size());
+  TEST_ASSERT_EQUAL_UINT8(6, plan.to_publish[0].day);
+}
+
+void test_plan_ingest_future_record_never_moves_watermark() {
+  // A bogus future date would push the watermark past every real session and
+  // mute them for good, so it is dropped without advancing anything.
+  std::vector<SessionRecord> ring = {ingest_record(6, 7, 83)};
+  ring[0].year = 2099;
+  int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
+  SessionIngestPlan plan = plan_session_ingest(ring, 100, 0, now);
+  TEST_ASSERT_EQUAL_UINT(0, plan.to_publish.size());
+  TEST_ASSERT_EQUAL_UINT(1, plan.implausible.size());
+  TEST_ASSERT_EQUAL_UINT32(100, plan.new_watermark);
+  TEST_ASSERT_FALSE(plan.persist_newest);
+  TEST_ASSERT_FALSE(plan.newest_plausible);
+}
+
+void test_plan_ingest_persists_only_strictly_newer() {
+  // A peer re-serving the same ring on every poll would otherwise grind flash.
+  std::vector<SessionRecord> ring = {ingest_record(6, 7, 83)};
+  int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
+  uint32_t epoch = session_record_epoch(ring[0]);
+  SessionIngestPlan first = plan_session_ingest(ring, 0, 0, now);
+  TEST_ASSERT_TRUE(first.persist_newest);
+  TEST_ASSERT_EQUAL_UINT32(epoch, first.new_newest_epoch);
+  SessionIngestPlan again = plan_session_ingest(ring, epoch, epoch, now);
+  TEST_ASSERT_FALSE(again.persist_newest);
+  TEST_ASSERT_EQUAL_UINT(0, again.to_publish.size());
+  // Nothing new, but the newest is still sound: the caller republishes it to
+  // keep the live state right without adding a history row.
+  TEST_ASSERT_TRUE(again.newest_plausible);
+}
+
+void test_plan_ingest_unsynced_clock_cannot_judge() {
+  // now_local_epoch 0 means the node clock is unsynced, which must not reject
+  // real sessions.
+  std::vector<SessionRecord> ring = {ingest_record(6, 7, 83)};
+  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, 0);
+  TEST_ASSERT_EQUAL_UINT(1, plan.to_publish.size());
+  TEST_ASSERT_TRUE(plan.persist_newest);
+}
+
+void test_plan_ingest_picks_newest_itself() {
+  // The newest record is found here, not passed in as an index: an index from
+  // the reassembler would address a different record than this vector as soon as
+  // one entry failed to decode.
+  std::vector<SessionRecord> ring = {ingest_record(5, 8, 70), ingest_record(6, 18, 99),
+                                     ingest_record(6, 7, 83)};
+  int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
+  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, now);
+  TEST_ASSERT_TRUE(plan.have_newest);
+  TEST_ASSERT_EQUAL_UINT8(6, plan.newest.day);
+  TEST_ASSERT_EQUAL_UINT8(18, plan.newest.hour);
+  TEST_ASSERT_EQUAL_UINT8(99, plan.newest.score);
+}
+
+void test_plan_ingest_empty_ring_is_inert() {
+  SessionIngestPlan plan = plan_session_ingest({}, 42, 7, 0);
+  TEST_ASSERT_EQUAL_UINT(0, plan.to_publish.size());
+  TEST_ASSERT_EQUAL_UINT32(42, plan.new_watermark);
+  TEST_ASSERT_EQUAL_UINT32(7, plan.new_newest_epoch);
+  TEST_ASSERT_FALSE(plan.persist_newest);
+  TEST_ASSERT_FALSE(plan.newest_plausible);
+  TEST_ASSERT_FALSE(plan.have_newest);
+}
+
+// === Inline (count=0) record precedence ===
+
+void test_accept_inline_only_when_strictly_newer() {
+  // The inline fragment has no zones and no score, so publishing it blanks both.
+  // A brush at rest sends one on every poll, which is why "not older" is not
+  // enough: it has to be strictly newer than what the entities already show.
+  int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
+  uint32_t newest = (uint32_t) civil_to_epoch(2026, 6, 7, 7, 30, 0);
+  TEST_ASSERT_FALSE(accept_inline_record(newest, newest, now));
+  TEST_ASSERT_FALSE(accept_inline_record(newest - 1, newest, now));
+  TEST_ASSERT_TRUE(accept_inline_record(newest + 1, newest, now));
+}
+
+void test_accept_inline_rejects_implausible_future() {
+  int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
+  uint32_t far = (uint32_t) civil_to_epoch(2030, 1, 1, 0, 0, 0);
+  TEST_ASSERT_FALSE(accept_inline_record(far, 0, now));
+  // An unsynced node clock cannot judge, so it must not reject the only session
+  // data available.
+  TEST_ASSERT_TRUE(accept_inline_record(far, 0, 0));
+}
+
+// === Coverage percent ===
+
+void test_coverage_percent_is_whole_and_bounded() {
+  // Rounded at the source: the raw quotient reaches the recorder and the card
+  // verbatim, and 100*83/120 in float32 renders as 69.1666641235352.
+  TEST_ASSERT_EQUAL_FLOAT(69.0f, session_coverage_percent(83, 120));
+  TEST_ASSERT_EQUAL_FLOAT(100.0f, session_coverage_percent(120, 120));
+  // valid > duration comes only from a malformed record; clamp instead of
+  // reporting over 100 percent.
+  TEST_ASSERT_EQUAL_FLOAT(100.0f, session_coverage_percent(200, 120));
+}
+
+void test_coverage_percent_zero_duration_is_nan() {
+  // No duration means no ratio, not a division by zero.
+  TEST_ASSERT_TRUE(std::isnan(session_coverage_percent(0, 0)));
+  TEST_ASSERT_TRUE(std::isnan(session_coverage_percent(50, 0)));
 }
 
 // === Charging-aware adaptive poll cadence ===
@@ -810,25 +1106,25 @@ void test_type1_routing() {
   TEST_ASSERT_EQUAL_UINT8(3, PROFILE_TYPE1.query_cmd_count);
 
   const ProfileCmd &status = PROFILE_TYPE1.query_cmds[0];
-  TEST_ASSERT_EQUAL_INT(TX_MAIN, status.target);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_MAIN, status.target);
   TEST_ASSERT_EQUAL_UINT8(2, status.len);
   const uint8_t status_bytes[] = {0x03, 0x03};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(status_bytes, status.bytes, 2);
 
   const ProfileCmd &settings = PROFILE_TYPE1.query_cmds[1];
-  TEST_ASSERT_EQUAL_INT(TX_MAIN, settings.target);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_MAIN, settings.target);
   TEST_ASSERT_EQUAL_UINT8(3, settings.len);
   const uint8_t settings_bytes[] = {0x03, 0x02, 0x01};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(settings_bytes, settings.bytes, 3);
 
   const ProfileCmd &download = PROFILE_TYPE1.query_cmds[2];
-  TEST_ASSERT_EQUAL_INT(TX_SESSION, download.target);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_SESSION, download.target);
   TEST_ASSERT_EQUAL_UINT8(2, download.len);
   const uint8_t download_bytes[] = {0x03, 0x07};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(download_bytes, download.bytes, 2);
 
-  TEST_ASSERT_EQUAL_INT(TX_MAIN, PROFILE_TYPE1.config_write_target);
-  TEST_ASSERT_EQUAL_INT(SETTINGS_TYPE1_34B, PROFILE_TYPE1.settings_kind);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_MAIN, PROFILE_TYPE1.config_write_target);
+  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_TYPE1_34B, PROFILE_TYPE1.settings_kind);
 }
 
 void test_record_decode_type1_known() {
@@ -850,7 +1146,7 @@ void test_record_decode_type1_known() {
 void test_record_decode_unknown_is_null() {
   // UNKNOWN has no per-record session decode and no session record size.
   TEST_ASSERT_NULL(PROFILE_UNKNOWN.decode_record);
-  TEST_ASSERT_EQUAL_INT(SETTINGS_NONE, PROFILE_UNKNOWN.settings_kind);
+  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_NONE, PROFILE_UNKNOWN.settings_kind);
 }
 
 void test_profile_unknown_contract() {
@@ -858,7 +1154,7 @@ void test_profile_unknown_contract() {
   // decode, no record size and no settings framing. The hub relies on the null
   // decoder to skip the session reassembler for an unrecognised model.
   TEST_ASSERT_NULL(PROFILE_UNKNOWN.decode_record);
-  TEST_ASSERT_EQUAL_INT(SETTINGS_NONE, PROFILE_UNKNOWN.settings_kind);
+  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_NONE, PROFILE_UNKNOWN.settings_kind);
   TEST_ASSERT_EQUAL_UINT8(1, PROFILE_UNKNOWN.confidence);
 }
 
@@ -867,7 +1163,7 @@ void test_profile_unknown_query_status_only() {
   // is model-specific and could mis-decode on an unrecognised device.
   TEST_ASSERT_EQUAL_UINT8(1, PROFILE_UNKNOWN.query_cmd_count);
   const ProfileCmd &status = PROFILE_UNKNOWN.query_cmds[0];
-  TEST_ASSERT_EQUAL_INT(TX_MAIN, status.target);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_MAIN, status.target);
   TEST_ASSERT_EQUAL_UINT8(2, status.len);
   const uint8_t status_bytes[] = {0x03, 0x03};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(status_bytes, status.bytes, 2);
@@ -878,7 +1174,7 @@ void test_profile_type1_contract() {
   // the shared decoder, frames settings as the 34-byte buffer and reads battery
   // from the standard characteristic.
   TEST_ASSERT_NOT_NULL(PROFILE_TYPE1.decode_record);
-  TEST_ASSERT_EQUAL_INT(SETTINGS_TYPE1_34B, PROFILE_TYPE1.settings_kind);
+  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_TYPE1_34B, PROFILE_TYPE1.settings_kind);
   TEST_ASSERT_EQUAL_UINT8(2, PROFILE_TYPE1.confidence);
 }
 
@@ -895,9 +1191,9 @@ void test_profile_z1_contract() {
   // a ported profile (confidence 1) until an OCLEANY5 capture confirms it.
   const OcleanProfile *p = &PROFILE_TYPE_Z1;
   TEST_ASSERT_NOT_NULL(p->decode_record);
-  TEST_ASSERT_EQUAL_INT(SETTINGS_TYPE1_34B, p->settings_kind);
+  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_TYPE1_34B, p->settings_kind);
   TEST_ASSERT_EQUAL_UINT8(1, p->confidence);
-  TEST_ASSERT_EQUAL_INT(TX_MAIN, p->config_write_target);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_MAIN, p->config_write_target);
 }
 
 void test_profile_z1_routing() {
@@ -906,25 +1202,25 @@ void test_profile_z1_routing() {
   TEST_ASSERT_EQUAL_UINT8(3, PROFILE_TYPE_Z1.query_cmd_count);
 
   const ProfileCmd &status = PROFILE_TYPE_Z1.query_cmds[0];
-  TEST_ASSERT_EQUAL_INT(TX_MAIN, status.target);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_MAIN, status.target);
   TEST_ASSERT_EQUAL_UINT8(2, status.len);
   const uint8_t status_bytes[] = {0x03, 0x03};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(status_bytes, status.bytes, 2);
 
   const ProfileCmd &settings = PROFILE_TYPE_Z1.query_cmds[1];
-  TEST_ASSERT_EQUAL_INT(TX_MAIN, settings.target);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_MAIN, settings.target);
   TEST_ASSERT_EQUAL_UINT8(3, settings.len);
   const uint8_t settings_bytes[] = {0x03, 0x02, 0x01};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(settings_bytes, settings.bytes, 3);
 
   const ProfileCmd &download = PROFILE_TYPE_Z1.query_cmds[2];
-  TEST_ASSERT_EQUAL_INT(TX_SESSION, download.target);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_SESSION, download.target);
   TEST_ASSERT_EQUAL_UINT8(2, download.len);
   const uint8_t download_bytes[] = {0x03, 0x07};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(download_bytes, download.bytes, 2);
 
-  TEST_ASSERT_EQUAL_INT(TX_MAIN, PROFILE_TYPE_Z1.config_write_target);
-  TEST_ASSERT_EQUAL_INT(SETTINGS_TYPE1_34B, PROFILE_TYPE_Z1.settings_kind);
+  TEST_ASSERT_EQUAL_INT(WriteTarget::TX_MAIN, PROFILE_TYPE_Z1.config_write_target);
+  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_TYPE1_34B, PROFILE_TYPE_Z1.settings_kind);
 }
 
 // Real inline count=0 frames captured 2026-06-10 from both brushes.
@@ -1081,7 +1377,24 @@ void test_assembler_short_first_packet_rejected() {
   TEST_ASSERT_TRUE(asm_.failed());
 }
 
+void test_assembler_null_feed_rejected() {
+  // A notify can arrive with value_len 0 and a null value pointer; the same
+  // guard the DIS reader needs applies to the stream reassembler.
+  SessionAssembler asm_;
+  asm_.reset();
+  TEST_ASSERT_FALSE(asm_.feed(nullptr, 7));
+  TEST_ASSERT_TRUE(asm_.failed());
+}
+
 // === SettingsAssembler edge branches ===
+
+void test_settings_null_feed_rejected() {
+  SettingsAssembler s;
+  s.reset();
+  TEST_ASSERT_FALSE(s.feed(nullptr, 20));
+  TEST_ASSERT_FALSE(s.has_start());
+  TEST_ASSERT_FALSE(s.has_cont());
+}
 
 void test_settings_cont_then_start_completes() {
   SettingsAssembler s;
@@ -1116,7 +1429,7 @@ void test_settings_duplicate_start_overwrites() {
   TEST_ASSERT_FALSE(s.complete());
 }
 
-int main(int argc, char **argv) {
+int main() {
   UNITY_BEGIN();
 
 
@@ -1158,6 +1471,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_parse_settings_clock_out_of_range_rejected);
 
   RUN_TEST(test_settings_continuation_brush_a);
+  RUN_TEST(test_settings_clock_invalid_fields_rejected);
   RUN_TEST(test_settings_continuation_brush_b);
   RUN_TEST(test_settings_two_frame_complete);
   RUN_TEST(test_settings_short_frame_rejected);
@@ -1174,6 +1488,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_encode_scheme_gear_table);
   RUN_TEST(test_build_scheme_single_frame);
   RUN_TEST(test_build_scheme_split_frames);
+  RUN_TEST(test_build_scheme_split_shortest_second_frame);
   RUN_TEST(test_build_scheme_rejects_bad_step_count);
 
   RUN_TEST(test_build_toggle_default_on_off);
@@ -1184,12 +1499,32 @@ int main(int argc, char **argv) {
 
   RUN_TEST(test_build_set_clock_summer);
   RUN_TEST(test_build_set_clock_winter_sunday_midnight_fields);
+  RUN_TEST(test_build_set_clock_before_2000_clamps_year_byte);
 
   RUN_TEST(test_civil_to_epoch_matches_record_epoch);
+  RUN_TEST(test_civil_to_epoch_january_february_branch);
+  RUN_TEST(test_civil_to_epoch_leap_day);
   RUN_TEST(test_should_resync_below_threshold);
   RUN_TEST(test_should_resync_above_threshold_either_sign);
   RUN_TEST(test_should_resync_exact_threshold_not_exceeded);
   RUN_TEST(test_should_resync_zero_threshold_syncs_on_any_diff);
+  RUN_TEST(test_should_hold_link_requires_every_condition);
+  RUN_TEST(test_plan_poll_tick_polls_when_due);
+  RUN_TEST(test_plan_poll_tick_skip_reasons_are_ordered);
+  RUN_TEST(test_plan_poll_tick_off_dock_waits_for_slow_interval);
+  RUN_TEST(test_plan_poll_tick_boot_stagger_defers_once);
+  RUN_TEST(test_plan_poll_tick_pending_poll_bypasses_cadence);
+  RUN_TEST(test_plan_ingest_sorts_new_records_oldest_first);
+  RUN_TEST(test_plan_ingest_skips_at_or_below_watermark);
+  RUN_TEST(test_plan_ingest_future_record_never_moves_watermark);
+  RUN_TEST(test_plan_ingest_persists_only_strictly_newer);
+  RUN_TEST(test_plan_ingest_unsynced_clock_cannot_judge);
+  RUN_TEST(test_plan_ingest_picks_newest_itself);
+  RUN_TEST(test_plan_ingest_empty_ring_is_inert);
+  RUN_TEST(test_accept_inline_only_when_strictly_newer);
+  RUN_TEST(test_accept_inline_rejects_implausible_future);
+  RUN_TEST(test_coverage_percent_is_whole_and_bounded);
+  RUN_TEST(test_coverage_percent_zero_duration_is_nan);
   RUN_TEST(test_poll_is_due_charging_uses_fast_interval);
   RUN_TEST(test_poll_is_due_off_dock_uses_slow_interval);
 
@@ -1219,8 +1554,10 @@ int main(int argc, char **argv) {
   RUN_TEST(test_assembler_oversized_final_packet_truncates);
   RUN_TEST(test_assembler_feed_after_complete_ignored);
   RUN_TEST(test_assembler_short_first_packet_rejected);
+  RUN_TEST(test_assembler_null_feed_rejected);
   RUN_TEST(test_settings_cont_then_start_completes);
   RUN_TEST(test_settings_non_0302_frame_rejected);
+  RUN_TEST(test_settings_null_feed_rejected);
   RUN_TEST(test_settings_duplicate_start_overwrites);
 
   return UNITY_END();
