@@ -10,8 +10,6 @@ from esphome.const import (
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
-    apply_entity_prefix,
-    hub_name_prefix,
     inject_entity_defaults,
 )
 
@@ -143,9 +141,6 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    config = apply_entity_prefix(
-        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
-    )
     for key, setter, *_row in TEXT_SENSORS:
         if key not in config:
             continue

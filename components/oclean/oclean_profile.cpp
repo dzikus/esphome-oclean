@@ -11,9 +11,9 @@ static const uint8_t TYPE1_SETTINGS_BYTES[] = {0x03, 0x02, 0x01};
 static const uint8_t TYPE1_DOWNLOAD_BYTES[] = {0x03, 0x07};
 
 static const ProfileCmd TYPE1_QUERY_CMDS[] = {
-    {TYPE1_STATUS_BYTES, sizeof(TYPE1_STATUS_BYTES), TX_MAIN, "STATUS"},
-    {TYPE1_SETTINGS_BYTES, sizeof(TYPE1_SETTINGS_BYTES), TX_MAIN, "SETTINGS"},
-    {TYPE1_DOWNLOAD_BYTES, sizeof(TYPE1_DOWNLOAD_BYTES), TX_SESSION, "SESSION_DOWNLOAD"},
+    {TYPE1_STATUS_BYTES, sizeof(TYPE1_STATUS_BYTES), WriteTarget::TX_MAIN, "STATUS"},
+    {TYPE1_SETTINGS_BYTES, sizeof(TYPE1_SETTINGS_BYTES), WriteTarget::TX_MAIN, "SETTINGS"},
+    {TYPE1_DOWNLOAD_BYTES, sizeof(TYPE1_DOWNLOAD_BYTES), WriteTarget::TX_SESSION, "SESSION_DOWNLOAD"},
 };
 
 // === UNKNOWN query sequence ===
@@ -23,7 +23,7 @@ static const ProfileCmd TYPE1_QUERY_CMDS[] = {
 static const uint8_t UNKNOWN_STATUS_BYTES[] = {0x03, 0x03};
 
 static const ProfileCmd UNKNOWN_QUERY_CMDS[] = {
-    {UNKNOWN_STATUS_BYTES, sizeof(UNKNOWN_STATUS_BYTES), TX_MAIN, "STATUS"},
+    {UNKNOWN_STATUS_BYTES, sizeof(UNKNOWN_STATUS_BYTES), WriteTarget::TX_MAIN, "STATUS"},
 };
 
 const OcleanProfile PROFILE_TYPE1 = {
@@ -31,9 +31,9 @@ const OcleanProfile PROFILE_TYPE1 = {
     /*confidence=*/2,
     /*query_cmds=*/TYPE1_QUERY_CMDS,
     /*query_cmd_count=*/sizeof(TYPE1_QUERY_CMDS) / sizeof(TYPE1_QUERY_CMDS[0]),
-    /*config_write_target=*/TX_MAIN,
+    /*config_write_target=*/WriteTarget::TX_MAIN,
     /*decode_record=*/&decode_session_record,
-    /*settings_kind=*/SETTINGS_TYPE1_34B,
+    /*settings_kind=*/SettingsKind::SETTINGS_TYPE1_34B,
 };
 
 const OcleanProfile PROFILE_UNKNOWN = {
@@ -41,9 +41,9 @@ const OcleanProfile PROFILE_UNKNOWN = {
     /*confidence=*/1,
     /*query_cmds=*/UNKNOWN_QUERY_CMDS,
     /*query_cmd_count=*/sizeof(UNKNOWN_QUERY_CMDS) / sizeof(UNKNOWN_QUERY_CMDS[0]),
-    /*config_write_target=*/TX_MAIN,
+    /*config_write_target=*/WriteTarget::TX_MAIN,
     /*decode_record=*/nullptr,
-    /*settings_kind=*/SETTINGS_NONE,
+    /*settings_kind=*/SettingsKind::SETTINGS_NONE,
 };
 
 // === Z1 profile (model OCLEANY5) ===
@@ -55,9 +55,9 @@ const OcleanProfile PROFILE_TYPE_Z1 = {
     /*confidence=*/1,
     /*query_cmds=*/TYPE1_QUERY_CMDS,
     /*query_cmd_count=*/sizeof(TYPE1_QUERY_CMDS) / sizeof(TYPE1_QUERY_CMDS[0]),
-    /*config_write_target=*/TX_MAIN,
+    /*config_write_target=*/WriteTarget::TX_MAIN,
     /*decode_record=*/&decode_session_record,
-    /*settings_kind=*/SETTINGS_TYPE1_34B,
+    /*settings_kind=*/SettingsKind::SETTINGS_TYPE1_34B,
 };
 
 // Order matters: first match wins, so the most specific prefix comes first

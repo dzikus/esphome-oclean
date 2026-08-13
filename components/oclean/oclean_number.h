@@ -1,8 +1,10 @@
 #pragma once
 
+#include "esphome/core/defines.h"
 #include "esphome/core/component.h"
 
-#ifdef USE_ESP32
+// esphome.h pulls in every component header, so guard the platform here too
+#if defined(USE_ESP32) && defined(USE_NUMBER)
 #include "esphome/components/number/number.h"
 #include "esphome/core/preferences.h"
 
@@ -44,8 +46,10 @@ class OcleanCustomParamNumber : public number::Number,
   void set_initial(float v) { this->initial_ = v; }
 
   void setup() override {
-    // salted: auto-created entities on two hubs share an object-id hash and
-    // would otherwise share one flash slot
+    // Salted, because auto-created entities on two hubs share an object-id hash
+    // and would land in one flash slot. Not make_entity_preference(): its key
+    // mixes in the device id, which is empty on a config without sub-devices.
+    // The brush MAC always separates them.
     this->pref_ = global_preferences->make_preference<float>(
         this->get_object_id_hash() ^ this->parent_->pref_salt());
     float v = this->initial_;
@@ -88,4 +92,4 @@ class OcleanCustomParamNumber : public number::Number,
 }  // namespace oclean
 }  // namespace esphome
 
-#endif  // USE_ESP32
+#endif  // USE_ESP32 && USE_NUMBER

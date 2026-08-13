@@ -1,8 +1,10 @@
 #pragma once
 
+#include "esphome/core/defines.h"
 #include "esphome/core/component.h"
 
-#ifdef USE_ESP32
+// esphome.h pulls in every component header, so guard the platform here too
+#if defined(USE_ESP32) && defined(USE_BUTTON)
 #include "esphome/components/button/button.h"
 
 #include "oclean.h"
@@ -41,4 +43,4 @@ class OcleanPollNowButton : public button::Button, public Parented<OcleanHub> {
 }  // namespace oclean
 }  // namespace esphome
 
-#endif  // USE_ESP32
+#endif  // USE_ESP32 && USE_BUTTON

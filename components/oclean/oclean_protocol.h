@@ -352,5 +352,84 @@ bool should_resync_clock(int64_t brush_epoch, int64_t local_epoch, uint32_t thre
 bool poll_is_due(uint32_t since_ms, bool docked, uint32_t charging_interval_ms,
                  uint32_t battery_interval_ms);
 
+// === Poll tick decision ===
+// last_poll_ms only counts once poll_pending is false: millis() legitimately
+// reads 0 after the ~49.7 day wrap, so it cannot double as a never-polled
+// sentinel.
+struct PollTickState {
+  uint32_t now_ms;
+  uint32_t last_poll_ms;
+  uint32_t boot_stagger_ms;  // hub index times the per-hub offset
+  uint32_t charging_interval_ms;
+  uint32_t battery_interval_ms;
+  bool ble_enabled;
+  bool link_busy;  // connected, or a connect already in flight
+  bool poll_pending;
+  bool adaptive;
+  bool docked;
+  bool boot_stagger_done;
+};
+
+enum class PollAction : uint8_t {
+  SKIP_BLE_OFF,
+  SKIP_LINK_BUSY,
+  DEFER_BOOT_STAGGER,  // defer_ms carries how long
+  SKIP_NOT_DUE,
+  POLL,
+};
+
+struct PollDecision {
+  PollAction action;
+  uint32_t defer_ms;
+};
+
+PollDecision plan_poll_tick(const PollTickState &s);
+
+// Share of the session counted as effective brushing. NAN on a record claiming
+// no duration, clamped when a peer reports valid > duration. Rounded here, not
+// on display: the raw float32 quotient reaches the recorder and the card
+// verbatim, and 100*83/120 renders as 69.1666641235352.
+float session_coverage_percent(uint16_t valid_duration_s, uint16_t duration_s);
+
+// A count=0 reply carries the head of the newest already-read record, without
+// zones or score. Publishing it blanks both, so it may only go out when strictly
+// newer than what the entities already show.
+bool accept_inline_record(uint32_t inline_epoch, uint32_t newest_epoch,
+                          int64_t now_local_epoch);
+
+// === Session ring ingest decision ===
+// No I/O in here. Which records are new, where the dedup watermark lands, and
+// whether the newest one is worth a flash write.
+struct SessionIngestPlan {
+  // new records, oldest first: the live state must settle on the most recent one
+  std::vector<SessionRecord> to_publish;
+  // newer than the watermark but dated implausibly far ahead, so dropped without
+  // moving the watermark past a bogus date
+  std::vector<SessionRecord> implausible;
+  uint32_t new_watermark;
+  uint32_t new_newest_epoch;
+  bool persist_newest;
+  bool newest_plausible;
+  // The newest record of the whole ring, new or not: a re-served ring with
+  // nothing new still republishes it to keep the live state right.
+  bool have_newest;
+  SessionRecord newest;
+};
+
+// The newest record is picked here, not passed in. An index from the reassembler
+// would address a different record than the caller's vector as soon as one entry
+// fails to decode. now_local_epoch <= 0 means an unsynced clock, which the
+// plausibility check reads as "cannot judge".
+SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
+                                      uint32_t watermark, uint32_t newest_epoch,
+                                      int64_t now_local_epoch);
+
+// End of a query window. Holding the link costs no brush battery only while the
+// brush sits on its charger, and a round with no STATUS reply cannot vouch for
+// the dock state, so a brush that goes quiet cannot pin a BLE slot on a stale
+// dock reading.
+bool should_hold_link(bool hold_option, bool ble_enabled, bool docked,
+                      bool round_status_seen);
+
 }  // namespace oclean
 }  // namespace esphome

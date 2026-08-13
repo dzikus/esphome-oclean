@@ -3,39 +3,29 @@ on:
   push:
     tags: ["v*.*.*"]
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  release:
-    name: test gate and publish release
+  # Every gate lives in tests.yml; running it here rather than repeating its
+  # steps is what keeps a release from shipping something the PR gates reject.
+  gates:
+    name: test gates
+    uses: ./.github/workflows/test.yml
+  publish:
+    name: publish release
+    needs: gates
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
-      # persist-credentials: false keeps the write-scoped token out of .git so the
-      # third-party toolchains below (esphome/pio deps) cannot reach it. gh below
-      # authenticates via the GH_TOKEN env instead.
+      # persist-credentials: false keeps the write-scoped token out of .git. gh
+      # below authenticates via the GH_TOKEN env instead.
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
-        with:
-          python-version: "3.12"
-      - name: Install ESPHome and PlatformIO
-        run: pip install esphome platformio
-      - name: Check coverage card parses (release gate)
-        run: node --check dist/oclean-coverage-card.js
-      - name: Run protocol unit tests (release gate)
-        run: |
-          set -euo pipefail
-          pio test -d tests -e native < /dev/null
-          echo "--- re-run built binary as source of truth ---"
-          tests/.pio/build/native/program
-      - name: Compile full component (release gate)
-        run: |
-          set -euo pipefail
-          esphome compile .github/ci-build.yaml
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

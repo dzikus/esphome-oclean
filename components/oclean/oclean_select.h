@@ -1,8 +1,10 @@
 #pragma once
 
+#include "esphome/core/defines.h"
 #include "esphome/core/component.h"
 
-#ifdef USE_ESP32
+// esphome.h pulls in every component header, so guard the platform here too
+#if defined(USE_ESP32) && defined(USE_SELECT)
 #include "esphome/components/select/select.h"
 
 #include <string>
@@ -90,8 +92,8 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
     auto packets = build_scheme_packets(pnum, steps);
     bool queued = !packets.empty();
     for (size_t i = 0; i < packets.size(); i++) {
-      std::string label = "brush-scheme";
-      if (packets.size() > 1) label += (i == 0 ? "-a" : "-b");
+      const char *label = "brush-scheme";
+      if (packets.size() > 1) label = (i == 0) ? "brush-scheme-a" : "brush-scheme-b";
       if (!this->parent_->send_command(packets[i], label)) queued = false;
     }
     return queued;
@@ -161,4 +163,4 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
 }  // namespace oclean
 }  // namespace esphome
 
-#endif  // USE_ESP32
+#endif  // USE_ESP32 && USE_SELECT

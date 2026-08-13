@@ -1,26 +1,33 @@
+import logging
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import number
 from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG, UNIT_SECOND
+from esphome.core import CORE
 
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
     UNIT_DAY,
-    apply_entity_prefix,
-    hub_name_prefix,
+    OcleanHub,
     inject_entity_defaults,
     oclean_ns,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
 
 OcleanHeadDaysNumber = oclean_ns.class_(
-    "OcleanHeadDaysNumber", number.Number, cg.Parented
+    "OcleanHeadDaysNumber", number.Number, cg.Parented.template(OcleanHub)
 )
 OcleanCustomParamNumber = oclean_ns.class_(
-    "OcleanCustomParamNumber", number.Number, cg.Component, cg.Parented
+    "OcleanCustomParamNumber",
+    number.Number,
+    cg.Component,
+    cg.Parented.template(OcleanHub),
 )
 
 CONF_HEAD_MAX_DAYS = "head_max_days"
@@ -120,9 +127,6 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    config = apply_entity_prefix(
-        config, _DEFAULT_NAMES, hub_name_prefix(config[CONF_OCLEAN_ID])
-    )
 
     sub = config.get(CONF_HEAD_MAX_DAYS)
     if sub is not None:
@@ -134,6 +138,23 @@ async def to_code(config):
         )
         await cg.register_parented(num, hub)
         cg.add(hub.set_head_max_number(num))
+
+    # The custom-step parameters only reach the brush through the scheme select.
+    # Without a select: platform on this hub they are entities that change
+    # nothing, which is better said than left to be noticed.
+    hub_id = str(config[CONF_OCLEAN_ID])
+    has_select = any(
+        str(plat.get(CONF_OCLEAN_ID)) == hub_id
+        for plat in CORE.config.get("select", [])
+        if plat.get("platform") == "oclean"
+    )
+    if not has_select and any(key in config for key, *_ in CUSTOM_PARAMS):
+        _LOGGER.warning(
+            "oclean: hub '%s' has custom brushing-program numbers but no select: "
+            "platform, so they are inert. Add a select: platform: oclean block "
+            "for this hub, or set each custom_step*: false",
+            hub_id,
+        )
 
     for (
         key,

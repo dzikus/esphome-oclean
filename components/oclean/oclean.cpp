@@ -1,8 +1,18 @@
 #include "oclean.h"
+// each of these pulls in its platform, which is only in the build when the
+// yaml declares it
+#ifdef USE_BUTTON
 #include "oclean_button.h"
+#endif
+#ifdef USE_SWITCH
 #include "oclean_switch.h"
+#endif
+#ifdef USE_SELECT
 #include "oclean_select.h"
+#endif
+#ifdef USE_NUMBER
 #include "oclean_number.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -45,9 +55,19 @@ void OcleanHub::setup() {
       esphome::global_preferences->make_preference<PersistedSession>(hub_hash ^ 0x5E55D47Au);
   PersistedSession last;
   if (this->session_last_pref_.load(&last)) {
-    this->newest_record_epoch_ = session_record_epoch(last.record);
-    this->publish_session_record_(last.record, last.partial != 0);
+    if (last.magic == PERSISTED_SESSION_MAGIC &&
+        last.version == PERSISTED_SESSION_VERSION) {
+      this->newest_record_epoch_ = session_record_epoch(last.record);
+      this->publish_session_record_(last.record, last.partial != 0);
+    } else {
+      // right length, wrong content; the next ring download refills the entities
+      ESP_LOGW(TAG, "[%s] stored session is not v%u (magic 0x%04X, version %u): discarded",
+               this->parent_->address_str(), (unsigned) PERSISTED_SESSION_VERSION,
+               (unsigned) last.magic, (unsigned) last.version);
+    }
   }
+  // static value, so once here instead of on every poll
+  this->publish_(this->mac_text_sensor_, std::string(this->parent_->address_str()));
   // BLEClient sets up later (AFTER_BLUETOOTH) and leaves itself enabled, so a
   // plain set_enabled(false) here is overridden and the client auto-connects at
   // boot, outside any poll cycle.
@@ -62,17 +82,17 @@ void OcleanHub::dump_config() {
   ESP_LOGCONFIG(TAG, "Oclean Hub:");
   ESP_LOGCONFIG(TAG, "  MAC: %s", this->parent_->address_str());
   ESP_LOGCONFIG(TAG, "  Hub: %d of %d", this->hub_index_, this->total_hubs_);
-  ESP_LOGCONFIG(TAG, "  Poll interval: %u ms", (unsigned) this->get_update_interval());
+  // the tick runs at the docked cadence and update() gates the off-dock one, so
+  // get_update_interval() alone would misreport an off-dock brush
+  ESP_LOGCONFIG(TAG, "  Poll interval: %u ms docked / %u ms off dock",
+                (unsigned) this->charging_interval_ms_,
+                (unsigned) this->battery_interval_ms_);
+  ESP_LOGCONFIG(TAG, "  Hold link while docked: %s", YESNO(this->hold_while_docked_));
   ESP_LOGCONFIG(TAG, "  Expose dev sensors: %s", YESNO(this->expose_dev_sensors_));
   // Active protocol profile: the default until the first poll reads the DIS
   // model string and selects the per-device profile.
   ESP_LOGCONFIG(TAG, "  Profile: %s (confidence %u)", this->profile_->name,
                 (unsigned) this->profile_->confidence);
-  // The MAC is static, so publish it once here rather than on every poll.
-  if (this->mac_text_sensor_ != nullptr && !this->mac_published_) {
-    this->mac_text_sensor_->publish_state(this->parent_->address_str());
-    this->mac_published_ = true;
-  }
 }
 
 void OcleanHub::publish_(sensor::Sensor *s, float value) {
@@ -139,50 +159,62 @@ void OcleanHub::set_ble_user_enabled(bool en) {
 }
 
 void OcleanHub::update() {
-  if (!this->ble_user_enabled_) {
-    // Master BLE switch is off: skip the tick entirely. Also covers the
-    // adaptive charging-interval ticks, which run through this same path.
-    ESP_LOGV(TAG, "[%s] poll skipped (BLE user-disabled)", this->parent_->address_str());
-    return;
-  }
-  bool connected = this->node_state == espbt::ClientState::ESTABLISHED;
-  if (connected || this->parent_->enabled) {
-    // A previous cycle has not finished. Skip this tick rather than stacking
-    // connect attempts; the watchdog will force a disconnect if it stalls.
-    ESP_LOGW(TAG, "[%s] poll cycle still active (state=%s), skipping tick",
-             this->parent_->address_str(), this->state_name_(this->state_));
-    return;
-  }
+  PollTickState st{};
+  st.now_ms = millis();
+  st.last_poll_ms = this->last_poll_ms_;
+  st.boot_stagger_ms = uint32_t(this->hub_index_) * BOOT_STAGGER_MS;
+  st.charging_interval_ms = this->charging_interval_ms_;
+  st.battery_interval_ms = this->battery_interval_ms_;
+  st.ble_enabled = this->ble_user_enabled_;
+  st.link_busy = this->node_state == espbt::ClientState::ESTABLISHED ||
+                 this->parent_->enabled;
+  st.poll_pending = this->poll_pending_;
+  st.adaptive = this->adaptive_poll_;
+  st.docked = this->docked_last_;
+  st.boot_stagger_done = this->boot_stagger_done_;
 
-  const uint32_t now = millis();
-  uint32_t stagger = uint32_t(this->hub_index_) * BOOT_STAGGER_MS;
-  if (!this->boot_stagger_done_ && this->poll_pending_ && now < stagger) {
-    // Stagger the first polls after boot so the hubs do not race for the
-    // single scanner. One-shot: latch it so a millis() wrap much later cannot
-    // read as "still in the boot window" and re-defer a running hub.
-    this->boot_stagger_done_ = true;
-    ESP_LOGI(TAG, "[%s] first poll deferred %ums (boot stagger)",
-             this->parent_->address_str(), (unsigned) (stagger - now));
-    this->set_timeout("boot_stagger", stagger - now, [this]() { this->update(); });
-    return;
-  }
-
-  if (this->adaptive_poll_ && !this->poll_pending_ &&
-      !poll_is_due(millis() - this->last_poll_ms_, this->docked_last_,
-                   this->charging_interval_ms_, this->battery_interval_ms_)) {
-    // Off-dock and the slow battery interval has not elapsed yet. The timer ticks
-    // at the fast charging interval, so skip this tick to avoid draining the
-    // brush; a docked brush falls through and is polled at the fast cadence.
-    ESP_LOGV(TAG, "[%s] poll skipped (off-dock, battery interval not due)",
-             this->parent_->address_str());
-    return;
+  PollDecision d = plan_poll_tick(st);
+  switch (d.action) {
+    case PollAction::SKIP_BLE_OFF:
+      // master BLE switch off; also covers the adaptive charging-interval ticks
+      ESP_LOGV(TAG, "[%s] poll skipped (BLE user-disabled)", this->parent_->address_str());
+      return;
+    case PollAction::SKIP_LINK_BUSY:
+      ESP_LOGW(TAG, "[%s] poll cycle still active (state=%s), skipping tick",
+               this->parent_->address_str(), this->state_name_(this->state_));
+      return;
+    case PollAction::DEFER_BOOT_STAGGER:
+      // latch it. A millis() wrap reads as "still in the boot window" and would
+      // re-defer a hub that has been running for weeks
+      this->boot_stagger_done_ = true;
+      ESP_LOGI(TAG, "[%s] first poll deferred %ums (boot stagger)",
+               this->parent_->address_str(), (unsigned) d.defer_ms);
+      this->set_timeout("boot_stagger", d.defer_ms, [this]() { this->update(); });
+      return;
+    case PollAction::SKIP_NOT_DUE:
+      ESP_LOGV(TAG, "[%s] poll skipped (off-dock, battery interval not due)",
+               this->parent_->address_str());
+      return;
+    case PollAction::POLL:
+      break;
   }
 
   ESP_LOGD(TAG, "[%s] starting poll cycle", this->parent_->address_str());
-  this->poll_pending_ = false;
-  this->last_poll_ms_ = millis();
+  this->begin_connect_cycle_(true);
+}
+
+void OcleanHub::arm_cycle_(bool stamp_cadence) {
+  if (stamp_cadence) {
+    this->poll_pending_ = false;
+    this->last_poll_ms_ = millis();
+  }
   this->got_battery_ = false;
   this->got_model_ = false;
+  this->start_watchdog_();
+}
+
+void OcleanHub::begin_connect_cycle_(bool stamp_cadence) {
+  // handles belong to the connection that resolved them; SEARCH_CMPL re-resolves
   this->battery_handle_ = 0;
   this->model_handle_ = 0;
   this->hw_rev_handle_ = 0;
@@ -193,7 +225,7 @@ void OcleanHub::update() {
   this->tx_main_handle_ = 0;
   this->set_state_(State::CONNECTING);
   this->parent_->set_enabled(true);
-  this->start_watchdog_();
+  this->arm_cycle_(stamp_cadence);
 }
 
 void OcleanHub::start_watchdog_() {
@@ -208,6 +240,8 @@ void OcleanHub::start_watchdog_() {
       }
       ESP_LOGW(TAG, "[%s] poll watchdog fired, forcing disconnect",
                this->parent_->address_str());
+      // out of range or asleep otherwise reads in HA like "nothing changed"
+      this->status_set_warning("poll timed out");
       this->disconnect_();
     }
   });
@@ -241,6 +275,7 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
         // the next tick rather than waiting out the full off-dock interval.
         ESP_LOGW(TAG, "[%s] connection open failed, status=%d",
                  this->parent_->address_str(), param->open.status);
+        this->status_set_warning("connection failed");
         this->publish_(this->connected_binary_sensor_, false);
         if (this->state_ == State::CONNECTING) this->poll_pending_ = true;
         this->disconnect_();
@@ -262,11 +297,7 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
         // it still reads and then disconnects instead of idling forever.
         // Stamp the cycle so the adaptive gate does not fire an extra poll
         // right after this adopted cycle completes.
-        this->poll_pending_ = false;
-        this->last_poll_ms_ = millis();
-        this->got_battery_ = false;
-        this->got_model_ = false;
-        this->start_watchdog_();
+        this->arm_cycle_(true);
       }
       this->set_state_(State::DISCOVERING);
       break;
@@ -311,8 +342,10 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
         if (this->node_state != espbt::ClientState::ESTABLISHED) return;
         this->set_state_(State::POLLING);
         // The link reached the brush: stamp the freshness sensor now so a stale
-        // value flags an unreachable brush even if the data reads change nothing.
+        // value flags an unreachable brush even if no reading changed. Also drops
+        // a warning left by an earlier failed cycle.
         this->publish_last_seen_();
+        this->status_clear_warning();
         // Device info is static, so read it at most once a day and serve it
         // from cache on the polls in between to keep each link short.
         bool dis_fresh = this->dis_cached_ &&
@@ -420,10 +453,11 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
 }
 
 void OcleanHub::resolve_handles_() {
-  auto rx_main = espbt::ESPBTUUID::from_raw(READ_NOTIFY_CHAR_UUID);
-  auto rx_session = espbt::ESPBTUUID::from_raw(RECEIVE_BRUSH_UUID);
-  auto tx_session = espbt::ESPBTUUID::from_raw(SEND_BRUSH_CMD_UUID);
-  auto tx_main = espbt::ESPBTUUID::from_raw(WRITE_CHAR_UUID);
+  // parsed once, not on every discovery
+  static const auto rx_main = espbt::ESPBTUUID::from_raw(READ_NOTIFY_CHAR_UUID);
+  static const auto rx_session = espbt::ESPBTUUID::from_raw(RECEIVE_BRUSH_UUID);
+  static const auto tx_session = espbt::ESPBTUUID::from_raw(SEND_BRUSH_CMD_UUID);
+  static const auto tx_main = espbt::ESPBTUUID::from_raw(WRITE_CHAR_UUID);
 
   auto resolve16 = [this](uint16_t svc, uint16_t chr) -> uint16_t {
     auto *c = this->parent_->get_characteristic(svc, chr);
@@ -520,26 +554,27 @@ bool OcleanHub::write_raw_(uint16_t handle, const uint8_t *bytes, size_t len,
   return true;
 }
 
-bool OcleanHub::send_command(std::vector<uint8_t> bytes, std::string name) {
+bool OcleanHub::send_command(std::vector<uint8_t> bytes, const char *name,
+                             WriteKind kind) {
   if (!this->ble_user_enabled_) {
     // Drop, do not queue: a write queued while disabled would fire unannounced
     // whenever BLE comes back, and the optimistic entity state would lie until
     // then.
     ESP_LOGW(TAG, "[%s] command %s ignored: BLE user-disabled",
-             this->parent_->address_str(), name.c_str());
+             this->parent_->address_str(), name);
     return false;
   }
   if (this->pending_writes_.size() >= MAX_PENDING_WRITES) {
     // Queue is full (brush asleep and not draining). Drop the newest write
     // instead of growing the queue without bound. Leave the BLE link alone.
     ESP_LOGW(TAG, "[%s] command %s dropped: write queue full (%u pending)",
-             this->parent_->address_str(), name.c_str(),
+             this->parent_->address_str(), name,
              (unsigned) this->pending_writes_.size());
     return false;
   }
   ESP_LOGI(TAG, "[%s] queued command %s (%u bytes)", this->parent_->address_str(),
-           name.c_str(), (unsigned) bytes.size());
-  this->pending_writes_.push_back(PendingWrite{std::move(bytes), std::move(name)});
+           name, (unsigned) bytes.size());
+  this->pending_writes_.push_back(PendingWrite{std::move(bytes), name, kind});
   // Bring the link up if it is down; the writes flush in the query window once
   // discovery completes. If a cycle is already in flight they flush on its
   // query window (or the next one). Mirrors the capture trigger.
@@ -555,11 +590,8 @@ bool OcleanHub::send_command(std::vector<uint8_t> bytes, std::string name) {
   if (!connected && !this->parent_->enabled) {
     ESP_LOGI(TAG, "[%s] starting poll cycle to flush queued command",
              this->parent_->address_str());
-    this->got_battery_ = false;
-    this->got_model_ = false;
-    this->set_state_(State::CONNECTING);
-    this->parent_->set_enabled(true);
-    this->start_watchdog_();
+    // not a scheduled poll, cadence untouched
+    this->begin_connect_cycle_(false);
   }
   return true;
 }
@@ -638,7 +670,7 @@ void OcleanHub::queue_set_clock_(const char *reason) {
   if (!this->build_clock_command_(&cmd)) return;
   ESP_LOGI(TAG, "[%s] sync-clock (%s) queued, time is sampled again at write",
            this->parent_->address_str(), reason);
-  this->send_command(std::move(cmd), "sync-clock");
+  this->send_command(std::move(cmd), "sync-clock", WriteKind::CLOCK);
 #else
   (void) reason;
 #endif
@@ -651,8 +683,8 @@ void OcleanHub::maybe_auto_sync_clock_(const DeviceSettings &ds) {
   if (!now.is_valid()) return;
   // Do not pile up: if a clock write is already queued, wait for it to flush and
   // be read back before deciding again.
-  for (auto &w : this->pending_writes_)
-    if (w.name == "sync-clock") return;
+  for (const auto &w : this->pending_writes_)
+    if (w.kind == WriteKind::CLOCK) return;
   int64_t brush_epoch =
       civil_to_epoch(ds.year, ds.month, ds.day, ds.hour, ds.minute, ds.second);
   int64_t local_epoch = epoch_of(now);
@@ -703,7 +735,7 @@ uint32_t OcleanHub::flush_pending_writes_() {
   if (this->pending_writes_.empty()) return 0;
   // Config writes go to the characteristic named by the active profile (the
   // main tx char on every active profile).
-  uint16_t write_handle = (this->profile_->config_write_target == TX_SESSION)
+  uint16_t write_handle = (this->profile_->config_write_target == WriteTarget::TX_SESSION)
                               ? this->tx_session_handle_
                               : this->tx_main_handle_;
   uint32_t offset = 0;
@@ -712,22 +744,24 @@ uint32_t OcleanHub::flush_pending_writes_() {
     // below. Nameless timeout: these are fire-once and must not cancel one
     // another, so they cannot share a name.
     std::vector<uint8_t> bytes = std::move(pw.bytes);
-    std::string name = std::move(pw.name);
-    this->set_timeout(offset, [this, write_handle, bytes = std::move(bytes),
-                               name = std::move(name)]() mutable {
+    const char *name = pw.name;
+    WriteKind kind = pw.kind;
+    this->set_timeout(offset, [this, write_handle, kind, name,
+                               bytes = std::move(bytes)]() mutable {
       // The watchdog can disconnect before this fires. Drop the write unless
       // the link is still in the query phase, so it never lands on a dead or
       // freshly reopened connection.
       if (this->state_ != State::POLLING) {
         ESP_LOGD(TAG, "[%s] dropping queued write %s, no longer polling",
-                 this->parent_->address_str(), name.c_str());
+                 this->parent_->address_str(), name);
         return;
       }
-      if (name == "sync-clock") {
+      if (kind == WriteKind::CLOCK) {
+        // a queued write can wait out a whole poll interval, so resample here
         std::vector<uint8_t> fresh;
         if (this->build_clock_command_(&fresh)) bytes = std::move(fresh);
       }
-      this->write_raw_(write_handle, bytes.data(), bytes.size(), name.c_str());
+      this->write_raw_(write_handle, bytes.data(), bytes.size(), name);
     });
     offset += PENDING_WRITE_STAGGER_MS;
   }
@@ -814,20 +848,16 @@ void OcleanHub::publish_session_record_(const SessionRecord &r, bool partial) {
     // Decode the scheme id into the select's option label; an id outside the
     // preset table falls back to the bare number.
     std::string scheme_name;
+#ifdef USE_SELECT
     if (this->scheme_select_ != nullptr)
       scheme_name = this->scheme_select_->name_for_pnum(r.scheme);
+#endif
     if (scheme_name.empty())
       scheme_name = to_string((unsigned) r.scheme);
     this->session_mode_text_sensor_->publish_state(scheme_name);
   }
-  // Coverage: share of the session counted as effective brushing. Rounded to a
-  // whole percent, and clamped to 0-100 in case a peer reports valid > duration.
-  float coverage = NAN;
-  if (r.duration_s > 0) {
-    coverage = roundf(100.0f * (float) r.valid_duration_s / (float) r.duration_s);
-    if (coverage > 100.0f) coverage = 100.0f;
-  }
-  this->publish_(this->session_coverage_sensor_, coverage);
+  this->publish_(this->session_coverage_sensor_,
+                 session_coverage_percent(r.valid_duration_s, r.duration_s));
   for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
     this->publish_(this->zone_sensors_[i], partial ? NAN : (float) r.zones[i]);
   if (this->session_time_text_sensor_ != nullptr) {
@@ -878,8 +908,7 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
              this->parent_->address_str(), inl.year, inl.month, inl.day,
              inl.hour, inl.minute, inl.second, (unsigned) inl.scheme,
              (unsigned) inl.duration_s, (unsigned) inl.valid_duration_s);
-    if (ts > this->newest_record_epoch_ &&
-        session_epoch_plausible(ts, now_local, SESSION_FUTURE_MARGIN_S)) {
+    if (accept_inline_record(ts, this->newest_record_epoch_, now_local)) {
       this->publish_session_record_(inl, true);
       this->newest_record_epoch_ = ts;
     }
@@ -894,51 +923,35 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
   if (!done) return;
 
   uint16_t count = this->session_asm_.record_count();
-  int newest = this->session_asm_.newest_index();
   ESP_LOGD(TAG, "[%s] session stream complete: %u records",
            this->parent_->address_str(), (unsigned) count);
-  // Events are not batched, so every new record can fire one right here; entity
-  // state is, which is why the same records are published one per loop
-  // iteration further down instead of in this loop.
-  std::vector<SessionRecord> new_records;
-  uint32_t max_ts = this->last_session_emitted_;
+  // one decode pass; every decision below, newest included, runs on this vector
+  std::vector<SessionRecord> records;
+  records.reserve(count);
   for (uint16_t i = 0; i < count; i++) {
     SessionRecord rec;
-    if (!this->session_asm_.record(i, &rec)) continue;
-    uint32_t ts = session_record_epoch(rec);
-    if (ts <= this->last_session_emitted_) continue;  // already emitted
-    if (!session_epoch_plausible(ts, now_local, SESSION_FUTURE_MARGIN_S)) {
-      ESP_LOGW(TAG, "[%s] dropping session dated %04u-%02u-%02u: implausibly future",
-               this->parent_->address_str(), rec.year, rec.month, rec.day);
-      continue;  // do not emit or advance the watermark past a bogus date
-    }
-    this->emit_session_event_(rec, ts);
-    new_records.push_back(rec);
-    if (ts > max_ts) max_ts = ts;
+    if (this->session_asm_.record(i, &rec)) records.push_back(rec);
   }
-  // the ring is unordered, so sort oldest-first to make the live state settle on
-  // the most recent session and the recorder rows read in session order
-  std::sort(new_records.begin(), new_records.end(),
-            [](const SessionRecord &a, const SessionRecord &b) {
-              return session_record_epoch(a) < session_record_epoch(b);
-            });
-  if (max_ts > this->last_session_emitted_) {
-    this->last_session_emitted_ = max_ts;
+  SessionIngestPlan plan = plan_session_ingest(records, this->last_session_emitted_,
+                                               this->newest_record_epoch_, now_local);
+
+  for (const auto &rec : plan.implausible) {
+    ESP_LOGW(TAG, "[%s] dropping session dated %04u-%02u-%02u: implausibly future",
+             this->parent_->address_str(), rec.year, rec.month, rec.day);
+  }
+  // events are not batched, entity state is. Hence the one-per-loop publish below.
+  for (const auto &rec : plan.to_publish)
+    this->emit_session_event_(rec, session_record_epoch(rec));
+  if (plan.new_watermark > this->last_session_emitted_) {
+    this->last_session_emitted_ = plan.new_watermark;
     this->session_wm_pref_.save(&this->last_session_emitted_);
   }
   ESP_LOGD(TAG, "[%s] session events emitted: %u (watermark ts=%u)",
-           this->parent_->address_str(), (unsigned) new_records.size(),
+           this->parent_->address_str(), (unsigned) plan.to_publish.size(),
            (unsigned) this->last_session_emitted_);
 
-  // Persisted because the brush never resends an already-read ring: without
-  // this a reboot blanks the session entities until the next brushing. Only a
-  // strictly newer record is written, or a peer re-serving one ring on every
-  // poll would grind the flash.
-  SessionRecord r;
-  bool have_newest =
-      (newest >= 0 && this->session_asm_.record((uint16_t) newest, &r));
-  bool newest_plausible = false;
-  if (have_newest) {
+  if (plan.have_newest) {
+    const SessionRecord &r = plan.newest;
     char score_buf[8];
     if (r.has_score) {
       snprintf(score_buf, sizeof(score_buf), "%u", (unsigned) r.score);
@@ -952,18 +965,20 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
              r.minute, r.second, (unsigned) r.scheme, (unsigned) r.duration_s,
              (unsigned) r.valid_duration_s, score_buf);
 
-    uint32_t epoch = session_record_epoch(r);
-    newest_plausible = session_epoch_plausible(epoch, now_local, SESSION_FUTURE_MARGIN_S);
-    // raising the gate on an older or bogus epoch would lower it, letting a
-    // stale record overwrite the stored one
-    if (newest_plausible && epoch > this->newest_record_epoch_) {
-      PersistedSession ps{r, 0};
+    // Persisted because the brush never resends an already-read ring: without
+    // this a reboot blanks the session entities until the next brushing.
+    if (plan.persist_newest) {
+      PersistedSession ps{PERSISTED_SESSION_MAGIC, PERSISTED_SESSION_VERSION, 0, r};
       this->session_last_pref_.save(&ps);
-      this->newest_record_epoch_ = epoch;
+      this->newest_record_epoch_ = plan.new_newest_epoch;
     }
 
-    // raw dump: the bytes past the mapped offsets are still unidentified
-    const uint8_t *raw = this->session_asm_.raw_record((uint16_t) newest);
+    // bytes past the mapped offsets are still unidentified. Indexed off the
+    // reassembler, not the plan, so a failed decode only mislabels this line.
+    int newest_slot = this->session_asm_.newest_index();
+    const uint8_t *raw = newest_slot >= 0
+                             ? this->session_asm_.raw_record((uint16_t) newest_slot)
+                             : nullptr;
     if (raw != nullptr) {
       ESP_LOGI(TAG, "[%s] newest raw: %s", this->parent_->address_str(),
                format_hex_pretty(raw, SESSION_RECORD_SIZE).c_str());
@@ -974,13 +989,13 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
   // extra latency; the rest are staggered, newest last. A re-served ring with
   // nothing new is republished to keep the live state right without adding a
   // history row.
-  if (!new_records.empty()) {
-    this->publish_session_record_(new_records.front(), false);
-    this->pending_session_publish_.assign(new_records.begin() + 1,
-                                          new_records.end());
+  if (!plan.to_publish.empty()) {
+    this->publish_session_record_(plan.to_publish.front(), false);
+    this->pending_session_publish_.assign(plan.to_publish.begin() + 1,
+                                          plan.to_publish.end());
     this->schedule_next_session_publish_();
-  } else if (have_newest && newest_plausible) {
-    this->publish_session_record_(r, false);
+  } else if (plan.have_newest && plan.newest_plausible) {
+    this->publish_session_record_(plan.newest, false);
   }
 
   // The record stream is in. Hold the link a short while longer for a possible
@@ -1040,7 +1055,11 @@ void OcleanHub::emit_session_event_(const SessionRecord &r, uint32_t ts) {
   ESP_LOGI(TAG, "[%s] session event %s score=%s scheme=%s",
            this->parent_->address_str(), data["local"].c_str(),
            data["score"].c_str(), data["scheme"].c_str());
-#ifdef USE_API
+  // fires whether or not the HA event below is compiled in
+  for (auto *trigger : this->session_triggers_) trigger->trigger(r);
+  // without homeassistant_services the api component turns this call into a
+  // static_assert, so gate it and let the firmware build without events
+#ifdef USE_API_HOMEASSISTANT_SERVICES
   this->fire_homeassistant_event("esphome.oclean_session", data);
 #endif
 }
@@ -1054,10 +1073,15 @@ void OcleanHub::handle_enrichment_notify_(const uint8_t *data, size_t len) {
            format_hex_pretty(data, len).c_str());
   BrushAreasPush ba;
   if (decode_brush_areas_push(data, len, &ba)) {
+    // 8 values x 3 digits + 7 separators = 31. Clamp keeps the arithmetic sound
+    // if that ever stops holding.
     char b[48];
-    int n = 0;
-    for (size_t i = 0; i < BRUSH_AREAS_COUNT; i++)
-      n += snprintf(b + n, sizeof(b) - n, "%s%u", i ? "," : "", ba.values[i]);
+    size_t n = 0;
+    for (size_t i = 0; i < BRUSH_AREAS_COUNT && n < sizeof(b) - 1; i++) {
+      int w = snprintf(b + n, sizeof(b) - n, "%s%u", i ? "," : "", ba.values[i]);
+      if (w <= 0) break;
+      n = std::min(n + (size_t) w, sizeof(b) - 1);
+    }
     ESP_LOGD(TAG, "[%s] brush-areas push (left=0-3 right=4-7): [%s]",
              this->parent_->address_str(), b);
   }
@@ -1095,7 +1119,7 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       }
     }
   } else if (len >= 2 && data[0] == 0x03 && data[1] == 0x02 &&
-             this->profile_->settings_kind == SETTINGS_TYPE1_34B) {
+             this->profile_->settings_kind == SettingsKind::SETTINGS_TYPE1_34B) {
     // The settings response is a two-frame transfer. Feed both 0302 frames into
     // the reassembler and publish from the 34-byte buffer as fields arrive. Only
     // profiles that use the TYPE1 34-byte settings buffer take this path.
@@ -1123,17 +1147,22 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       // Auto-correct the brush clock if it has drifted past the threshold. The
       // brush clock here is freshest; the queued write flushes on the next poll.
       this->maybe_auto_sync_clock_(ds);
+#ifdef USE_SWITCH
       if (this->over_pressure_switch_ != nullptr)
         this->over_pressure_switch_->publish_state(ds.over_pressure);
       if (this->area_reminder_switch_ != nullptr)
         this->area_reminder_switch_->publish_state(ds.area_reminder);
+#endif
       this->publish_(this->head_used_days_sensor_,
                      (float) clamp_head_counter(ds.head_used_days));
       this->publish_(this->head_used_times_sensor_,
                      (float) clamp_head_counter(ds.head_used_times));
       this->publish_(this->timezone_text_sensor_, timezone_index_to_string(ds.tz_index));
+#ifdef USE_SELECT
       if (this->language_select_ != nullptr)
         this->language_select_->publish_language(ds.device_language);
+#endif
+#ifdef USE_NUMBER
       // The head-replacement number entity advertises a 1-365 day range; a raw
       // readback outside it is logged and not published.
       if (this->head_max_number_ != nullptr) {
@@ -1144,12 +1173,15 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
                    this->parent_->address_str(), (unsigned) ds.head_max);
         }
       }
+#endif
     }
     if (this->settings_asm_.has_start()) {
       // Start region: scheme pNum drives the select readback; the config toggles
       // and the raw indices correct their optimistic state.
+#ifdef USE_SELECT
       if (this->scheme_select_ != nullptr)
         this->scheme_select_->publish_pnum(ds.scheme_pnum);
+#endif
       ESP_LOGI(TAG, "[%s] settings: brush_mode=%s volume=%s calendar=%s auto=%s "
                "raise_wake=%s pause=%s fill=%s splash=%s theme=%u vol_idx=%u",
                this->parent_->address_str(), ONOFF(ds.brush_mode_on),
@@ -1158,12 +1190,14 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
                ONOFF(ds.fill_brush), ONOFF(ds.splash_prevent), ds.device_theme,
                ds.volume_index);
       // Writable config toggles: correct their optimistic state from the buffer.
+#ifdef USE_SWITCH
       if (this->brush_pause_switch_ != nullptr)
         this->brush_pause_switch_->publish_state(ds.brush_pause);
       if (this->raise_wake_switch_ != nullptr)
         this->raise_wake_switch_->publish_state(ds.raise_wake);
       if (this->brush_mode_switch_ != nullptr)
         this->brush_mode_switch_->publish_state(ds.brush_mode_on);
+#endif
       // Read-only toggles stay binary sensors. fill_brush and auto_mode are here
       // too: the brush rejects their write opcodes, so they are state, not config.
       this->publish_(this->volume_enabled_binary_sensor_, ds.volume_enabled);
@@ -1198,6 +1232,14 @@ void OcleanHub::maybe_finish_poll_() {
 }
 
 void OcleanHub::set_custom_scheme_param(uint8_t kind, uint8_t index, uint8_t value, bool resend) {
+#ifndef USE_SELECT
+  // the parameters only reach the brush through the select; without it the
+  // number entities are inert
+  (void) kind;
+  (void) index;
+  (void) value;
+  (void) resend;
+#else
   if (this->scheme_select_ == nullptr) return;
   this->scheme_select_->set_custom_param(kind, index, value);
   if (!resend || !this->scheme_select_->custom_active()) return;
@@ -1207,6 +1249,7 @@ void OcleanHub::set_custom_scheme_param(uint8_t kind, uint8_t index, uint8_t val
     if (this->scheme_select_ != nullptr && this->scheme_select_->custom_active())
       this->scheme_select_->send_custom_program();
   });
+#endif
 }
 
 void OcleanHub::trigger_session_capture() {
@@ -1220,13 +1263,8 @@ void OcleanHub::trigger_session_capture() {
     ESP_LOGI(TAG, "[%s] session capture armed, starting poll cycle",
              this->parent_->address_str());
     this->capture_armed_ = true;
-    if (!this->parent_->enabled) {
-      this->got_battery_ = false;
-      this->got_model_ = false;
-      this->set_state_(State::CONNECTING);
-      this->parent_->set_enabled(true);
-      this->start_watchdog_();
-    }
+    // not a scheduled poll, so the cadence bookkeeping stays untouched
+    if (!this->parent_->enabled) this->begin_connect_cycle_(false);
     return;
   }
   // Connected. Only run the query directly when the cycle has settled into
@@ -1234,9 +1272,7 @@ void OcleanHub::trigger_session_capture() {
   // would double-run it and reset the assemblers mid-stream. In that case just
   // arm capture and let the settle-driven query_device_ pick it up.
   if (this->state_ == State::POLLING) {
-    if (this->capture_active_) {
-      // same guard as held_requery_: a query round is open, restarting it
-      // would reset the assemblers with a record stream possibly in flight
+    if (this->query_round_open_()) {
       ESP_LOGI(TAG, "[%s] session capture ignored: query round already open",
                this->parent_->address_str());
       return;
@@ -1259,9 +1295,7 @@ void OcleanHub::trigger_immediate_poll() {
   // query directly on it instead of trying to start a new cycle: update() would
   // skip while connected. Same gate as trigger_session_capture.
   if (this->state_ == State::POLLING) {
-    if (this->capture_active_) {
-      // same guard as held_requery_: a query round is open, restarting it
-      // would reset the assemblers with a record stream possibly in flight
+    if (this->query_round_open_()) {
       ESP_LOGI(TAG, "[%s] poll-now ignored: query round already open",
                this->parent_->address_str());
       return;
@@ -1313,7 +1347,7 @@ void OcleanHub::query_device_(bool capture_mode) {
       break;
     }
     const ProfileCmd &qc = prof->query_cmds[i];
-    uint16_t handle = (qc.target == TX_SESSION) ? this->tx_session_handle_
+    uint16_t handle = (qc.target == WriteTarget::TX_SESSION) ? this->tx_session_handle_
                                                 : this->tx_main_handle_;
     const uint8_t *bytes = qc.bytes;
     uint8_t len = qc.len;
@@ -1353,8 +1387,8 @@ void OcleanHub::finish_or_hold_(const char *reason) {
   // brush that goes silent on a held link cannot pin a BLE slot forever.
   // Holding off the dock would drain the brush battery, which the
   // connect-poll-disconnect cycle exists to avoid.
-  if (this->hold_while_docked_ && this->ble_user_enabled_ && this->docked_last_ &&
-      this->round_status_seen_) {
+  if (should_hold_link(this->hold_while_docked_, this->ble_user_enabled_,
+                       this->docked_last_, this->round_status_seen_)) {
     if (!this->holding_)
       ESP_LOGI(TAG, "[%s] holding connection while docked (%s)",
                this->parent_->address_str(), reason);
@@ -1387,16 +1421,16 @@ void OcleanHub::held_requery_() {
   // Held link still up? If a disconnect slipped in, bail; disconnect_ already
   // cleared the timer and flag.
   if (!this->holding_ || this->node_state != espbt::ClientState::ESTABLISHED) return;
-  // A query round is already open (capture_active_ spans the query window).
-  // Starting another would reset the assemblers mid-stream; writes queued in
-  // the meantime flush at the start of the next round.
-  if (this->capture_active_) return;
+  // Writes queued while a round is open flush at the start of the next one.
+  if (this->query_round_open_()) return;
   ESP_LOGI(TAG, "[%s] held re-query", this->parent_->address_str());
   // Re-arm a watchdog for this round only: if the re-query hangs, disconnect and
   // fall back to the normal cadence rather than leave a zombie held link.
   this->set_timeout("poll_watchdog", WHOLE_POLL_TIMEOUT_MS, [this]() {
     ESP_LOGW(TAG, "[%s] held re-query timed out, leaving held mode",
              this->parent_->address_str());
+    // a brush that goes quiet on a held link is what this warning is for
+    this->status_set_warning("held re-query timed out");
     this->disconnect_();
   });
   // query_device_ resets both assemblers and re-issues the read set, so it is

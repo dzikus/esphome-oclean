@@ -17,7 +17,7 @@ namespace oclean {
 // into the host test build.
 
 // Which characteristic a command is written to.
-enum WriteTarget : uint8_t {
+enum class WriteTarget : uint8_t {
   TX_MAIN = 0,     // the main write characteristic (most commands)
   TX_SESSION = 1,  // the session-download write characteristic
 };
@@ -29,7 +29,7 @@ struct ProfileCmd {
   const char *name;
 };
 
-enum SettingsKind : uint8_t {
+enum class SettingsKind : uint8_t {
   SETTINGS_NONE = 0,   // no settings read for this profile
   SETTINGS_TYPE1_34B,  // two-frame 0302 transfer into a 34-byte buffer
 };

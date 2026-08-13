@@ -1,5 +1,6 @@
 #pragma once
 
+#include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/core/preferences.h"
 
@@ -29,6 +30,10 @@ namespace oclean {
 
 namespace espbt = esphome::esp32_ble_tracker;
 
+// one per newly downloaded session, for automations that do not want to go
+// through the Home Assistant event
+class OcleanSessionTrigger : public Trigger<const SessionRecord &> {};
+
 class OcleanCaptureButton;
 class OcleanCommandSwitch;
 class OcleanSchemeSelect;
@@ -55,6 +60,10 @@ class OcleanHub : public ble_client::BLEClientNode,
 
   void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
+
+  void add_on_session_trigger(OcleanSessionTrigger *t) {
+    this->session_triggers_.push_back(t);
+  }
 
   void set_hub_index(int i) { this->hub_index_ = i; }
   void set_total_hubs(int n) { this->total_hubs_ = n; }
@@ -158,16 +167,36 @@ class OcleanHub : public ble_client::BLEClientNode,
   // bypasses the adaptive off-dock gate
   void trigger_immediate_poll();
 
+  // a clock write is rebuilt at flush time, so the queue carries the kind
+  // instead of switching on the log label
+  enum class WriteKind : uint8_t {
+    PLAIN,
+    CLOCK,
+  };
+
   // bytes are the whole command, opcode included; they flush at the start of the
-  // next query window. False means nothing was queued (BLE off or queue full),
-  // so the caller must skip its optimistic publish.
-  bool send_command(std::vector<uint8_t> bytes, std::string name);
+  // next query window. name labels the log line and must outlive the queue entry
+  // (a literal). False means nothing was queued (BLE off or queue full), so the
+  // caller must skip its optimistic publish.
+  bool send_command(std::vector<uint8_t> bytes, const char *name,
+                    WriteKind kind = WriteKind::PLAIN);
 
   // Warns and writes nothing until the local clock is synced. A mutation, so it
   // runs on a button press only, never on boot or a poll.
   void sync_clock();
 
  protected:
+  // per-cycle flags plus the watchdog, for a link that is already up.
+  // stamp_cadence = count this as a real poll; write and capture cycles do not
+  void arm_cycle_(bool stamp_cadence);
+
+  // link down to up, then arm the cycle
+  void begin_connect_cycle_(bool stamp_cadence);
+
+  // query window open: a record stream may be in flight, and a second round
+  // would reset the assemblers mid-transfer
+  bool query_round_open_() const { return this->capture_active_; }
+
   // caller guarantees a valid local time; reason labels the log line
   void queue_set_clock_(const char *reason);
 
@@ -269,7 +298,6 @@ class OcleanHub : public ble_client::BLEClientNode,
   text_sensor::TextSensor *device_clock_text_sensor_{nullptr};
   text_sensor::TextSensor *mac_text_sensor_{nullptr};
   text_sensor::TextSensor *last_seen_text_sensor_{nullptr};
-  bool mac_published_{false};
 
   sensor::Sensor *head_used_days_sensor_{nullptr};
   sensor::Sensor *head_used_times_sensor_{nullptr};
@@ -316,7 +344,8 @@ class OcleanHub : public ble_client::BLEClientNode,
 
   struct PendingWrite {
     std::vector<uint8_t> bytes;
-    std::string name;
+    const char *name;
+    WriteKind kind;
   };
   std::vector<PendingWrite> pending_writes_{};
 
@@ -324,16 +353,29 @@ class OcleanHub : public ble_client::BLEClientNode,
   // skipped, so a session fires its event once across reboots
   uint32_t last_session_emitted_{0};
   esphome::ESPPreferenceObject session_wm_pref_;
+  // The preference layer takes a blob on its stored length alone, so an older
+  // layout has to be rejected by size, not by inspection: this one runs two
+  // bytes longer than the {record, flag} blob it replaced. Magic and version are
+  // the second line. Change both the size and the version on any layout change
+  // here or in SessionRecord.
+  static constexpr uint16_t PERSISTED_SESSION_MAGIC = 0x0C1E;
+  static constexpr uint8_t PERSISTED_SESSION_VERSION = 1;
   // partial marks an inline fragment, which carries no zones or score
   struct PersistedSession {
-    SessionRecord record;
+    uint16_t magic;
+    uint8_t version;
     uint8_t partial;
+    SessionRecord record;
   };
+  static_assert(sizeof(PersistedSession) > sizeof(SessionRecord) + 2,
+                "PersistedSession must not share a size with the {record, flag} "
+                "layout it replaced, or the length check would accept it");
   esphome::ESPPreferenceObject session_last_pref_;
   // gates the inline fragment: a full record must never downgrade to a partial
   uint32_t newest_record_epoch_{0};
   // oldest-first, drained one per loop iteration
   std::vector<SessionRecord> pending_session_publish_{};
+  std::vector<OcleanSessionTrigger *> session_triggers_{};
 
   // reset each query round
   uint32_t notify_count_this_round_{0};
