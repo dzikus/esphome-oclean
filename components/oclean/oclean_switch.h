@@ -1,11 +1,12 @@
 #pragma once
 
+#include "esphome/core/defines.h"
 #include "esphome/core/component.h"
 
-#ifdef USE_ESP32
+// esphome.h pulls in every component header, so guard the platform here too
+#if defined(USE_ESP32) && defined(USE_SWITCH)
 #include "esphome/components/switch/switch.h"
 
-#include <string>
 #include <vector>
 
 #include "oclean.h"
@@ -25,7 +26,8 @@ class OcleanCommandSwitch : public switch_::Switch, public Parented<OcleanHub> {
     this->on_value_ = on_value;
     this->off_value_ = off_value;
   }
-  void set_label(const std::string &label) { this->label_ = label; }
+  // codegen passes a literal, so no copy is needed
+  void set_label(const char *label) { this->label_ = label; }
 
  protected:
   void write_state(bool state) override {
@@ -40,7 +42,7 @@ class OcleanCommandSwitch : public switch_::Switch, public Parented<OcleanHub> {
   uint8_t b1_{0};
   uint8_t on_value_{0x01};
   uint8_t off_value_{0x00};
-  std::string label_{"switch"};
+  const char *label_{"switch"};
 };
 
 // Local only, nothing reaches the brush: off frees it for the official app.
@@ -66,4 +68,4 @@ class OcleanBleSwitch : public switch_::Switch,
 }  // namespace oclean
 }  // namespace esphome
 
-#endif  // USE_ESP32
+#endif  // USE_ESP32 && USE_SWITCH
