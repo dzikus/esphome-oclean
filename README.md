@@ -206,6 +206,20 @@ key by key. Every individual entity can still be customised; see **Override
 per-entity** below. A complete single-brush config is in
 [`example.yaml`](example.yaml).
 
+Auto-creation is a deliberate departure from the usual ESPHome style, where
+every entity is spelled out in YAML. One brush exposes around fifty of them, and
+listing each by hand would be pages of boilerplate for a device whose entity set
+is fixed by the protocol. The escape hatches are per-entity overrides and
+`false` to drop one.
+
+The four control platforms are optional. Leave `switch`, `number`, `select` or
+`button` out and their code is not compiled into the firmware at all.
+
+That alone does not make the node read-only: `auto_sync_time` defaults to on
+whenever the hub has a `time_id`, and it writes the brush clock (`0201`) on its
+own. For a node that never writes anything, drop the four control platforms
+**and** set `auto_sync_time: false`.
+
 ### Hub options
 
 Set on the `oclean:` entry, not on the platforms.
@@ -493,6 +507,35 @@ Each new session from the brush's ring buffer fires an `esphome.oclean_session`
 event (score, duration, valid duration, coverage, scheme, per-zone values,
 timestamp). A per-brush watermark stored in NVS prevents re-emitting old
 sessions across reboots.
+
+The events need `homeassistant_services: true` under `api:` (it is off by
+default in ESPHome). Without it the firmware still builds and every entity
+works; only the events are compiled out, and validation prints a warning saying
+so.
+
+Independently of the event, each new session also fires the `on_session`
+trigger, so a node can act on a session without Home Assistant in the loop. `x`
+is the decoded record (`score`, `duration_s`, `valid_duration_s`, `scheme`,
+`zones[8]`, the `year`..`second` fields, `has_score`). Trigger and event both
+fire oldest session first, and both run before the session entities are updated,
+so read the session from `x` rather than from the entity states:
+
+```yaml
+oclean:
+  - id: brush
+    ble_client_id: brush_ble
+    on_session:
+      - logger.log:
+          format: "brushed %us, score %u"
+          args: ["(unsigned) x.duration_s", "(unsigned) x.score"]
+```
+
+```yaml
+api:
+  encryption:
+    key: !secret api_encryption_key
+  homeassistant_services: true
+```
 
 The optional `oclean_stats` integration (Installation, path 3) writes these into
 long-term statistics under their real past timestamps, so brushing history charts

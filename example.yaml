@@ -26,7 +26,8 @@ logger:
 api:
   encryption:
     key: !secret api_encryption_key
-  # The component fires an esphome.oclean_session event per brushing session.
+  # Required for the esphome.oclean_session event (one per brushing session).
+  # Leave it out and everything else still works; only the events go away.
   homeassistant_services: true
 
 ota:
@@ -92,8 +93,10 @@ text_sensor:
 switch:
   - platform: oclean
     oclean_id: brush_hub
-    area_reminder:
-      name: Area reminder
+    # area_reminder and the other dev-only toggles need
+    # expose_dev_sensors: true on the hub, so they are not shown here.
+    raise_wake:
+      name: Raise to wake
     over_pressure:
       name: Over-pressure alert
 
