@@ -235,7 +235,7 @@ Set on the `oclean:` entry, not on the platforms.
 | `auto_sync_time` | bool | on when `time_id` is set, off otherwise | Resync the brush clock during a poll when it has drifted past `sync_drift_threshold`. Explicit `true` without `time_id` fails validation. |
 | `sync_drift_threshold` | time | `120s` | Drift that triggers an auto resync. `0s` resyncs whenever the clocks differ by at least one second. |
 | `expose_dev_sensors` | bool | `false` | Creates the dev-gated entities (see the per-platform tables). |
-| `name_prefix` | string | derived when more than one hub is configured, empty otherwise | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Derived from the hub id with a leading `oclean_` stripped, so `oclean_brush_b` gives `Brush B Score`. Set it explicitly to choose the wording, or to `""` to opt out. Names you write yourself are never touched. See **Two brushes on one ESP32**. |
+| `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
 
 The brushing-mode select additionally accepts `custom_modes` (a list of named
 programs); that option lives under the `select:` platform, not the hub. See
@@ -479,14 +479,9 @@ publish over each other. The native API is unaffected: it passes `device_id`
 next to the key and Home Assistant 2025.8+ tracks entities as
 `(device_id, key)`.
 
-The component therefore prefixes its own default names as soon as a second hub
-is configured, taking the prefix from the hub id:
-
-```
-hub_a -> "Hub A Battery"        oclean_brush_b -> "Brush B Battery"
-```
-
-Set `name_prefix` on each hub to choose the wording:
+Nothing is renamed for you. A second hub without `name_prefix` logs a warning
+during validation and leaves the names as they are. Set it per hub to separate
+them:
 
 ```yaml
 oclean:
@@ -498,8 +493,25 @@ oclean:
     name_prefix: "Brush B"
 ```
 
-Set it to `""` to keep the bare names, which is safe if you only use the native
-API. A single-brush node is never prefixed.
+`Battery` on `hub_a` then reads `Brush A Battery`. The prefix goes on before
+validation, so unlike a rename in code generation it also settles the
+duplicate-name check, and `esphome config` shows the names the firmware
+registers.
+
+`name_prefix: ""` keeps the bare names and silences the warning for that hub.
+That is a permanent choice, not a workaround, and it is safe if the native API
+is all you use.
+
+Two things to know before adding the option to a brush already in use:
+
+- It renames every entity that still carries a default name, so Home Assistant
+  sees new entity ids and the history, dashboards and automations built on the
+  old ones stop following. Set it on every hub in one edit and flash once.
+- Under a sub-device Home Assistant already puts the device name in front of the
+  entity name, so a prefix equal to the device name reads twice in the entity
+  id. Keep it short, or leave it unset.
+
+Names you write yourself are never touched, in either direction.
 
 ### Session history in Home Assistant
 

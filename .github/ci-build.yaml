@@ -64,7 +64,7 @@ oclean:
           format: "session dur=%us valid=%us score=%u"
           args:
             ["(unsigned) x.duration_s", "(unsigned) x.valid_duration_s", "(unsigned) x.score"]
-  # Second hub: compiles the explicit name_prefix, and makes hub_test derive one.
+  # hub_test stays without a prefix so the multi-hub warning runs too.
   - id: hub_second
     ble_client_id: ble_second
     name_prefix: "Second"
