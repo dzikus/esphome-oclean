@@ -78,10 +78,10 @@ jobs:
       - name: Compile the esphome-free layers under strict warnings
         run: |
           set -euo pipefail
-          STRICT="-std=gnu++20 -fsyntax-only -Werror -Wall -Wextra -Wconversion
-                  -Wsign-conversion -Wshadow -Wold-style-cast -I components/oclean"
-          g++ $STRICT components/oclean/oclean_protocol.cpp
-          g++ $STRICT components/oclean/oclean_profile.cpp
+          strict=(-std=gnu++20 -fsyntax-only -Werror -Wall -Wextra -Wconversion
+                  -Wsign-conversion -Wshadow -Wold-style-cast -I components/oclean)
+          g++ "${strict[@]}" components/oclean/oclean_protocol.cpp
+          g++ "${strict[@]}" components/oclean/oclean_profile.cpp
   clang-tidy:
     name: clang-tidy (esp32 compile database)
     needs: lint
