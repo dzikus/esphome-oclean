@@ -137,43 +137,25 @@ def _raw_hubs():
     return [hub for hub in hubs if isinstance(hub, dict)]
 
 
+def _raw_hub(hub_id):
+    hubs = _raw_hubs()
+    if hub_id is None:
+        return hubs[0] if len(hubs) == 1 else None
+    target = str(hub_id)
+    for hub in hubs:
+        if str(hub.get(CONF_ID)) == target:
+            return hub
+    return None
+
+
 def entity_name_prefix(hub_id):
     # mqtt topics and unique_id are built from the name alone; the api key is a
     # hash of it. No device in either, so two brushes with the same default names
     # collide on mqtt and in any client that keys by name.
-    hubs = _raw_hubs()
-    conf = None
-    if hub_id is None:
-        # A platform block without oclean_id only resolves against a single hub.
-        if len(hubs) == 1:
-            conf = hubs[0]
-    else:
-        target = str(hub_id)
-        for hub in hubs:
-            if str(hub.get(CONF_ID)) == target:
-                conf = hub
-                break
+    conf = _raw_hub(hub_id)
     if conf is None:
         return ""
-    explicit = conf.get(CONF_NAME_PREFIX)
-    if explicit is not None:
-        return str(explicit).strip()
-    # A lone brush cannot collide with itself, and prefixing it would rename
-    # every entity of every existing single-brush install.
-    if len(hubs) < 2:
-        return ""
-    hub_key = conf.get(CONF_ID)
-    return _prefix_from_hub_id(str(hub_key)) if hub_key is not None else ""
-
-
-def _prefix_from_hub_id(hub_id):
-    text = hub_id
-    if text.startswith("oclean_"):
-        text = text[len("oclean_") :]
-    text = text.replace("_", " ").replace("-", " ")
-    # Only the leading letter of each word is touched, so an id like oclean_XPro
-    # keeps its own capitalisation.
-    return " ".join(w[:1].upper() + w[1:] for w in text.split())
+    return str(conf.get(CONF_NAME_PREFIX, "")).strip()
 
 
 def inject_entity_defaults(config, rows, hidden=frozenset(), opt_in=frozenset()):
@@ -209,20 +191,18 @@ def inject_entity_defaults(config, rows, hidden=frozenset(), opt_in=frozenset())
     return config
 
 
-def _validate_hub_ids_are_explicit(config):
-    # An auto-generated id does not exist yet in the raw config, so a hub without
-    # id: cannot be matched to the platform block referencing it and would keep
-    # the bare names. That collides on mqtt and in any client keyed by name, and
-    # surfaces as a wall of duplicate-entity errors. One line beats fifty.
+def _validate_name_prefix_is_reachable(config):
+    # An auto-generated id is not in the raw config, so the prefix could not
+    # be matched to the platform blocks and would be dropped silently.
     hubs = _raw_hubs()
-    if len(hubs) < 2 or all(CONF_ID in hub for hub in hubs):
+    if len(hubs) < 2:
         return config
-    raise cv.Invalid(
-        "with more than one oclean hub, every hub needs an explicit id: so its "
-        "entities can be named apart (id: brush_a -> 'Brush A Battery'). Set "
-        "name_prefix on a hub to choose the wording, or name_prefix: '' to keep "
-        "the bare names."
-    )
+    if any(CONF_NAME_PREFIX in hub and CONF_ID not in hub for hub in hubs):
+        raise cv.Invalid(
+            "a hub with name_prefix also needs an explicit id:, so the prefix "
+            "can be matched to the platform blocks that name it in oclean_id."
+        )
+    return config
 
 
 def _validate_name_prefix(value):
@@ -318,7 +298,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(ble_client.BLE_CLIENT_SCHEMA),
     _validate_auto_sync_time,
     _validate_adaptive_poll,
-    _validate_hub_ids_are_explicit,
+    _validate_name_prefix_is_reachable,
     cv.require_esphome_version(2026, 1, 0),
 )
 
@@ -381,10 +361,26 @@ def _one_hub_per_ble_client(config):
     return config
 
 
+def _warn_on_shared_default_names(config):
+    hub_count = len(fv.full_config.get().get(DOMAIN, []))
+    if hub_count > 1 and CONF_NAME_PREFIX not in config:
+        _LOGGER.warning(
+            "oclean hub '%s' has no name_prefix and %d hubs are configured. "
+            "Their entities keep the same default names, so they share api keys "
+            "and mqtt topics, and only a client that reads device_id can tell "
+            "the brushes apart. Set name_prefix per hub to give each brush its "
+            "own names, or name_prefix: '' to keep the current ones and silence "
+            "this.",
+            config[CONF_ID],
+            hub_count,
+        )
+    return config
+
+
 def _final_validate(config):
     _one_hub_per_ble_client(config)
     _warn_if_session_events_unavailable(config)
-    return config
+    return _warn_on_shared_default_names(config)
 
 
 FINAL_VALIDATE_SCHEMA = _final_validate

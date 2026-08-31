@@ -1,9 +1,10 @@
 // Unit tests for oclean_protocol. Run `pio test -e native` from tests/.
 // Fixtures in fixtures.h.
 #include <unity.h>
-#include "oclean_protocol.h"
-#include "oclean_profile.h"
+
 #include "fixtures.h"
+#include "oclean_profile.h"
+#include "oclean_protocol.h"
 // Pure C++ functions in oclean_protocol via single-TU include (no separate .o linkage).
 #include "../../components/oclean/oclean_protocol.cpp"
 // Profile table + model-to-profile lookup, same single-TU include style.
@@ -124,7 +125,8 @@ void test_decode_record_aborted() {
 void test_decode_record_no_score() {
   // Synthetic: take the normal record and blank the score byte (offset 33).
   uint8_t rec[SESSION_RECORD_SIZE];
-  for (size_t i = 0; i < SESSION_RECORD_SIZE; i++) rec[i] = fixtures::SESSION_REC_NORMAL[i];
+  for (size_t i = 0; i < SESSION_RECORD_SIZE; i++)
+    rec[i] = fixtures::SESSION_REC_NORMAL[i];
   rec[33] = SESSION_NO_SCORE;
   SessionRecord r;
   TEST_ASSERT_TRUE(decode_session_record(rec, &r));
@@ -139,8 +141,8 @@ void test_decode_record_null_rejected() {
 
 void test_record_newer_compares_timestamp() {
   SessionRecord a, b;
-  decode_session_record(fixtures::SESSION_REC_NORMAL, &a);   // 05-01 14:25:13
-  decode_session_record(fixtures::SESSION_REC_HIGH, &b);     // 05-02 09:09:44
+  decode_session_record(fixtures::SESSION_REC_NORMAL, &a);  // 05-01 14:25:13
+  decode_session_record(fixtures::SESSION_REC_HIGH, &b);    // 05-02 09:09:44
   TEST_ASSERT_TRUE(session_record_newer(b, a));
   TEST_ASSERT_FALSE(session_record_newer(a, b));
   TEST_ASSERT_FALSE(session_record_newer(a, a));
@@ -337,9 +339,8 @@ void test_parse_settings_clock_out_of_range_rejected() {
 void test_settings_continuation_brush_a() {
   // Real continuation frame, Brush A: over-pressure ON, area-reminder ON,
   // head used 1051 days / 1223 sessions, clock 2026-06-04 00:12:34.
-  const uint8_t cont[] = {0x03, 0x02, 0x1A, 0x06, 0x04, 0x00, 0x0C, 0x22, 0x01,
-                          0x01, 0x0F, 0x00, 0xF0, 0x04, 0x1B, 0x04, 0xC7, 0x0C,
-                          0x00, 0x00, 0x00};
+  const uint8_t cont[] = {0x03, 0x02, 0x1A, 0x06, 0x04, 0x00, 0x0C, 0x22, 0x01, 0x01, 0x0F,
+                          0x00, 0xF0, 0x04, 0x1B, 0x04, 0xC7, 0x0C, 0x00, 0x00, 0x00};
   SettingsAssembler asm_;
   asm_.reset();
   TEST_ASSERT_FALSE(asm_.feed(cont, sizeof(cont)));  // continuation alone is not complete
@@ -392,9 +393,8 @@ void test_settings_clock_invalid_fields_rejected() {
 void test_settings_continuation_brush_b() {
   // Real continuation frame, Brush B: over-pressure OFF, area-reminder ON,
   // head used 173 days / 213 sessions, clock 2026-06-04 00:20:10.
-  const uint8_t cont[] = {0x03, 0x02, 0x1A, 0x06, 0x04, 0x00, 0x14, 0x0A, 0x00,
-                          0x01, 0x0F, 0x00, 0xF0, 0x00, 0xAD, 0x00, 0xD5, 0x03,
-                          0x00, 0x00, 0x00};
+  const uint8_t cont[] = {0x03, 0x02, 0x1A, 0x06, 0x04, 0x00, 0x14, 0x0A, 0x00, 0x01, 0x0F,
+                          0x00, 0xF0, 0x00, 0xAD, 0x00, 0xD5, 0x03, 0x00, 0x00, 0x00};
   SettingsAssembler asm_;
   asm_.reset();
   asm_.feed(cont, sizeof(cont));
@@ -422,15 +422,14 @@ void test_settings_two_frame_complete() {
   // start payload index 11 = wire byte 15. Set it to 72 and confirm readback.
   uint8_t start[20] = {0x03, 0x02, 0x23, 0x24};
   start[4 + 11] = 72;  // buffer[11] = active scheme pNum
-  const uint8_t cont[] = {0x03, 0x02, 0x1A, 0x06, 0x04, 0x00, 0x0C, 0x22, 0x01,
-                          0x01, 0x0F, 0x00, 0xF0, 0x04, 0x1B, 0x04, 0xC7, 0x0C,
-                          0x00, 0x00, 0x00};
+  const uint8_t cont[] = {0x03, 0x02, 0x1A, 0x06, 0x04, 0x00, 0x0C, 0x22, 0x01, 0x01, 0x0F,
+                          0x00, 0xF0, 0x04, 0x1B, 0x04, 0xC7, 0x0C, 0x00, 0x00, 0x00};
   SettingsAssembler asm_;
   asm_.reset();
   TEST_ASSERT_FALSE(asm_.feed(start, sizeof(start)));  // start alone is not complete
   TEST_ASSERT_TRUE(asm_.has_start());
-  TEST_ASSERT_FALSE(asm_.complete());                  // one frame: not yet complete
-  TEST_ASSERT_TRUE(asm_.feed(cont, sizeof(cont)));     // both frames -> complete
+  TEST_ASSERT_FALSE(asm_.complete());               // one frame: not yet complete
+  TEST_ASSERT_TRUE(asm_.feed(cont, sizeof(cont)));  // both frames -> complete
   TEST_ASSERT_TRUE(asm_.complete());
   DeviceSettings ds;
   parse_device_settings(asm_.buffer(), &ds);
@@ -451,9 +450,8 @@ void test_settings_start_fields_brush_b() {
   // Real start frame, Brush B: volume off, calendar on, scheme 0, head used time
   // 393. The toggle decode matches Brush A; the distinguishing values are the
   // active scheme (0) and head used time.
-  const uint8_t start[] = {0x03, 0x02, 0x23, 0x24, 0x0C, 0x01, 0x01, 0x00, 0x00,
-                           0x00, 0x00, 0x00, 0x0C, 0x01, 0x00, 0x00, 0x00, 0x00,
-                           0x01, 0x89};
+  const uint8_t start[] = {0x03, 0x02, 0x23, 0x24, 0x0C, 0x01, 0x01, 0x00, 0x00, 0x00,
+                           0x00, 0x00, 0x0C, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x89};
   SettingsAssembler asm_;
   asm_.reset();
   TEST_ASSERT_FALSE(asm_.feed(start, sizeof(start)));  // start alone is not complete
@@ -465,11 +463,11 @@ void test_settings_start_fields_brush_b() {
   TEST_ASSERT_TRUE(ds.raise_wake);
   TEST_ASSERT_FALSE(ds.fill_brush);
   TEST_ASSERT_FALSE(ds.auto_mode);
-  TEST_ASSERT_FALSE(ds.volume_enabled);   // buffer 8 = 0x0C, not zero -> off
+  TEST_ASSERT_FALSE(ds.volume_enabled);  // buffer 8 = 0x0C, not zero -> off
   TEST_ASSERT_EQUAL_UINT8(1, ds.volume_index);
   TEST_ASSERT_TRUE(ds.calendar_enabled);  // buffer 10 = 0 -> on
   TEST_ASSERT_EQUAL_UINT8(0, ds.scheme_pnum);
-  TEST_ASSERT_TRUE(ds.brush_mode_on);     // buffer 12 = 0x00, not 0xEC -> on
+  TEST_ASSERT_TRUE(ds.brush_mode_on);  // buffer 12 = 0x00, not 0xEC -> on
   TEST_ASSERT_FALSE(ds.splash_prevent);
   TEST_ASSERT_EQUAL_UINT16(393, ds.head_used_time);
 }
@@ -479,12 +477,10 @@ void test_settings_two_frame_full_brush_a() {
   // Pins every read-parity field including the inverted volume/calendar toggles,
   // the 0xEC brush-mode sentinel, the timezone index (16, not the assumed 15),
   // and the head-max readback (90, matching the 0217 write).
-  const uint8_t start[] = {0x03, 0x02, 0x23, 0x24, 0x0C, 0x01, 0x01, 0x00, 0x00,
-                           0x00, 0x00, 0x00, 0x0C, 0x01, 0x00, 0x58, 0x00, 0x00,
-                           0x00, 0x02};
-  const uint8_t cont[] = {0x03, 0x02, 0x1A, 0x06, 0x05, 0x09, 0x03, 0x0C, 0x01,
-                          0x01, 0x10, 0x00, 0x5A, 0x00, 0x01, 0x00, 0x01, 0x03,
-                          0x00, 0x00, 0x00};
+  const uint8_t start[] = {0x03, 0x02, 0x23, 0x24, 0x0C, 0x01, 0x01, 0x00, 0x00, 0x00,
+                           0x00, 0x00, 0x0C, 0x01, 0x00, 0x58, 0x00, 0x00, 0x00, 0x02};
+  const uint8_t cont[] = {0x03, 0x02, 0x1A, 0x06, 0x05, 0x09, 0x03, 0x0C, 0x01, 0x01, 0x10,
+                          0x00, 0x5A, 0x00, 0x01, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00};
   SettingsAssembler asm_;
   asm_.reset();
   asm_.feed(start, sizeof(start));
@@ -529,8 +525,8 @@ void test_brush_areas_push_y3p_valid() {
   // never emits a brush-areas push (021f) on Y3P, so the decoder is exercised
   // here purely against a hand-built frame matching the documented layout.
   // 02 1f 00 00 0f 00 0f 21 [11 23 01 0d 12 0f 01 0f] -> values at bytes 8-15.
-  const uint8_t p[] = {0x02, 0x1F, 0x00, 0x00, 0x0F, 0x00, 0x0F, 0x21,
-                       0x11, 0x23, 0x01, 0x0D, 0x12, 0x0F, 0x01, 0x0F, 0x12, 0x00};
+  const uint8_t p[] = {0x02, 0x1F, 0x00, 0x00, 0x0F, 0x00, 0x0F, 0x21, 0x11,
+                       0x23, 0x01, 0x0D, 0x12, 0x0F, 0x01, 0x0F, 0x12, 0x00};
   BrushAreasPush out;
   TEST_ASSERT_TRUE(decode_brush_areas_push(p, sizeof(p), &out));
   const uint8_t expected[] = {0x11, 0x23, 0x01, 0x0D, 0x12, 0x0F, 0x01, 0x0F};
@@ -538,8 +534,7 @@ void test_brush_areas_push_y3p_valid() {
 }
 
 void test_brush_areas_push_t1_prefix() {
-  const uint8_t p[] = {0x26, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                       0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+  const uint8_t p[] = {0x26, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
   BrushAreasPush out;
   TEST_ASSERT_TRUE(decode_brush_areas_push(p, sizeof(p), &out));
   TEST_ASSERT_EQUAL_UINT8(0x01, out.values[0]);
@@ -547,8 +542,7 @@ void test_brush_areas_push_t1_prefix() {
 }
 
 void test_brush_areas_push_bad_prefix_rejected() {
-  const uint8_t p[] = {0x03, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                       0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+  const uint8_t p[] = {0x03, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
   BrushAreasPush out;
   TEST_ASSERT_FALSE(decode_brush_areas_push(p, sizeof(p), &out));
 }
@@ -564,11 +558,14 @@ void test_raw_record_matches_input() {
   // Single-record stream: header then 42 record bytes; raw_record(0) must point
   // at the unmodified record bytes.
   uint8_t rec[SESSION_RECORD_SIZE];
-  for (size_t i = 0; i < SESSION_RECORD_SIZE; i++) rec[i] = uint8_t(i + 1);
+  for (size_t i = 0; i < SESSION_RECORD_SIZE; i++)
+    rec[i] = uint8_t(i + 1);
   uint8_t stream[SESSION_HEADER_LEN + SESSION_RECORD_SIZE];
   const uint8_t header[SESSION_HEADER_LEN] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x01};
-  for (size_t i = 0; i < SESSION_HEADER_LEN; i++) stream[i] = header[i];
-  for (size_t i = 0; i < SESSION_RECORD_SIZE; i++) stream[SESSION_HEADER_LEN + i] = rec[i];
+  for (size_t i = 0; i < SESSION_HEADER_LEN; i++)
+    stream[i] = header[i];
+  for (size_t i = 0; i < SESSION_RECORD_SIZE; i++)
+    stream[SESSION_HEADER_LEN + i] = rec[i];
 
   SessionAssembler asm_;
   asm_.reset();
@@ -598,8 +595,7 @@ void test_build_scheme_single_frame() {
   std::vector<SchemeStep> steps = {{2, 30}, {2, 30}, {3, 60}};
   auto packets = build_scheme_packets(2, steps);
   TEST_ASSERT_EQUAL_UINT(1, packets.size());
-  const uint8_t expected[] = {0x02, 0x06, 0x02, 0x03, 0x06, 0x02, 0x1E,
-                              0x06, 0x02, 0x1E, 0x07, 0x03, 0x3C, 0x00, 0x05};
+  const uint8_t expected[] = {0x02, 0x06, 0x02, 0x03, 0x06, 0x02, 0x1E, 0x06, 0x02, 0x1E, 0x07, 0x03, 0x3C, 0x00, 0x05};
   TEST_ASSERT_EQUAL_UINT(sizeof(expected), packets[0].size());
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, packets[0].data(), sizeof(expected));
 }
@@ -607,8 +603,7 @@ void test_build_scheme_single_frame() {
 void test_build_scheme_split_frames() {
   // pNum 72, six steps: 24-byte program exceeds 20, so it splits across two
   // writes. All six gears are above 12, so each encodes as 0.
-  std::vector<SchemeStep> steps = {{16, 30}, {16, 30}, {24, 30},
-                                   {16, 30}, {16, 30}, {37, 30}};
+  std::vector<SchemeStep> steps = {{16, 30}, {16, 30}, {24, 30}, {16, 30}, {16, 30}, {37, 30}};
   auto packets = build_scheme_packets(0x48, steps);
   TEST_ASSERT_EQUAL_UINT(2, packets.size());
 
@@ -898,8 +893,7 @@ static SessionRecord ingest_record(uint8_t day, uint8_t hour, uint8_t score) {
 void test_plan_ingest_sorts_new_records_oldest_first() {
   // The ring is unordered; the live state has to settle on the newest session,
   // so the plan hands them back oldest-first with the newest last.
-  std::vector<SessionRecord> ring = {ingest_record(6, 18, 99), ingest_record(5, 8, 70),
-                                     ingest_record(6, 7, 83)};
+  std::vector<SessionRecord> ring = {ingest_record(6, 18, 99), ingest_record(5, 8, 70), ingest_record(6, 7, 83)};
   int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
   SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, now);
   TEST_ASSERT_EQUAL_UINT(3, plan.to_publish.size());
@@ -962,8 +956,7 @@ void test_plan_ingest_picks_newest_itself() {
   // The newest record is found here, not passed in as an index: an index from
   // the reassembler would address a different record than this vector as soon as
   // one entry failed to decode.
-  std::vector<SessionRecord> ring = {ingest_record(5, 8, 70), ingest_record(6, 18, 99),
-                                     ingest_record(6, 7, 83)};
+  std::vector<SessionRecord> ring = {ingest_record(5, 8, 70), ingest_record(6, 18, 99), ingest_record(6, 7, 83)};
   int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
   SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, now);
   TEST_ASSERT_TRUE(plan.have_newest);
@@ -989,7 +982,7 @@ void test_accept_inline_only_when_strictly_newer() {
   // A brush at rest sends one on every poll, which is why "not older" is not
   // enough: it has to be strictly newer than what the entities already show.
   int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
-  uint32_t newest = (uint32_t) civil_to_epoch(2026, 6, 7, 7, 30, 0);
+  uint32_t newest = (uint32_t)civil_to_epoch(2026, 6, 7, 7, 30, 0);
   TEST_ASSERT_FALSE(accept_inline_record(newest, newest, now));
   TEST_ASSERT_FALSE(accept_inline_record(newest - 1, newest, now));
   TEST_ASSERT_TRUE(accept_inline_record(newest + 1, newest, now));
@@ -997,7 +990,7 @@ void test_accept_inline_only_when_strictly_newer() {
 
 void test_accept_inline_rejects_implausible_future() {
   int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
-  uint32_t far = (uint32_t) civil_to_epoch(2030, 1, 1, 0, 0, 0);
+  uint32_t far = (uint32_t)civil_to_epoch(2030, 1, 1, 0, 0, 0);
   TEST_ASSERT_FALSE(accept_inline_record(far, 0, now));
   // An unsynced node clock cannot judge, so it must not reject the only session
   // data available.
@@ -1027,8 +1020,8 @@ void test_coverage_percent_zero_duration_is_nan() {
 void test_poll_is_due_charging_uses_fast_interval() {
   // On the dock the fast (charging) interval applies: not due before it, due at
   // or after it, regardless of the longer battery interval.
-  const uint32_t charging_ms = 600000;     // 10 min
-  const uint32_t battery_ms = 14400000;    // 4 h
+  const uint32_t charging_ms = 600000;   // 10 min
+  const uint32_t battery_ms = 14400000;  // 4 h
   TEST_ASSERT_FALSE(poll_is_due(599999, true, charging_ms, battery_ms));
   TEST_ASSERT_TRUE(poll_is_due(600000, true, charging_ms, battery_ms));
   TEST_ASSERT_TRUE(poll_is_due(700000, true, charging_ms, battery_ms));
@@ -1225,9 +1218,8 @@ void test_profile_z1_routing() {
 
 // Real inline count=0 frames captured 2026-06-10 from both brushes.
 void test_decode_inline_0307() {
-  static const uint8_t G[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x1A,
-                              0x06, 0x0A, 0x07, 0x22, 0x2B, 0x00, 0x00, 0x78,
-                              0x00, 0x44, 0x05, 0x16};
+  static const uint8_t G[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x1A, 0x06, 0x0A,
+                              0x07, 0x22, 0x2B, 0x00, 0x00, 0x78, 0x00, 0x44, 0x05, 0x16};
   SessionRecord r;
   TEST_ASSERT_TRUE(decode_inline_0307(G, sizeof(G), &r));
   TEST_ASSERT_EQUAL_UINT16(2026, r.year);
@@ -1246,9 +1238,8 @@ void test_decode_inline_0307() {
   for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
     TEST_ASSERT_EQUAL_UINT8(0, r.zones[i]);
 
-  static const uint8_t A[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x1A,
-                              0x06, 0x0A, 0x07, 0x14, 0x0D, 0x00, 0x00, 0x78,
-                              0x00, 0x78, 0x09, 0x12};
+  static const uint8_t A[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x1A, 0x06, 0x0A,
+                              0x07, 0x14, 0x0D, 0x00, 0x00, 0x78, 0x00, 0x78, 0x09, 0x12};
   TEST_ASSERT_TRUE(decode_inline_0307(A, sizeof(A), &r));
   TEST_ASSERT_EQUAL_UINT8(20, r.minute);
   TEST_ASSERT_EQUAL_UINT8(13, r.second);
@@ -1258,18 +1249,15 @@ void test_decode_inline_0307() {
 void test_decode_inline_0307_rejects() {
   SessionRecord r;
   // Nonzero record count: a real stream header, not the inline form.
-  static const uint8_t STREAM[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x20,
-                                   0x1A, 0x06, 0x0A, 0x07, 0x22, 0x2B, 0x00,
-                                   0x00, 0x78, 0x00, 0x44, 0x05, 0x16};
+  static const uint8_t STREAM[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x20, 0x1A, 0x06, 0x0A,
+                                   0x07, 0x22, 0x2B, 0x00, 0x00, 0x78, 0x00, 0x44, 0x05, 0x16};
   TEST_ASSERT_FALSE(decode_inline_0307(STREAM, sizeof(STREAM), &r));
   // Too short to carry the fixed record head.
-  static const uint8_t SHORT_F[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00,
-                                    0x1A, 0x06, 0x0A};
+  static const uint8_t SHORT_F[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x1A, 0x06, 0x0A};
   TEST_ASSERT_FALSE(decode_inline_0307(SHORT_F, sizeof(SHORT_F), &r));
   // All-zero date: device holds no session at all.
-  static const uint8_t EMPTY_F[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00,
-                                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                    0x00, 0x00, 0x00, 0x00};
+  static const uint8_t EMPTY_F[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x00, 0x00,
+                                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
   TEST_ASSERT_FALSE(decode_inline_0307(EMPTY_F, sizeof(EMPTY_F), &r));
   TEST_ASSERT_FALSE(decode_inline_0307(nullptr, 20, &r));
 }
@@ -1296,13 +1284,11 @@ void test_session_epoch_clamps_out_of_range() {
 void test_session_epoch_plausible() {
   const int64_t now = 1780000000;  // 2026, same civil-as-UTC basis
   // Well past the one-day margin: implausible.
-  TEST_ASSERT_FALSE(
-      session_epoch_plausible(now + 7 * 86400, now, SESSION_FUTURE_MARGIN_S));
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 7 * 86400, now, SESSION_FUTURE_MARGIN_S));
   // Within the margin, exactly now, and any past date: plausible.
   TEST_ASSERT_TRUE(session_epoch_plausible(now + 3600, now, SESSION_FUTURE_MARGIN_S));
-  TEST_ASSERT_TRUE(session_epoch_plausible((uint32_t) now, now, SESSION_FUTURE_MARGIN_S));
-  TEST_ASSERT_TRUE(
-      session_epoch_plausible((uint32_t) (now - 100 * 86400), now, SESSION_FUTURE_MARGIN_S));
+  TEST_ASSERT_TRUE(session_epoch_plausible((uint32_t)now, now, SESSION_FUTURE_MARGIN_S));
+  TEST_ASSERT_TRUE(session_epoch_plausible((uint32_t)(now - 100 * 86400), now, SESSION_FUTURE_MARGIN_S));
   // No synced clock (now <= 0): cannot judge, so accept.
   TEST_ASSERT_TRUE(session_epoch_plausible(now + 7 * 86400, 0, SESSION_FUTURE_MARGIN_S));
 }
@@ -1311,10 +1297,8 @@ void test_clamp_session_duration() {
   // 120 s is the standard program; the bound itself must survive the clamp
   TEST_ASSERT_EQUAL_UINT16(0, clamp_session_duration(0));
   TEST_ASSERT_EQUAL_UINT16(120, clamp_session_duration(120));
-  TEST_ASSERT_EQUAL_UINT16(SESSION_MAX_DURATION_S,
-                           clamp_session_duration(SESSION_MAX_DURATION_S));
-  TEST_ASSERT_EQUAL_UINT16(SESSION_MAX_DURATION_S,
-                           clamp_session_duration(SESSION_MAX_DURATION_S + 1));
+  TEST_ASSERT_EQUAL_UINT16(SESSION_MAX_DURATION_S, clamp_session_duration(SESSION_MAX_DURATION_S));
+  TEST_ASSERT_EQUAL_UINT16(SESSION_MAX_DURATION_S, clamp_session_duration(SESSION_MAX_DURATION_S + 1));
   TEST_ASSERT_EQUAL_UINT16(SESSION_MAX_DURATION_S, clamp_session_duration(65535));
 }
 
@@ -1322,10 +1306,8 @@ void test_clamp_head_counter() {
   // 1223 is the largest counter seen on hardware, so it must pass untouched
   TEST_ASSERT_EQUAL_UINT16(0, clamp_head_counter(0));
   TEST_ASSERT_EQUAL_UINT16(1223, clamp_head_counter(1223));
-  TEST_ASSERT_EQUAL_UINT16(SETTINGS_HEAD_COUNTER_MAX,
-                           clamp_head_counter(SETTINGS_HEAD_COUNTER_MAX));
-  TEST_ASSERT_EQUAL_UINT16(SETTINGS_HEAD_COUNTER_MAX,
-                           clamp_head_counter(SETTINGS_HEAD_COUNTER_MAX + 1));
+  TEST_ASSERT_EQUAL_UINT16(SETTINGS_HEAD_COUNTER_MAX, clamp_head_counter(SETTINGS_HEAD_COUNTER_MAX));
+  TEST_ASSERT_EQUAL_UINT16(SETTINGS_HEAD_COUNTER_MAX, clamp_head_counter(SETTINGS_HEAD_COUNTER_MAX + 1));
   TEST_ASSERT_EQUAL_UINT16(SETTINGS_HEAD_COUNTER_MAX, clamp_head_counter(65535));
 }
 
@@ -1431,7 +1413,6 @@ void test_settings_duplicate_start_overwrites() {
 
 int main() {
   UNITY_BEGIN();
-
 
   RUN_TEST(test_parse_battery_valid);
   RUN_TEST(test_parse_battery_zero);

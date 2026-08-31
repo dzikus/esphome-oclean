@@ -1,21 +1,19 @@
 #pragma once
 
-#include "esphome/core/defines.h"
 #include "esphome/core/component.h"
+#include "esphome/core/defines.h"
 
 // esphome.h pulls in every component header, so guard the platform here too
 #if defined(USE_ESP32) && defined(USE_SELECT)
-#include "esphome/components/select/select.h"
-
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "esphome/components/select/select.h"
 #include "oclean.h"
 #include "oclean_protocol.h"
 
-namespace esphome {
-namespace oclean {
+namespace esphome::oclean {
 
 // Each option is a whole program, so selecting one rewrites every step on the
 // brush (0206, with a 020B continuation when it does not fit one write).
@@ -24,13 +22,12 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
  public:
   // flat_steps is [gear, duration, ...]; name must match an option passed to
   // set_options at codegen time, or control() will never find it
-  void add_scheme(uint8_t pnum, const std::string &name,
-                  const std::vector<uint8_t> &flat_steps) {
+  void add_scheme(uint8_t pnum, const std::string &name, const std::vector<uint8_t> &flat_steps) {
     Scheme sc;
     sc.pnum = pnum;
     sc.name = name;
     for (size_t i = 0; i + 1 < flat_steps.size(); i += 2) {
-      sc.steps.push_back(SchemeStep{flat_steps[i], flat_steps[i + 1]});
+      sc.steps.push_back(SchemeStep{.gear = flat_steps[i], .duration = flat_steps[i + 1]});
     }
     this->schemes_.push_back(std::move(sc));
   }
@@ -53,16 +50,16 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
 
   // True when the custom option is the currently selected scheme.
   bool custom_active() const {
-    return !this->custom_name_.empty() && this->has_state() &&
-           this->current_option() == this->custom_name_;
+    return !this->custom_name_.empty() && this->has_state() && this->current_option() == this->custom_name_;
   }
 
   // false when nothing was queued (BLE off or queue full)
   bool send_custom_program() {
-    if (this->custom_name_.empty()) return false;
+    if (this->custom_name_.empty())
+      return false;
     std::vector<SchemeStep> steps;
     for (uint8_t i = 0; i < CUSTOM_STEPS; i++) {
-      steps.push_back(SchemeStep{this->custom_gears_[i], this->custom_durations_[i]});
+      steps.push_back(SchemeStep{.gear = this->custom_gears_[i], .duration = this->custom_durations_[i]});
     }
     return this->send_program_(this->custom_pnum_, steps);
   }
@@ -73,15 +70,17 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
     if (!this->custom_name_.empty() && pnum == this->custom_pnum_)
       return this->custom_name_;
     for (const auto &sc : this->schemes_) {
-      if (sc.pnum == pnum) return sc.name;
+      if (sc.pnum == pnum)
+        return sc.name;
     }
     return "";
   }
 
   // settings readback; an unknown pNum leaves the last state alone
   void publish_pnum(uint8_t pnum) {
-    std::string name = this->name_for_pnum(pnum);
-    if (!name.empty()) this->publish_state(name);
+    std::string const name = this->name_for_pnum(pnum);
+    if (!name.empty())
+      this->publish_state(name);
   }
 
  protected:
@@ -93,8 +92,10 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
     bool queued = !packets.empty();
     for (size_t i = 0; i < packets.size(); i++) {
       const char *label = "brush-scheme";
-      if (packets.size() > 1) label = (i == 0) ? "brush-scheme-a" : "brush-scheme-b";
-      if (!this->parent_->send_command(packets[i], label)) queued = false;
+      if (packets.size() > 1)
+        label = (i == 0) ? "brush-scheme-a" : "brush-scheme-b";
+      if (!this->parent_->send_command(packets[i], label))
+        queued = false;
     }
     return queued;
   }
@@ -102,18 +103,21 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
   void control(const std::string &value) override {
     // publish only what was queued, same rule as the command switches
     if (!this->custom_name_.empty() && value == this->custom_name_) {
-      if (this->send_custom_program()) this->publish_state(value);
+      if (this->send_custom_program())
+        this->publish_state(value);
       return;
     }
     for (const auto &sc : this->schemes_) {
-      if (sc.name != value) continue;
-      if (this->send_program_(sc.pnum, sc.steps)) this->publish_state(value);
+      if (sc.name != value)
+        continue;
+      if (this->send_program_(sc.pnum, sc.steps))
+        this->publish_state(value);
       return;
     }
   }
 
   struct Scheme {
-    uint8_t pnum;
+    uint8_t pnum{};
     std::string name;
     std::vector<SchemeStep> steps;
   };
@@ -131,13 +135,14 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
 class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
  public:
   void add_language(uint8_t id, const std::string &name) {
-    this->languages_.push_back(Language{id, name});
+    this->languages_.push_back(Language{.id = id, .name = name});
   }
 
   // an unknown id leaves the last state alone
   void publish_language(uint8_t id) {
     for (const auto &lang : this->languages_) {
-      if (lang.id != id) continue;
+      if (lang.id != id)
+        continue;
       this->publish_state(lang.name);
       return;
     }
@@ -146,7 +151,8 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
  protected:
   void control(const std::string &value) override {
     for (const auto &lang : this->languages_) {
-      if (lang.name != value) continue;
+      if (lang.name != value)
+        continue;
       if (this->parent_->send_command(build_language_command(lang.id), "device-language"))
         this->publish_state(value);
       return;
@@ -160,7 +166,6 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
   std::vector<Language> languages_;
 };
 
-}  // namespace oclean
-}  // namespace esphome
+}  // namespace esphome::oclean
 
 #endif  // USE_ESP32 && USE_SELECT

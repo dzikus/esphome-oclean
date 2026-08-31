@@ -1,6 +1,9 @@
 # CI-only configuration that compiles the full component (all platforms and
 # every entity) so a build-breaking change in any source file fails CI. Not
 # meant for flashing. Uses a dummy BLE MAC; no device is contacted at compile.
+substitutions:
+  board: esp32dev
+
 esphome:
   name: ci-build
   # Matches the component floor (select current_option API, 2026.1.0).
@@ -10,7 +13,7 @@ esphome:
       name: "CI second brush"
 
 esp32:
-  board: esp32dev
+  board: ${board}
   framework:
     type: esp-idf
 
@@ -64,7 +67,7 @@ oclean:
           format: "session dur=%us valid=%us score=%u"
           args:
             ["(unsigned) x.duration_s", "(unsigned) x.valid_duration_s", "(unsigned) x.score"]
-  # Second hub: compiles the explicit name_prefix, and makes hub_test derive one.
+  # hub_test stays without a prefix so the multi-hub warning runs too.
   - id: hub_second
     ble_client_id: ble_second
     name_prefix: "Second"

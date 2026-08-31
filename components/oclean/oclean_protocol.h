@@ -4,8 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace esphome {
-namespace oclean {
+namespace esphome::oclean {
 
 // === GATT UUIDs (TYPE1 profile) ===
 // Main custom service. Holds the brush command and notify characteristics.
@@ -47,10 +46,8 @@ static constexpr uint8_t SESSION_NO_SCORE = 0xFF;
 static constexpr size_t SESSION_ZONES_OFFSET = 23;
 static constexpr size_t SESSION_ZONES_COUNT = 8;
 static constexpr size_t SESSION_SCORE_OFFSET = 33;
-static_assert(SESSION_ZONES_OFFSET + SESSION_ZONES_COUNT <= SESSION_RECORD_SIZE,
-              "zones must fit inside a record");
-static_assert(SESSION_SCORE_OFFSET < SESSION_RECORD_SIZE,
-              "score offset must lie inside a record");
+static_assert(SESSION_ZONES_OFFSET + SESSION_ZONES_COUNT <= SESSION_RECORD_SIZE, "zones must fit inside a record");
+static_assert(SESSION_SCORE_OFFSET < SESSION_RECORD_SIZE, "score offset must lie inside a record");
 
 struct SessionRecord {
   uint16_t year;  // full year (2000 + record byte 0)
@@ -59,12 +56,12 @@ struct SessionRecord {
   uint8_t hour;
   uint8_t minute;
   uint8_t second;
-  uint8_t scheme;             // pNum (brushing scheme id)
-  uint16_t duration_s;        // total brushing time
-  uint16_t valid_duration_s;  // time counted as effective
-  uint8_t areas[5];           // offset 11-15 (area1-5 / pressureRatio)
+  uint8_t scheme;                      // pNum (brushing scheme id)
+  uint16_t duration_s;                 // total brushing time
+  uint16_t valid_duration_s;           // time counted as effective
+  uint8_t areas[5];                    // offset 11-15 (area1-5 / pressureRatio)
   uint8_t zones[SESSION_ZONES_COUNT];  // gestureArray at SESSION_ZONES_OFFSET (left 0-3, right 4-7)
-  uint8_t score;              // 0-100; SESSION_NO_SCORE means absent
+  uint8_t score;                       // 0-100; SESSION_NO_SCORE means absent
   bool has_score;
 };
 
@@ -83,8 +80,7 @@ bool session_record_newer(const SessionRecord &a, const SessionRecord &b);
 // Civil date-time read as if it were UTC. The reading is wrong but consistent,
 // so a difference of two such values is still the true elapsed seconds, which is
 // all the ordering and drift comparisons need.
-int64_t civil_to_epoch(uint16_t year, uint8_t month, uint8_t day, uint8_t hour,
-                       uint8_t minute, uint8_t second);
+int64_t civil_to_epoch(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t second);
 
 // ordering and dedup key, not a display time: brush-clock drift is left in
 uint32_t session_record_epoch(const SessionRecord &r);
@@ -97,8 +93,7 @@ static constexpr uint32_t SESSION_FUTURE_MARGIN_S = 86400;
 // watermark past every real session and mute them for good. now_local_epoch
 // shares the civil-as-UTC basis of session_record_epoch; <= 0 means unsynced,
 // which cannot judge and passes. Past dates never advance the watermark.
-bool session_epoch_plausible(uint32_t epoch, int64_t now_local_epoch,
-                             uint32_t future_margin_s);
+bool session_epoch_plausible(uint32_t epoch, int64_t now_local_epoch, uint32_t future_margin_s);
 
 // The longest preset program runs 200 s and a 4-step custom one caps at 480 s,
 // so two hours leaves room for any future scheme while keeping a spoofed 65535
@@ -123,8 +118,10 @@ inline uint16_t clamp_head_counter(uint16_t v) {
 static constexpr int64_t CLOCK_DRIFT_CLAMP_S = 10000000;
 
 inline int64_t clamp_clock_drift(int64_t drift) {
-  if (drift > CLOCK_DRIFT_CLAMP_S) return CLOCK_DRIFT_CLAMP_S;
-  if (drift < -CLOCK_DRIFT_CLAMP_S) return -CLOCK_DRIFT_CLAMP_S;
+  if (drift > CLOCK_DRIFT_CLAMP_S)
+    return CLOCK_DRIFT_CLAMP_S;
+  if (drift < -CLOCK_DRIFT_CLAMP_S)
+    return -CLOCK_DRIFT_CLAMP_S;
   return drift;
 }
 
@@ -151,7 +148,7 @@ class SessionAssembler {
  private:
   void append_(const uint8_t *data, size_t len);
 
-  uint8_t buf_[SESSION_MAX_RECORDS * SESSION_RECORD_SIZE];
+  uint8_t buf_[SESSION_MAX_RECORDS * SESSION_RECORD_SIZE]{};
   // sized to the largest accepted stream, which is what makes the bound check in
   // append_() sufficient
   static_assert(sizeof(buf_) == size_t(SESSION_MAX_RECORDS) * SESSION_RECORD_SIZE,
@@ -211,7 +208,9 @@ bool parse_status_response(const uint8_t *data, size_t len, StatusResponse *out)
 
 // True when the STATUS byte2 value means the brush is actively charging: only
 // 0x01. This drives the Home Assistant charging binary sensor.
-inline bool status_is_charging(uint8_t charging_raw) { return charging_raw == 0x01; }
+inline bool status_is_charging(uint8_t charging_raw) {
+  return charging_raw == 0x01;
+}
 
 // Dock presence, not charge phase, is what makes a fast cadence and a held link
 // free of brush battery: a fully charged brush (0x03) still sits on the charger.
@@ -261,18 +260,18 @@ class SettingsAssembler {
 // on has_start() / has_cont() rather than complete().
 struct DeviceSettings {
   // start frame, buffer 0..15
-  uint8_t device_theme;      // buffer 0
-  bool brush_pause;          // buffer 1 != 0
-  bool raise_wake;           // buffer 2 != 0
-  bool fill_brush;           // buffer 3 != 0
-  bool auto_mode;            // buffer 4 != 0
-  bool volume_enabled;       // buffer 8 == 0 (inverted: 0 means enabled)
-  uint8_t volume_index;      // buffer 9 (index into the volume table)
-  bool calendar_enabled;     // buffer 10 == 0 (inverted: 0 means enabled)
-  uint8_t scheme_pnum;       // buffer 11
-  bool brush_mode_on;        // buffer 12 != 0xEC (0xEC is the off sentinel)
-  bool splash_prevent;       // buffer 13 != 0
-  uint16_t head_used_time;   // buffer 14-15 BE
+  uint8_t device_theme;     // buffer 0
+  bool brush_pause;         // buffer 1 != 0
+  bool raise_wake;          // buffer 2 != 0
+  bool fill_brush;          // buffer 3 != 0
+  bool auto_mode;           // buffer 4 != 0
+  bool volume_enabled;      // buffer 8 == 0 (inverted: 0 means enabled)
+  uint8_t volume_index;     // buffer 9 (index into the volume table)
+  bool calendar_enabled;    // buffer 10 == 0 (inverted: 0 means enabled)
+  uint8_t scheme_pnum;      // buffer 11
+  bool brush_mode_on;       // buffer 12 != 0xEC (0xEC is the off sentinel)
+  bool splash_prevent;      // buffer 13 != 0
+  uint16_t head_used_time;  // buffer 14-15 BE
   // Continuation-frame fields (buffer 16..33), valid once it has the cont.
   uint16_t year;  // clock, buffer 16-21
   uint8_t month;
@@ -320,8 +319,7 @@ uint8_t encode_scheme_gear(uint8_t gear);
 // === Config-toggle write encoding ===
 // Two-byte opcode plus a value byte. Usually on 0x01 / off 0x00, but the off
 // value is a per-toggle sentinel: brush-mode off is 0xEC.
-std::vector<uint8_t> build_toggle_command(uint8_t b0, uint8_t b1, uint8_t on_value,
-                                          uint8_t off_value, bool state);
+std::vector<uint8_t> build_toggle_command(uint8_t b0, uint8_t b1, uint8_t on_value, uint8_t off_value, bool state);
 
 // === Timezone index decode ===
 // 1-based index into the device's 33-entry GMT table; "unknown" out of range.
@@ -335,22 +333,19 @@ uint8_t tz_index_for_offset_seconds(int32_t offset_seconds);
 std::vector<uint8_t> build_language_command(uint8_t lang_id);
 
 // one packet, or two when the program needs the 020B split
-std::vector<std::vector<uint8_t>> build_scheme_packets(uint8_t pnum,
-                                                       const std::vector<SchemeStep> &steps);
+std::vector<std::vector<uint8_t>> build_scheme_packets(uint8_t pnum, const std::vector<SchemeStep> &steps);
 
 // === Set-clock (0201) ===
 //   02 01 [year-2000][month][day][hour][minute][second][weekday][tz_index]
 // Plain decimal per byte, not BCD (minute 30 -> 0x1E), device local wall-clock
 // rather than UTC, weekday 0=Sunday..6=Saturday.
-std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8_t day,
-                                             uint8_t hour, uint8_t minute, uint8_t second,
-                                             uint8_t weekday, uint8_t tz_index);
+std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute,
+                                             uint8_t second, uint8_t weekday, uint8_t tz_index);
 
 // strictly greater than threshold_s, so a zero threshold still needs a 1 s gap
 bool should_resync_clock(int64_t brush_epoch, int64_t local_epoch, uint32_t threshold_s);
 
-bool poll_is_due(uint32_t since_ms, bool docked, uint32_t charging_interval_ms,
-                 uint32_t battery_interval_ms);
+bool poll_is_due(uint32_t since_ms, bool docked, uint32_t charging_interval_ms, uint32_t battery_interval_ms);
 
 // === Poll tick decision ===
 // last_poll_ms only counts once poll_pending is false: millis() legitimately
@@ -394,8 +389,7 @@ float session_coverage_percent(uint16_t valid_duration_s, uint16_t duration_s);
 // A count=0 reply carries the head of the newest already-read record, without
 // zones or score. Publishing it blanks both, so it may only go out when strictly
 // newer than what the entities already show.
-bool accept_inline_record(uint32_t inline_epoch, uint32_t newest_epoch,
-                          int64_t now_local_epoch);
+bool accept_inline_record(uint32_t inline_epoch, uint32_t newest_epoch, int64_t now_local_epoch);
 
 // === Session ring ingest decision ===
 // No I/O in here. Which records are new, where the dedup watermark lands, and
@@ -406,30 +400,27 @@ struct SessionIngestPlan {
   // newer than the watermark but dated implausibly far ahead, so dropped without
   // moving the watermark past a bogus date
   std::vector<SessionRecord> implausible;
-  uint32_t new_watermark;
-  uint32_t new_newest_epoch;
-  bool persist_newest;
-  bool newest_plausible;
+  uint32_t new_watermark{};
+  uint32_t new_newest_epoch{};
+  bool persist_newest{};
+  bool newest_plausible{};
   // The newest record of the whole ring, new or not: a re-served ring with
   // nothing new still republishes it to keep the live state right.
-  bool have_newest;
-  SessionRecord newest;
+  bool have_newest{};
+  SessionRecord newest{};
 };
 
 // The newest record is picked here, not passed in. An index from the reassembler
 // would address a different record than the caller's vector as soon as one entry
 // fails to decode. now_local_epoch <= 0 means an unsynced clock, which the
 // plausibility check reads as "cannot judge".
-SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
-                                      uint32_t watermark, uint32_t newest_epoch,
-                                      int64_t now_local_epoch);
+SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records, uint32_t watermark,
+                                      uint32_t newest_epoch, int64_t now_local_epoch);
 
 // End of a query window. Holding the link costs no brush battery only while the
 // brush sits on its charger, and a round with no STATUS reply cannot vouch for
 // the dock state, so a brush that goes quiet cannot pin a BLE slot on a stale
 // dock reading.
-bool should_hold_link(bool hold_option, bool ble_enabled, bool docked,
-                      bool round_status_seen);
+bool should_hold_link(bool hold_option, bool ble_enabled, bool docked, bool round_status_seen);
 
-}  // namespace oclean
-}  // namespace esphome
+}  // namespace esphome::oclean
