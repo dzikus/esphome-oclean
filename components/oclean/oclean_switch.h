@@ -1,14 +1,13 @@
 #pragma once
 
-#include "esphome/core/defines.h"
 #include "esphome/core/component.h"
+#include "esphome/core/defines.h"
 
 // esphome.h pulls in every component header, so guard the platform here too
 #if defined(USE_ESP32) && defined(USE_SWITCH)
-#include "esphome/components/switch/switch.h"
-
 #include <vector>
 
+#include "esphome/components/switch/switch.h"
 #include "oclean.h"
 
 namespace esphome {
@@ -31,8 +30,7 @@ class OcleanCommandSwitch : public switch_::Switch, public Parented<OcleanHub> {
 
  protected:
   void write_state(bool state) override {
-    std::vector<uint8_t> cmd =
-        build_toggle_command(this->b0_, this->b1_, this->on_value_, this->off_value_, state);
+    std::vector<uint8_t> cmd = build_toggle_command(this->b0_, this->b1_, this->on_value_, this->off_value_, state);
     // a dropped write must leave the switch on its last real state, not lie
     if (this->parent_->send_command(std::move(cmd), this->label_))
       this->publish_state(state);
@@ -48,9 +46,7 @@ class OcleanCommandSwitch : public switch_::Switch, public Parented<OcleanHub> {
 // Local only, nothing reaches the brush: off frees it for the official app.
 // The restored state has to be applied from a deferred call because
 // BLEClient::setup() runs later (AFTER_BLUETOOTH) and re-enables the client.
-class OcleanBleSwitch : public switch_::Switch,
-                        public Parented<OcleanHub>,
-                        public Component {
+class OcleanBleSwitch : public switch_::Switch, public Parented<OcleanHub>, public Component {
  public:
   void setup() override {
     bool state = this->get_initial_state_with_restore_mode().value_or(true);

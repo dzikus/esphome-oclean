@@ -1,20 +1,20 @@
 #pragma once
 
-#include "esphome/core/automation.h"
-#include "esphome/core/component.h"
-#include "esphome/core/preferences.h"
-
 #include <map>
 #include <string>
 #include <vector>
+
+#include "esphome/core/automation.h"
+#include "esphome/core/component.h"
+#include "esphome/core/preferences.h"
 
 #ifdef USE_ESP32
 #ifdef USE_API
 #include "esphome/components/api/custom_api_device.h"
 #endif
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/ble_client/ble_client.h"
 #include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
-#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #ifdef USE_TIME
@@ -22,8 +22,8 @@
 #endif
 #include <esp_gattc_api.h>
 
-#include "oclean_protocol.h"
 #include "oclean_profile.h"
+#include "oclean_protocol.h"
 
 namespace esphome {
 namespace oclean {
@@ -47,7 +47,7 @@ class OcleanSyncTimeButton;
 class OcleanHub : public ble_client::BLEClientNode,
                   public PollingComponent
 #ifdef USE_API
-                  ,
+    ,
                   public esphome::api::CustomAPIDevice
 #endif
 {
@@ -61,9 +61,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
 
-  void add_on_session_trigger(OcleanSessionTrigger *t) {
-    this->session_triggers_.push_back(t);
-  }
+  void add_on_session_trigger(OcleanSessionTrigger *t) { this->session_triggers_.push_back(t); }
 
   void set_hub_index(int i) { this->hub_index_ = i; }
   void set_total_hubs(int n) { this->total_hubs_ = n; }
@@ -74,7 +72,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   // the session preference keys.
   uint32_t pref_salt() const {
     uint64_t addr = this->parent_ != nullptr ? this->parent_->get_address() : 0;
-    return (uint32_t) addr ^ (uint32_t) (addr >> 32);
+    return (uint32_t)addr ^ (uint32_t)(addr >> 32);
   }
 
 #ifdef USE_TIME
@@ -107,24 +105,15 @@ class OcleanHub : public ble_client::BLEClientNode,
   // fed from the newest decoded record
   void set_session_score_sensor(sensor::Sensor *s) { this->session_score_sensor_ = s; }
   void set_session_duration_sensor(sensor::Sensor *s) { this->session_duration_sensor_ = s; }
-  void set_session_valid_duration_sensor(sensor::Sensor *s) {
-    this->session_valid_duration_sensor_ = s;
-  }
-  void set_session_mode_text_sensor(text_sensor::TextSensor *s) {
-    this->session_mode_text_sensor_ = s;
-  }
-  void set_session_coverage_sensor(sensor::Sensor *s) {
-    this->session_coverage_sensor_ = s;
-  }
+  void set_session_valid_duration_sensor(sensor::Sensor *s) { this->session_valid_duration_sensor_ = s; }
+  void set_session_mode_text_sensor(text_sensor::TextSensor *s) { this->session_mode_text_sensor_ = s; }
+  void set_session_coverage_sensor(sensor::Sensor *s) { this->session_coverage_sensor_ = s; }
   void set_gesture_zone_sensor(int i, sensor::Sensor *s) {
-    if (i >= 0 && i < (int) SESSION_ZONES_COUNT) this->zone_sensors_[i] = s;
+    if (i >= 0 && i < (int)SESSION_ZONES_COUNT)
+      this->zone_sensors_[i] = s;
   }
-  void set_session_time_text_sensor(text_sensor::TextSensor *s) {
-    this->session_time_text_sensor_ = s;
-  }
-  void set_device_clock_text_sensor(text_sensor::TextSensor *s) {
-    this->device_clock_text_sensor_ = s;
-  }
+  void set_session_time_text_sensor(text_sensor::TextSensor *s) { this->session_time_text_sensor_ = s; }
+  void set_device_clock_text_sensor(text_sensor::TextSensor *s) { this->device_clock_text_sensor_ = s; }
   void set_mac_text_sensor(text_sensor::TextSensor *s) { this->mac_text_sensor_ = s; }
   void set_last_seen_text_sensor(text_sensor::TextSensor *s) { this->last_seen_text_sensor_ = s; }
 
@@ -178,8 +167,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   // next query window. name labels the log line and must outlive the queue entry
   // (a literal). False means nothing was queued (BLE off or queue full), so the
   // caller must skip its optimistic publish.
-  bool send_command(std::vector<uint8_t> bytes, const char *name,
-                    WriteKind kind = WriteKind::PLAIN);
+  bool send_command(std::vector<uint8_t> bytes, const char *name, WriteKind kind = WriteKind::PLAIN);
 
   // Warns and writes nothing until the local clock is synced. A mutation, so it
   // runs on a button press only, never on boot or a poll.

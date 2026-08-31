@@ -68,30 +68,26 @@ struct ProfileEntry {
 };
 
 static const ProfileEntry PROFILE_TABLE[] = {
-    {"OCLEANY3P", &PROFILE_TYPE1},   // X Pro Elite (validated); also matches Y3PD
-    {"OCLEANY3M", &PROFILE_TYPE1},   // ported
-    {"OCLEANY3D", &PROFILE_TYPE1},
-    {"OCLEANY3N", &PROFILE_TYPE1},
-    {"OCLEANY3S", &PROFILE_TYPE1},
-    {"OCLEANY3T", &PROFILE_TYPE1},
-    {"OCLEANY3", &PROFILE_TYPE1},    // generic X / X Pro, shorter prefix last
-    {"OCLEANR3L", &PROFILE_TYPE1},
-    {"OCLEANX20", &PROFILE_TYPE1},
-    {"OCLEANV1", &PROFILE_TYPE1},
-    {"OCLEANA1e", &PROFILE_TYPE1},
-    {"OCLEANA1f", &PROFILE_TYPE1},
-    {"OCLEANA1", &PROFILE_UNKNOWN},  // legacy, after the A1e / A1f specifics
-    {"OCLEANY5", &PROFILE_TYPE_Z1},  // Z1
-    {"OCLEANC1", &PROFILE_UNKNOWN},  // WiFi, out of BLE scope
+    {"OCLEANY3P", &PROFILE_TYPE1},  // X Pro Elite (validated); also matches Y3PD
+    {"OCLEANY3M", &PROFILE_TYPE1},  // ported
+    {"OCLEANY3D", &PROFILE_TYPE1},  {"OCLEANY3N", &PROFILE_TYPE1},
+    {"OCLEANY3S", &PROFILE_TYPE1},  {"OCLEANY3T", &PROFILE_TYPE1},
+    {"OCLEANY3", &PROFILE_TYPE1},  // generic X / X Pro, shorter prefix last
+    {"OCLEANR3L", &PROFILE_TYPE1},  {"OCLEANX20", &PROFILE_TYPE1},
+    {"OCLEANV1", &PROFILE_TYPE1},   {"OCLEANA1e", &PROFILE_TYPE1},
+    {"OCLEANA1f", &PROFILE_TYPE1},  {"OCLEANA1", &PROFILE_UNKNOWN},  // legacy, after the A1e / A1f specifics
+    {"OCLEANY5", &PROFILE_TYPE_Z1},                                  // Z1
+    {"OCLEANC1", &PROFILE_UNKNOWN},                                  // WiFi, out of BLE scope
 };
-static const size_t PROFILE_TABLE_SIZE =
-    sizeof(PROFILE_TABLE) / sizeof(PROFILE_TABLE[0]);
+static const size_t PROFILE_TABLE_SIZE = sizeof(PROFILE_TABLE) / sizeof(PROFILE_TABLE[0]);
 
 const OcleanProfile *profile_for_model(const char *model, size_t len) {
-  if (model == nullptr || len == 0) return &PROFILE_UNKNOWN;
+  if (model == nullptr || len == 0)
+    return &PROFILE_UNKNOWN;
   for (size_t i = 0; i < PROFILE_TABLE_SIZE; i++) {
     size_t plen = strlen(PROFILE_TABLE[i].prefix);
-    if (len < plen) continue;
+    if (len < plen)
+      continue;
     if (strncmp(model, PROFILE_TABLE[i].prefix, plen) == 0)
       return PROFILE_TABLE[i].profile;
   }
