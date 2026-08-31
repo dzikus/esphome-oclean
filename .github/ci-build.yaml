@@ -1,6 +1,9 @@
 # CI-only configuration that compiles the full component (all platforms and
 # every entity) so a build-breaking change in any source file fails CI. Not
 # meant for flashing. Uses a dummy BLE MAC; no device is contacted at compile.
+substitutions:
+  board: esp32dev
+
 esphome:
   name: ci-build
   # Matches the component floor (select current_option API, 2026.1.0).
@@ -10,7 +13,7 @@ esphome:
       name: "CI second brush"
 
 esp32:
-  board: esp32dev
+  board: ${board}
   framework:
     type: esp-idf
 

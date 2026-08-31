@@ -8,6 +8,7 @@ on:
   # The release workflow runs these gates instead of keeping its own copy, which
   # is how the two lists drifted apart before.
   workflow_call:
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -63,6 +64,13 @@ jobs:
           pio test -d tests -e native < /dev/null
           echo "--- re-run built binary as source of truth ---"
           tests/.pio/build/native/program
+      - name: Compile the esphome-free layers under strict warnings
+        run: |
+          set -euo pipefail
+          STRICT="-std=gnu++20 -fsyntax-only -Werror -Wall -Wextra -Wconversion
+                  -Wsign-conversion -Wshadow -Wold-style-cast -I components/oclean"
+          g++ $STRICT components/oclean/oclean_protocol.cpp
+          g++ $STRICT components/oclean/oclean_profile.cpp
   esphome-build:
     name: esphome compile (full component)
     needs: unit-tests
@@ -85,10 +93,8 @@ jobs:
         run: pip install "esphome==2026.7.4"
       - name: Run codegen unit tests
         run: python -m unittest discover -s tests/python -v
-      - name: Compile full component
-        run: |
-          set -euo pipefail
-          esphome compile .github/ci-build.yaml
+      - name: Compile, failing on any warning from the component
+        run: bash tests/check_esp32_warnings.sh .github/ci-build.yaml esp32dev
       # api: without homeassistant_services is the default shape of a user
       # config, and the session-event call is compiled out there. Build it so a
       # wrong guard around that call fails CI instead of the user's first build.
