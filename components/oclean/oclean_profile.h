@@ -5,8 +5,7 @@
 
 #include "oclean_protocol.h"
 
-namespace esphome {
-namespace oclean {
+namespace esphome::oclean {
 
 // === Runtime model profile ===
 // The variant is picked at runtime from the DIS model string (char 0x2A24)
@@ -61,5 +60,4 @@ extern const OcleanProfile PROFILE_TYPE_Z1;
 // lands on PROFILE_UNKNOWN. model need not be null-terminated.
 const OcleanProfile *profile_for_model(const char *model, size_t len);
 
-}  // namespace oclean
-}  // namespace esphome
+}  // namespace esphome::oclean

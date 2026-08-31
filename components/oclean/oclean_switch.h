@@ -10,8 +10,7 @@
 #include "esphome/components/switch/switch.h"
 #include "oclean.h"
 
-namespace esphome {
-namespace oclean {
+namespace esphome::oclean {
 
 // Two-byte opcode plus an on/off value. Published optimistically, then
 // corrected by the settings readback on the same poll.
@@ -49,7 +48,7 @@ class OcleanCommandSwitch : public switch_::Switch, public Parented<OcleanHub> {
 class OcleanBleSwitch : public switch_::Switch, public Parented<OcleanHub>, public Component {
  public:
   void setup() override {
-    bool state = this->get_initial_state_with_restore_mode().value_or(true);
+    bool const state = this->get_initial_state_with_restore_mode().value_or(true);
     this->publish_state(state);
     this->defer([this, state]() { this->parent_->set_ble_user_enabled(state); });
   }
@@ -61,7 +60,6 @@ class OcleanBleSwitch : public switch_::Switch, public Parented<OcleanHub>, publ
   }
 };
 
-}  // namespace oclean
-}  // namespace esphome
+}  // namespace esphome::oclean
 
 #endif  // USE_ESP32 && USE_SWITCH

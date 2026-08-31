@@ -3,8 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace esphome {
-namespace oclean {
+namespace esphome::oclean {
 
 const char *const OCLEAN_SERVICE_UUID = "8082caa8-41a6-4021-91c6-56f9b954cc18";
 const char *const WRITE_CHAR_UUID = "9d84b9a3-000c-49d8-9183-855b673fbb85";
@@ -17,7 +16,7 @@ bool parse_battery_level(const uint8_t *data, size_t len, uint8_t *out) {
     return false;
   if (len < 1)
     return false;
-  uint8_t level = data[0];
+  uint8_t const level = data[0];
   if (level > 100)
     return false;
   *out = level;
@@ -31,7 +30,7 @@ bool parse_status_response(const uint8_t *data, size_t len, StatusResponse *out)
     return false;
   if (data[0] != 0x03 || data[1] != 0x03)
     return false;
-  uint8_t battery = data[5];
+  uint8_t const battery = data[5];
   if (battery > 100)
     return false;
   out->battery = battery;
@@ -49,11 +48,11 @@ bool parse_settings_clock(const uint8_t *data, size_t len, SettingsClock *out) {
   // The device sends more than one 0302-prefixed message; only the clock has
   // in-range calendar fields. Range-check to reject the other 0302 payload
   // instead of decoding it into a nonsense date.
-  uint8_t month = data[3];
-  uint8_t day = data[4];
-  uint8_t hour = data[5];
-  uint8_t minute = data[6];
-  uint8_t second = data[7];
+  uint8_t const month = data[3];
+  uint8_t const day = data[4];
+  uint8_t const hour = data[5];
+  uint8_t const minute = data[6];
+  uint8_t const second = data[7];
   if (month < 1 || month > 12)
     return false;
   if (day < 1 || day > 31)
@@ -70,8 +69,8 @@ bool parse_settings_clock(const uint8_t *data, size_t len, SettingsClock *out) {
 }
 
 void SettingsAssembler::reset() {
-  for (size_t i = 0; i < SETTINGS_BUFFER_SIZE; i++)
-    buf_[i] = 0;
+  for (unsigned char &i : buf_)
+    i = 0;
   got_start_ = false;
   got_cont_ = false;
 }
@@ -136,8 +135,8 @@ bool decode_brush_areas_push(const uint8_t *data, size_t len, BrushAreasPush *ou
     return false;
   if (len < 2)
     return false;
-  bool is_y3p = (data[0] == 0x02 && data[1] == 0x1F);
-  bool is_t1 = (data[0] == 0x26 && data[1] == 0x04);
+  bool const is_y3p = (data[0] == 0x02 && data[1] == 0x1F);
+  bool const is_t1 = (data[0] == 0x26 && data[1] == 0x04);
   if (!is_y3p && !is_t1)
     return false;
   if (len < BRUSH_AREAS_VALUE_OFFSET + BRUSH_AREAS_COUNT)
@@ -163,7 +162,7 @@ bool decode_session_record(const uint8_t *rec, SessionRecord *out) {
     out->areas[i] = rec[11 + i];
   for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
     out->zones[i] = rec[SESSION_ZONES_OFFSET + i];
-  uint8_t s = rec[SESSION_SCORE_OFFSET];
+  uint8_t const s = rec[SESSION_SCORE_OFFSET];
   out->has_score = (s != SESSION_NO_SCORE);
   out->score = s;
   return true;
@@ -179,9 +178,10 @@ bool decode_inline_0307(const uint8_t *data, size_t len, SessionRecord *out) {
   static const size_t HEAD_LEN = sizeof(HEAD);
   if (len < HEAD_LEN + 11)
     return false;
-  for (size_t i = 0; i < HEAD_LEN; i++)
+  for (size_t i = 0; i < HEAD_LEN; i++) {
     if (data[i] != HEAD[i])
       return false;
+  }
   const uint8_t *r = data + HEAD_LEN;
   // An all-zero date means the device holds no session at all.
   if (r[0] == 0 && r[1] == 0 && r[2] == 0)
@@ -198,8 +198,8 @@ bool decode_inline_0307(const uint8_t *data, size_t len, SessionRecord *out) {
   const size_t avail = len - HEAD_LEN;
   for (size_t i = 0; i < 5; i++)
     out->areas[i] = (11 + i < avail) ? r[11 + i] : 0;
-  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
-    out->zones[i] = 0;
+  for (unsigned char &zone : out->zones)
+    zone = 0;
   out->score = 0;
   out->has_score = false;
   return true;
@@ -225,16 +225,16 @@ int64_t civil_to_epoch(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, 
   // elapsed seconds, which is what the drift comparison and session ordering
   // need.
   int32_t y = static_cast<int32_t>(year);
-  uint32_t m = month;
-  uint32_t d = day;
+  uint32_t const m = month;
+  uint32_t const d = day;
   y -= (m <= 2) ? 1 : 0;
-  int32_t era = (y >= 0 ? y : y - 399) / 400;
-  uint32_t yoe = static_cast<uint32_t>(y - era * 400);             // [0, 399]
-  uint32_t doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;  // [0, 365]
-  uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;            // [0, 146096]
-  int32_t days = era * 146097 + static_cast<int32_t>(doe) - 719468;
-  return static_cast<int64_t>(days) * 86400 + static_cast<int64_t>(hour) * 3600 + static_cast<int64_t>(minute) * 60 +
-         static_cast<int64_t>(second);
+  int32_t const era = (y >= 0 ? y : y - 399) / 400;
+  uint32_t const yoe = static_cast<uint32_t>(y - (era * 400));               // [0, 399]
+  uint32_t const doy = (((153 * (m > 2 ? m - 3 : m + 9)) + 2) / 5) + d - 1;  // [0, 365]
+  uint32_t const doe = (yoe * 365) + (yoe / 4) - (yoe / 100) + doy;          // [0, 146096]
+  int32_t const days = (era * 146097) + static_cast<int32_t>(doe) - 719468;
+  return (static_cast<int64_t>(days) * 86400) + (static_cast<int64_t>(hour) * 3600) +
+         (static_cast<int64_t>(minute) * 60) + static_cast<int64_t>(second);
 }
 
 uint32_t session_record_epoch(const SessionRecord &r) {
@@ -274,26 +274,26 @@ bool should_hold_link(bool hold_option, bool ble_enabled, bool docked, bool roun
 
 PollDecision plan_poll_tick(const PollTickState &s) {
   if (!s.ble_enabled)
-    return {PollAction::SKIP_BLE_OFF, 0};
+    return {.action = PollAction::SKIP_BLE_OFF, .defer_ms = 0};
   // Skip rather than stack connect attempts; the watchdog ends a stalled cycle.
   if (s.link_busy)
-    return {PollAction::SKIP_LINK_BUSY, 0};
+    return {.action = PollAction::SKIP_LINK_BUSY, .defer_ms = 0};
   if (!s.boot_stagger_done && s.poll_pending && s.now_ms < s.boot_stagger_ms) {
     // The radio scans one target at a time, so simultaneous first cycles make
     // the losing hub burn its whole window.
-    return {PollAction::DEFER_BOOT_STAGGER, s.boot_stagger_ms - s.now_ms};
+    return {.action = PollAction::DEFER_BOOT_STAGGER, .defer_ms = s.boot_stagger_ms - s.now_ms};
   }
   if (s.adaptive && !s.poll_pending &&
       !poll_is_due(s.now_ms - s.last_poll_ms, s.docked, s.charging_interval_ms, s.battery_interval_ms)) {
-    return {PollAction::SKIP_NOT_DUE, 0};
+    return {.action = PollAction::SKIP_NOT_DUE, .defer_ms = 0};
   }
-  return {PollAction::POLL, 0};
+  return {.action = PollAction::POLL, .defer_ms = 0};
 }
 
 float session_coverage_percent(uint16_t valid_duration_s, uint16_t duration_s) {
   if (duration_s == 0)
     return NAN;
-  float pct = roundf(100.0f * static_cast<float>(valid_duration_s) / static_cast<float>(duration_s));
+  float const pct = roundf(100.0f * static_cast<float>(valid_duration_s) / static_cast<float>(duration_s));
   return pct > 100.0f ? 100.0f : pct;
 }
 
@@ -312,7 +312,7 @@ SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
   plan.newest = SessionRecord{};
 
   for (const auto &rec : records) {
-    uint32_t ts = session_record_epoch(rec);
+    uint32_t const ts = session_record_epoch(rec);
     if (ts <= watermark)
       continue;  // already emitted, possibly before a reboot
     if (!session_epoch_plausible(ts, now_local_epoch, SESSION_FUTURE_MARGIN_S)) {
@@ -328,8 +328,8 @@ SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
   // The ring is not stored chronologically. Field-wise compare, not the epoch:
   // same ordering without running the days-from-civil arithmetic twice per
   // comparison.
-  std::sort(plan.to_publish.begin(), plan.to_publish.end(),
-            [](const SessionRecord &a, const SessionRecord &b) { return session_record_newer(b, a); });
+  std::ranges::sort(plan.to_publish,
+                    [](const SessionRecord &a, const SessionRecord &b) { return session_record_newer(b, a); });
 
   // unordered ring, so the newest is the maximum by timestamp. Ties keep the
   // earlier slot, same as the reassembler's own scan.
@@ -340,7 +340,7 @@ SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
     }
   }
   if (plan.have_newest) {
-    uint32_t epoch = session_record_epoch(plan.newest);
+    uint32_t const epoch = session_record_epoch(plan.newest);
     plan.newest_plausible = session_epoch_plausible(epoch, now_local_epoch, SESSION_FUTURE_MARGIN_S);
     // strictly newer only. A peer re-serving one ring every poll would grind the
     // flash, and an older epoch would lower the gate that keeps a stale record
@@ -362,8 +362,8 @@ void SessionAssembler::reset() {
 }
 
 void SessionAssembler::append_(const uint8_t *data, size_t len) {
-  size_t room = need_ - got_;
-  size_t n = (len < room) ? len : room;
+  size_t const room = need_ - got_;
+  size_t const n = (len < room) ? len : room;
   for (size_t i = 0; i < n; i++)
     buf_[got_ + i] = data[i];
   got_ += n;
@@ -408,24 +408,24 @@ bool SessionAssembler::feed(const uint8_t *data, size_t len) {
 bool SessionAssembler::record(uint16_t i, SessionRecord *out) const {
   if (!complete() || i >= count_)
     return false;
-  return decode_session_record(buf_ + size_t(i) * SESSION_RECORD_SIZE, out);
+  return decode_session_record(buf_ + (size_t(i) * SESSION_RECORD_SIZE), out);
 }
 
 const uint8_t *SessionAssembler::raw_record(uint16_t i) const {
   if (!complete() || i >= count_)
     return nullptr;
-  return buf_ + size_t(i) * SESSION_RECORD_SIZE;
+  return buf_ + (size_t(i) * SESSION_RECORD_SIZE);
 }
 
 int SessionAssembler::newest_index() const {
   if (!complete() || count_ == 0)
     return -1;
   int best = 0;
-  SessionRecord best_rec;
+  SessionRecord best_rec{};
   decode_session_record(buf_, &best_rec);
   for (uint16_t i = 1; i < count_; i++) {
-    SessionRecord cur;
-    decode_session_record(buf_ + size_t(i) * SESSION_RECORD_SIZE, &cur);
+    SessionRecord cur{};
+    decode_session_record(buf_ + (size_t(i) * SESSION_RECORD_SIZE), &cur);
     if (session_record_newer(cur, best_rec)) {
       best_rec = cur;
       best = i;
@@ -462,9 +462,10 @@ uint8_t tz_index_for_offset_seconds(int32_t offset_seconds) {
       21600,  23400,  25200,  28800,  32400,   // +06:00 .. +09:00
       34200,  36000,  39600,  43200,  46800,   // +09:30 .. +13:00
   };
-  for (uint8_t i = 0; i < 33; i++)
+  for (uint8_t i = 0; i < 33; i++) {
     if (OFFSETS[i] == offset_seconds)
       return static_cast<uint8_t>(i + 1);
+  }
   return 0;
 }
 
@@ -545,9 +546,8 @@ std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8
                                              uint8_t second, uint8_t weekday, uint8_t tz_index) {
   // year is sent as the offset from 2000. Clamp below 2000 to 0 so the byte
   // never underflows; the caller guarantees a valid synced clock before calling.
-  uint8_t year_byte = (year >= 2000) ? static_cast<uint8_t>(year - 2000) : 0;
+  uint8_t const year_byte = (year >= 2000) ? static_cast<uint8_t>(year - 2000) : 0;
   return {0x02, 0x01, year_byte, month, day, hour, minute, second, weekday, tz_index};
 }
 
-}  // namespace oclean
-}  // namespace esphome
+}  // namespace esphome::oclean

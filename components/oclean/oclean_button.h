@@ -8,8 +8,7 @@
 #include "esphome/components/button/button.h"
 #include "oclean.h"
 
-namespace esphome {
-namespace oclean {
+namespace esphome::oclean {
 
 // Downloads the buffered sessions and holds the link open long enough to catch
 // the whole record stream in the log.
@@ -37,7 +36,6 @@ class OcleanPollNowButton : public button::Button, public Parented<OcleanHub> {
   void press_action() override { this->parent_->trigger_immediate_poll(); }
 };
 
-}  // namespace oclean
-}  // namespace esphome
+}  // namespace esphome::oclean
 
 #endif  // USE_ESP32 && USE_BUTTON

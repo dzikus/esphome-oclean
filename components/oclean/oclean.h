@@ -25,8 +25,7 @@
 #include "oclean_profile.h"
 #include "oclean_protocol.h"
 
-namespace esphome {
-namespace oclean {
+namespace esphome::oclean {
 
 namespace espbt = esphome::esp32_ble_tracker;
 
@@ -71,7 +70,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   // a per-hub salt two hubs collide in the same flash slot. Also the base for
   // the session preference keys.
   uint32_t pref_salt() const {
-    uint64_t addr = this->parent_ != nullptr ? this->parent_->get_address() : 0;
+    uint64_t const addr = this->parent_ != nullptr ? this->parent_->get_address() : 0;
     return (uint32_t)addr ^ (uint32_t)(addr >> 32);
   }
 
@@ -218,7 +217,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   };
 
   void set_state_(State s);
-  const char *state_name_(State s) const;
+  static const char *state_name_(State s);
 
   // must run inside SEARCH_CMPL: a deferred characteristic lookup returns
   // nullptr for everything
@@ -427,7 +426,6 @@ class OcleanHub : public ble_client::BLEClientNode,
   int total_hubs_{1};
 };
 
-}  // namespace oclean
-}  // namespace esphome
+}  // namespace esphome::oclean
 
 #endif  // USE_ESP32

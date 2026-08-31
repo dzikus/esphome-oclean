@@ -13,8 +13,7 @@
 #include "oclean.h"
 #include "oclean_protocol.h"
 
-namespace esphome {
-namespace oclean {
+namespace esphome::oclean {
 
 // Each option is a whole program, so selecting one rewrites every step on the
 // brush (0206, with a 020B continuation when it does not fit one write).
@@ -28,7 +27,7 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
     sc.pnum = pnum;
     sc.name = name;
     for (size_t i = 0; i + 1 < flat_steps.size(); i += 2) {
-      sc.steps.push_back(SchemeStep{flat_steps[i], flat_steps[i + 1]});
+      sc.steps.push_back(SchemeStep{.gear = flat_steps[i], .duration = flat_steps[i + 1]});
     }
     this->schemes_.push_back(std::move(sc));
   }
@@ -60,7 +59,7 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
       return false;
     std::vector<SchemeStep> steps;
     for (uint8_t i = 0; i < CUSTOM_STEPS; i++) {
-      steps.push_back(SchemeStep{this->custom_gears_[i], this->custom_durations_[i]});
+      steps.push_back(SchemeStep{.gear = this->custom_gears_[i], .duration = this->custom_durations_[i]});
     }
     return this->send_program_(this->custom_pnum_, steps);
   }
@@ -79,7 +78,7 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
 
   // settings readback; an unknown pNum leaves the last state alone
   void publish_pnum(uint8_t pnum) {
-    std::string name = this->name_for_pnum(pnum);
+    std::string const name = this->name_for_pnum(pnum);
     if (!name.empty())
       this->publish_state(name);
   }
@@ -118,7 +117,7 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
   }
 
   struct Scheme {
-    uint8_t pnum;
+    uint8_t pnum{};
     std::string name;
     std::vector<SchemeStep> steps;
   };
@@ -135,7 +134,9 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
 // from settings buffer 31.
 class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
  public:
-  void add_language(uint8_t id, const std::string &name) { this->languages_.push_back(Language{id, name}); }
+  void add_language(uint8_t id, const std::string &name) {
+    this->languages_.push_back(Language{.id = id, .name = name});
+  }
 
   // an unknown id leaves the last state alone
   void publish_language(uint8_t id) {
@@ -165,7 +166,6 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
   std::vector<Language> languages_;
 };
 
-}  // namespace oclean
-}  // namespace esphome
+}  // namespace esphome::oclean
 
 #endif  // USE_ESP32 && USE_SELECT

@@ -4,8 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace esphome {
-namespace oclean {
+namespace esphome::oclean {
 
 // === GATT UUIDs (TYPE1 profile) ===
 // Main custom service. Holds the brush command and notify characteristics.
@@ -149,7 +148,7 @@ class SessionAssembler {
  private:
   void append_(const uint8_t *data, size_t len);
 
-  uint8_t buf_[SESSION_MAX_RECORDS * SESSION_RECORD_SIZE];
+  uint8_t buf_[SESSION_MAX_RECORDS * SESSION_RECORD_SIZE]{};
   // sized to the largest accepted stream, which is what makes the bound check in
   // append_() sufficient
   static_assert(sizeof(buf_) == size_t(SESSION_MAX_RECORDS) * SESSION_RECORD_SIZE,
@@ -401,14 +400,14 @@ struct SessionIngestPlan {
   // newer than the watermark but dated implausibly far ahead, so dropped without
   // moving the watermark past a bogus date
   std::vector<SessionRecord> implausible;
-  uint32_t new_watermark;
-  uint32_t new_newest_epoch;
-  bool persist_newest;
-  bool newest_plausible;
+  uint32_t new_watermark{};
+  uint32_t new_newest_epoch{};
+  bool persist_newest{};
+  bool newest_plausible{};
   // The newest record of the whole ring, new or not: a re-served ring with
   // nothing new still republishes it to keep the live state right.
-  bool have_newest;
-  SessionRecord newest;
+  bool have_newest{};
+  SessionRecord newest{};
 };
 
 // The newest record is picked here, not passed in. An index from the reassembler
@@ -424,5 +423,4 @@ SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
 // dock reading.
 bool should_hold_link(bool hold_option, bool ble_enabled, bool docked, bool round_status_seen);
 
-}  // namespace oclean
-}  // namespace esphome
+}  // namespace esphome::oclean
