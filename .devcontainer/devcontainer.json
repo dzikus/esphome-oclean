@@ -18,6 +18,7 @@
         "ms-vscode.cpptools",
         "redhat.vscode-yaml",
         "github.vscode-github-actions",
+        "timonwong.shellcheck",
         "tamasfe.even-better-toml"
       ],
       "settings": {
