@@ -12,7 +12,7 @@ jobs:
   # steps is what keeps a release from shipping something the PR gates reject.
   gates:
     name: test gates
-    uses: ./.github/workflows/test.yml
+    uses: ./.github/workflows/test.yml  # zizmor: ignore[self-repository]
   publish:
     name: publish release
     needs: gates
