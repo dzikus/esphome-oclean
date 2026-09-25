@@ -801,7 +801,12 @@ tests/.pio/build/native/program
 ```
 
 The second line runs the produced binary directly for the authoritative Unity
-summary and exit code. CI (`.github/workflows/test.yml`) runs ruff +
+summary and exit code. `python -m unittest discover -s tests/python` runs the
+code generation and table tests; it needs esphome installed.
+
+New functionality comes with tests in the same pull request: protocol,
+decoding and command builders in `tests/test_protocol/`, code generation and
+the entity tables in `tests/python/`. CI (`.github/workflows/test.yml`) runs ruff +
 pre-commit, the unit tests, and a full-component compile on every push. A
 devcontainer (`.devcontainer/`) provides esphome, platformio, ruff and
 pre-commit.
@@ -820,6 +825,23 @@ pre-commit.
 | Some toggle opcodes are rejected by firmware | Fill brush and auto mode read back fine but their writes return an error stub; they are exposed as binary sensors, not switches. |
 | The brush intensity level (display button) has no BLE representation | It can be neither read nor written; no entity exists for it. |
 | Holding the link drains the brush | `hold_connection_while_docked` only ever holds while docked (charging, so no drain); off the dock the component always disconnects after each poll. On by default. |
+
+## Issues and pull requests
+
+Report problems at <https://github.com/dzikus/esphome-oclean/issues>. Include
+the component version or commit, the ESPHome version, the brush model, the
+configuration and the node log. Report security issues privately, see
+[SECURITY.md](SECURITY.md).
+
+Pull requests go against `main`:
+
+- Run `pre-commit install` once. The hooks format C++ and Python and check that
+  commit messages follow Conventional Commits.
+- A pull request that adds functionality adds tests for it, see
+  [Testing](#testing).
+- CI runs pre-commit, the unit tests, clang-tidy and the ESP32 builds on every
+  pull request. All of them must pass before merge.
+- User-visible changes get an entry in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
