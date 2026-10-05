@@ -1374,6 +1374,13 @@ void test_v20_inline_0307_real_frame() {
   TEST_ASSERT_FALSE(decode_inline_0307_v20(y3p_inline, sizeof(y3p_inline), &r));
 }
 
+void test_v20_inline_on_factory_clock_accepted() {
+  // read 2026-10-05 21:45:12 UTC+2 from the brush still on its UTC+8 clock
+  SessionRecord r{};
+  TEST_ASSERT_TRUE(decode_inline_0307_v20(V20_INLINE_0307, sizeof(V20_INLINE_0307), &r));
+  TEST_ASSERT_TRUE(accept_inline_record(session_record_epoch(r), 0, civil_to_epoch(2026, 10, 5, 21, 45, 12)));
+}
+
 static std::vector<uint8_t> v20_record(size_t len, uint8_t hour, uint8_t minute, uint8_t mode, uint16_t program,
                                        uint16_t brushed, uint8_t score) {
   std::vector<uint8_t> r(len, 0xFF);
@@ -1586,7 +1593,10 @@ void test_session_epoch_clamps_out_of_range() {
 void test_session_epoch_plausible() {
   const int64_t now = 1780000000;  // 2026, same civil-as-UTC basis
   TEST_ASSERT_FALSE(session_epoch_plausible(now + 7 * 86400, now, SESSION_FUTURE_MARGIN_S));
-  TEST_ASSERT_FALSE(session_epoch_plausible(now + 6 * 3600, now, SESSION_FUTURE_MARGIN_S));
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 86400 + 1, now, SESSION_FUTURE_MARGIN_S));
+  // UTC+8 factory clock read by a node in UTC+2 (+6 h) and in UTC-12 (+20 h)
+  TEST_ASSERT_TRUE(session_epoch_plausible(now + 6 * 3600, now, SESSION_FUTURE_MARGIN_S));
+  TEST_ASSERT_TRUE(session_epoch_plausible(now + 20 * 3600, now, SESSION_FUTURE_MARGIN_S));
   // Within the margin, exactly now, and any past date: plausible.
   TEST_ASSERT_TRUE(session_epoch_plausible(now + 3600, now, SESSION_FUTURE_MARGIN_S));
   TEST_ASSERT_TRUE(session_epoch_plausible((uint32_t)now, now, SESSION_FUTURE_MARGIN_S));
@@ -1835,6 +1845,7 @@ int main() {
   RUN_TEST(test_v20_settings_real_frames);
   RUN_TEST(test_v20_settings_after_clock_write);
   RUN_TEST(test_v20_inline_0307_real_frame);
+  RUN_TEST(test_v20_inline_on_factory_clock_accepted);
   RUN_TEST(test_v20_assembler_splits_length_prefixed_records);
   RUN_TEST(test_v20_assembler_header_cases);
   RUN_TEST(test_v20_assembler_stops_at_a_bad_length);

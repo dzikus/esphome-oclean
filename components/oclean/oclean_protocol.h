@@ -107,9 +107,9 @@ int64_t civil_to_epoch(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, 
 uint32_t session_record_epoch(const SessionRecord &r);
 
 // How far past the local clock a session timestamp may sit before it is treated
-// as implausible. Two hours absorb drift and a missed DST switch; a brush still on
-// its factory clock (the X Ultra 20 ships on UTC+8) lands outside.
-static constexpr uint32_t SESSION_FUTURE_MARGIN_S = 7200;
+// as implausible. The X Ultra 20 ships on a UTC+8 clock, up to 20 h ahead of a
+// node in UTC-12; anything tighter drops every session of a brush nobody synced.
+static constexpr uint32_t SESSION_FUTURE_MARGIN_S = 86400;
 
 // A wildly future date from a hostile or glitched peer would push the dedup
 // watermark past every real session and mute them for good. now_local_epoch
