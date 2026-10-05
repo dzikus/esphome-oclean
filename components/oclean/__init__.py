@@ -33,6 +33,7 @@ MULTI_CONF = True
 
 CONF_OCLEAN_ID = "oclean_id"
 CONF_EXPOSE_DEV_SENSORS = "expose_dev_sensors"
+CONF_READ_ONLY = "read_only"
 
 # Only reached when the node offset cannot be derived; the hub normally picks
 # the index from its own DST-aware offset. Wire value is 1-based into the
@@ -265,6 +266,7 @@ CONFIG_SCHEMA = cv.All(
         {
             cv.GenerateID(): cv.declare_id(OcleanHub),
             cv.Optional(CONF_EXPOSE_DEV_SENSORS, default=False): cv.boolean,
+            cv.Optional(CONF_READ_ONLY, default=False): cv.boolean,
             cv.Optional(CONF_UPDATE_INTERVAL, default="3600s"): _min_interval_validator(
                 "update_interval"
             ),
@@ -409,6 +411,7 @@ async def to_code(config):
         var.set_hold_connection_while_docked(config[CONF_HOLD_CONNECTION_WHILE_DOCKED])
     )
     cg.add(var.set_expose_dev_sensors(config[CONF_EXPOSE_DEV_SENSORS]))
+    cg.add(var.set_read_only(config[CONF_READ_ONLY]))
     cg.add(var.set_tz_index(config[CONF_TZINDEX]))
     cg.add(var.set_auto_sync_time(config[CONF_AUTO_SYNC_TIME]))
     cg.add(

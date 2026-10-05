@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace esphome::oclean {
 
@@ -10,6 +11,86 @@ const char *const WRITE_CHAR_UUID = "9d84b9a3-000c-49d8-9183-855b673fbb85";
 const char *const READ_NOTIFY_CHAR_UUID = "5f78df94-798c-46f5-990a-855b673fbb86";
 const char *const SEND_BRUSH_CMD_UUID = "5f78df94-798c-46f5-990a-855b673fbb89";
 const char *const RECEIVE_BRUSH_UUID = "5f78df94-798c-46f5-990a-855b673fbb90";
+
+std::string dis_printable_text(const uint8_t *data, size_t len) {
+  std::string out;
+  if (data == nullptr)
+    return out;
+  for (size_t i = 0; i < len; i++) {
+    if (data[i] >= 0x20 && data[i] <= 0x7E)
+      out += static_cast<char>(data[i]);
+  }
+  return out;
+}
+
+bool decode_hw_revision_code(const uint8_t *data, size_t len, HwRevisionCode *out) {
+  if (data == nullptr || out == nullptr || len < 6)
+    return false;
+  if (data[0] != 'H' || data[1] != 'H')
+    return false;
+  out->protocol = u16be(data + 2);
+  out->ota_type = u16be(data + 4);
+  return true;
+}
+
+std::string hw_revision_text(const uint8_t *data, size_t len) {
+  HwRevisionCode code{};
+  if (!decode_hw_revision_code(data, len, &code))
+    return dis_printable_text(data, len);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "HH %04X/%04X", static_cast<unsigned>(code.protocol),
+           static_cast<unsigned>(code.ota_type));
+  return buf;
+}
+
+std::string gatt_props_text(uint8_t props) {
+  static constexpr uint8_t PROP_READ = 0x02;
+  static constexpr uint8_t PROP_WRITE_NO_RSP = 0x04;
+  static constexpr uint8_t PROP_WRITE = 0x08;
+  static constexpr uint8_t PROP_NOTIFY = 0x10;
+  static constexpr uint8_t PROP_INDICATE = 0x20;
+  std::string out;
+  if ((props & PROP_READ) != 0)
+    out += 'R';
+  if ((props & PROP_WRITE) != 0)
+    out += 'W';
+  if ((props & PROP_WRITE_NO_RSP) != 0)
+    out += 'w';
+  if ((props & PROP_NOTIFY) != 0)
+    out += 'N';
+  if ((props & PROP_INDICATE) != 0)
+    out += 'I';
+  if (out.empty())
+    out = "-";
+  return out;
+}
+
+std::string ble_uuid_text(const uint8_t *le, size_t len) {
+  if (le == nullptr)
+    return "?";
+  char buf[12];
+  if (len == 2) {
+    snprintf(buf, sizeof(buf), "0x%04X", static_cast<unsigned>(le[0] | (le[1] << 8)));
+    return buf;
+  }
+  if (len == 4) {
+    uint32_t const v = uint32_t(le[0]) | (uint32_t(le[1]) << 8) | (uint32_t(le[2]) << 16) | (uint32_t(le[3]) << 24);
+    snprintf(buf, sizeof(buf), "0x%08X", static_cast<unsigned>(v));
+    return buf;
+  }
+  if (len != 16)
+    return "?";
+  static const char HEX_DIGITS[] = "0123456789abcdef";
+  std::string out;
+  for (size_t k = 0; k < 16; k++) {
+    size_t const i = 15 - k;
+    out += HEX_DIGITS[le[i] >> 4];
+    out += HEX_DIGITS[le[i] & 0x0F];
+    if (i == 12 || i == 10 || i == 8 || i == 6)
+      out += '-';
+  }
+  return out;
+}
 
 bool parse_battery_level(const uint8_t *data, size_t len, uint8_t *out) {
   if (data == nullptr || out == nullptr)

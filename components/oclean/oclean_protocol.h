@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace esphome::oclean {
@@ -23,8 +24,25 @@ static constexpr uint16_t BATTERY_SERVICE_UUID16 = 0x180F;
 static constexpr uint16_t BATTERY_CHAR_UUID16 = 0x2A19;
 static constexpr uint16_t DIS_SERVICE_UUID16 = 0x180A;
 static constexpr uint16_t DIS_MODEL_UUID16 = 0x2A24;
+static constexpr uint16_t DIS_FW_REV_UUID16 = 0x2A26;
 static constexpr uint16_t DIS_HW_REV_UUID16 = 0x2A27;
 static constexpr uint16_t DIS_SW_REV_UUID16 = 0x2A28;
+
+std::string dis_printable_text(const uint8_t *data, size_t len);
+
+// 0x2A27 on newer models: "HH", protocol code (u16 BE), OTA type (u16 BE)
+struct HwRevisionCode {
+  uint16_t protocol;
+  uint16_t ota_type;
+};
+bool decode_hw_revision_code(const uint8_t *data, size_t len, HwRevisionCode *out);
+
+std::string hw_revision_text(const uint8_t *data, size_t len);
+
+std::string gatt_props_text(uint8_t props);
+
+// le: the uuid bytes least significant first, as the stack stores them
+std::string ble_uuid_text(const uint8_t *le, size_t len);
 
 // Commands are big-endian byte sequences with no CRC and no checksum. The device
 // requires Write With Response; Write No Response is silently dropped. Per-model
@@ -169,6 +187,7 @@ static constexpr uint32_t WHOLE_POLL_TIMEOUT_MS = 60000;
 // read queries that confirm them are spaced rather than pipelined.
 static constexpr uint32_t PENDING_WRITE_STAGGER_MS = 300;
 static constexpr uint32_t QUERY_STAGGER_MS = 500;
+static constexpr uint32_t NOTIFY_REG_TIMEOUT_MS = 3000;
 // A slider drags through many values; only the last program needs to be sent.
 static constexpr uint32_t CUSTOM_SCHEME_DEBOUNCE_MS = 2000;
 // Per-hub offset of the first poll after boot: the radio scans one target at a

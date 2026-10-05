@@ -34,6 +34,32 @@ static const ProfileCmd UNKNOWN_QUERY_CMDS[] = {
      .name = "STATUS"},
 };
 
+// The TYPE1 reads on both write characteristics: which one an unvalidated model
+// answers on is not known.
+static const ProfileCmd PROBE_QUERY_CMDS[] = {
+    {.bytes = TYPE1_STATUS_BYTES, .len = sizeof(TYPE1_STATUS_BYTES), .target = WriteTarget::TX_MAIN, .name = "STATUS"},
+    {.bytes = TYPE1_SETTINGS_BYTES,
+     .len = sizeof(TYPE1_SETTINGS_BYTES),
+     .target = WriteTarget::TX_MAIN,
+     .name = "SETTINGS"},
+    {.bytes = TYPE1_DOWNLOAD_BYTES,
+     .len = sizeof(TYPE1_DOWNLOAD_BYTES),
+     .target = WriteTarget::TX_SESSION,
+     .name = "SESSION_DOWNLOAD"},
+    {.bytes = TYPE1_STATUS_BYTES,
+     .len = sizeof(TYPE1_STATUS_BYTES),
+     .target = WriteTarget::TX_SESSION,
+     .name = "STATUS_ON_SESSION_TX"},
+    {.bytes = TYPE1_SETTINGS_BYTES,
+     .len = sizeof(TYPE1_SETTINGS_BYTES),
+     .target = WriteTarget::TX_SESSION,
+     .name = "SETTINGS_ON_SESSION_TX"},
+    {.bytes = TYPE1_DOWNLOAD_BYTES,
+     .len = sizeof(TYPE1_DOWNLOAD_BYTES),
+     .target = WriteTarget::TX_MAIN,
+     .name = "SESSION_DOWNLOAD_ON_MAIN_TX"},
+};
+
 const OcleanProfile PROFILE_TYPE1 = {
     /*name=*/.name = "TYPE1",
     /*confidence=*/.confidence = 2,
@@ -42,6 +68,8 @@ const OcleanProfile PROFILE_TYPE1 = {
     /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
     /*decode_record=*/.decode_record = &decode_session_record,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_TYPE1_34B,
+    /*allows_writes=*/.allows_writes = true,
+    /*skip_cccd_write=*/.skip_cccd_write = true,
 };
 
 const OcleanProfile PROFILE_UNKNOWN = {
@@ -52,6 +80,8 @@ const OcleanProfile PROFILE_UNKNOWN = {
     /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
     /*decode_record=*/.decode_record = nullptr,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_NONE,
+    /*allows_writes=*/.allows_writes = true,
+    /*skip_cccd_write=*/.skip_cccd_write = true,
 };
 
 // === Z1 profile (model OCLEANY5) ===
@@ -66,6 +96,20 @@ const OcleanProfile PROFILE_TYPE_Z1 = {
     /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
     /*decode_record=*/.decode_record = &decode_session_record,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_TYPE1_34B,
+    /*allows_writes=*/.allows_writes = true,
+    /*skip_cccd_write=*/.skip_cccd_write = true,
+};
+
+const OcleanProfile PROFILE_PROBE = {
+    /*name=*/.name = "PROBE",
+    /*confidence=*/.confidence = 0,
+    /*query_cmds=*/.query_cmds = PROBE_QUERY_CMDS,
+    /*query_cmd_count=*/.query_cmd_count = sizeof(PROBE_QUERY_CMDS) / sizeof(PROBE_QUERY_CMDS[0]),
+    /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
+    /*decode_record=*/.decode_record = nullptr,
+    /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_NONE,
+    /*allows_writes=*/.allows_writes = false,
+    /*skip_cccd_write=*/.skip_cccd_write = false,
 };
 
 // Order matters: first match wins, so the most specific prefix comes first
@@ -86,6 +130,7 @@ static const ProfileEntry PROFILE_TABLE[] = {
     {.prefix = "OCLEANY3T", .profile = &PROFILE_TYPE1},
     {.prefix = "OCLEANY3", .profile = &PROFILE_TYPE1},  // generic X / X Pro, shorter prefix last
     {.prefix = "OCLEANR3L", .profile = &PROFILE_TYPE1},
+    {.prefix = "OCLEANV20", .profile = &PROFILE_PROBE},  // X Ultra 20
     {.prefix = "OCLEANX20", .profile = &PROFILE_TYPE1},
     {.prefix = "OCLEANV1", .profile = &PROFILE_TYPE1},
     {.prefix = "OCLEANA1e", .profile = &PROFILE_TYPE1},
@@ -107,6 +152,23 @@ const OcleanProfile *profile_for_model(const char *model, size_t len) {
       return i.profile;
   }
   return &PROFILE_UNKNOWN;
+}
+
+bool writes_locked(bool read_only, const OcleanProfile &profile) {
+  return read_only || !profile.allows_writes;
+}
+
+bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8_t *bytes, size_t len) {
+  if (!writes_locked(read_only, profile))
+    return true;
+  if (bytes == nullptr)
+    return false;
+  for (uint8_t i = 0; i < profile.query_cmd_count; i++) {
+    const ProfileCmd &q = profile.query_cmds[i];
+    if (q.len == len && memcmp(q.bytes, bytes, len) == 0)
+      return true;
+  }
+  return false;
 }
 
 }  // namespace esphome::oclean

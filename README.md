@@ -91,6 +91,7 @@ being hardcoded to a single model.
 | Line | Model id (DIS 0x2A24) | Profile | Status |
 |---|---|---|---|
 | X / X Pro / Pro Elite / Ultra / Pro 20 | `OCLEANY3`, `OCLEANY3M*`, `OCLEANY3P*`, `OCLEANV1`, `OCLEANX20` | TYPE1 | X Pro Elite (`OCLEANY3P` / `OCLEANY3PD`) verified on hardware; others untested |
+| X Ultra 20 | `OCLEANV20` | PROBE | read queries only, no writes; protocol not yet captured |
 | Z1 | `OCLEANY5` | TYPE_Z1 | untested (needs a capture to freeze the record layout) |
 | other / new firmware | unmatched | UNKNOWN fallback | battery + status only |
 
@@ -111,7 +112,7 @@ hosts more BLE clients than that.
 | `8082caa8-41a6-4021-91c6-56f9b954cc18` | `5f78df94-798c-46f5-990a-855b673fbb89` (WRITE) | Tx, session-download command |
 | `8082caa8-41a6-4021-91c6-56f9b954cc18` | `5f78df94-798c-46f5-990a-855b673fbb90` (NOTIFY) | Rx, session record stream |
 | `0x180F` | `0x2A19` (READ/NOTIFY) | battery percent, single byte |
-| `0x180A` | `0x2A24` / `0x2A27` / `0x2A28` (READ) | model / HW revision / SW revision |
+| `0x180A` | `0x2A24` / `0x2A26` / `0x2A27` / `0x2A28` (READ) | model / firmware revision / HW revision / SW revision |
 
 No pairing, no bonding, no auth: connect and write. Integers are big-endian,
 frames carry no CRC. Write With Response is mandatory; Write No Response is
@@ -219,10 +220,9 @@ is fixed by the protocol. The escape hatches are per-entity overrides and
 The four control platforms are optional. Leave `switch`, `number`, `select` or
 `button` out and their code is not compiled into the firmware at all.
 
-That alone does not make the node read-only: `auto_sync_time` defaults to on
-whenever the hub has a `time_id`, and it writes the brush clock (`0201`) on its
-own. For a node that never writes anything, drop the four control platforms
-**and** set `auto_sync_time: false`.
+That alone does not make the node read-only: `auto_sync_time` writes the brush
+clock (`0201`) on its own, and every poll ends with `0202`. For a hub that never
+writes anything, set `read_only: true`.
 
 ### Hub options
 
@@ -238,7 +238,8 @@ Set on the `oclean:` entry, not on the platforms.
 | `tzindex` | int 1-33 | `16` | 1-based index into the brush's 33-entry GMT-offset table, written together with the clock. 16 = CEST (UTC+2), 15 = CET (UTC+1). |
 | `auto_sync_time` | bool | on when `time_id` is set, off otherwise | Resync the brush clock during a poll when it has drifted past `sync_drift_threshold`. Explicit `true` without `time_id` fails validation. |
 | `sync_drift_threshold` | time | `120s` | Drift that triggers an auto resync. `0s` resyncs whenever the clocks differ by at least one second. |
-| `expose_dev_sensors` | bool | `false` | Creates the dev-gated entities (see the per-platform tables). |
+| `expose_dev_sensors` | bool | `false` | Creates the dev-gated entities (see the per-platform tables) and logs the brush's GATT services and characteristics on each connect. |
+| `read_only` | bool | `false` | The brush only receives the profile's read queries. Every write is refused and logged: controls, clock sync, `0202`. |
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
 
 The brushing-mode select additionally accepts `custom_modes` (a list of named
@@ -658,10 +659,12 @@ PlatformIO unit tests link against. Everything else needs the ESPHome runtime.
 ```
 
 - A poll cycle enables the BLE client, waits for the GATT open and service
-  discovery, resolves all characteristic handles synchronously in the
-  search-complete event, registers for notifies, then after a settle delay
-  issues the query sequence: battery, device information (cached for 24 h),
-  STATUS, SETTINGS, session download.
+  discovery and resolves all characteristic handles synchronously in the
+  search-complete event. After a settle delay it reads battery and device
+  information (cached for 24 h). The model string picks the profile, the
+  profile picks the connection type, and only then does the hub register for
+  notifies and send the profile's queries (TYPE1: STATUS, SETTINGS, session
+  download).
 - Pending writes queued by HA controls flush at the start of the query phase
   of the next connect; a write while idle raises the link immediately.
 - The link is dropped after a short hold (8 s normal poll, 30 s capture). A
@@ -690,7 +693,7 @@ characteristic; rejected opcodes return a one-byte `02` stub.
 |---|---|
 | `03 03` | STATUS: 8-byte reply, battery at byte 5, dock/charge state at byte 2 (`01` charging, `02` off dock, `03` docked and full) |
 | `03 02 01` | SETTINGS: replied as a two-frame transfer reassembled into a 34-byte buffer |
-| `02 02` | device info (ack only on the verified family) |
+| `02 02` | clear running data, sent after the queries; never sent by a `read_only` hub or the PROBE profile |
 | `03 07` | session download (reply streams on the session notify characteristic) |
 | `02 01` + 8B | set clock: `[year-2000][month][day][hour][min][sec][weekday][tzindex]`, plain decimal bytes, local time, weekday 0 = Sunday |
 | `02 0F` | reset brush-head counter |

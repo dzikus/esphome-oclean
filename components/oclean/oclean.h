@@ -65,6 +65,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_hub_index(int i) { this->hub_index_ = i; }
   void set_total_hubs(int n) { this->total_hubs_ = n; }
   void set_expose_dev_sensors(bool en) { this->expose_dev_sensors_ = en; }
+  void set_read_only(bool en) { this->read_only_ = en; }
 
   // Identically named auto-created entities share an object-id hash, so without
   // a per-hub salt two hubs collide in the same flash slot. Also the base for
@@ -180,9 +181,10 @@ class OcleanHub : public ble_client::BLEClientNode,
   // link down to up, then arm the cycle
   void begin_connect_cycle_(bool stamp_cadence);
 
-  // query window open: a record stream may be in flight, and a second round
-  // would reset the assemblers mid-transfer
-  bool query_round_open_() const { return this->capture_active_; }
+  // query window open or being set up: a record stream may be in flight, and a
+  // second round would reset the assemblers mid-transfer
+  bool query_round_open_() const { return this->capture_active_ || this->round_setup_pending_(); }
+  bool round_setup_pending_() const { return this->awaiting_model_ || this->notify_regs_pending_ > 0; }
 
   // caller guarantees a valid local time; reason labels the log line
   void queue_set_clock_(const char *reason);
@@ -222,8 +224,15 @@ class OcleanHub : public ble_client::BLEClientNode,
   // must run inside SEARCH_CMPL: a deferred characteristic lookup returns
   // nullptr for everything
   void resolve_handles_();
-  void read_handle_(uint16_t handle, const char *name);
-  void register_notify_handle_(uint16_t handle, const char *name);
+  void dump_gatt_map_();
+  // runs once the profile is known: the connection type it picks has to be set
+  // before the first register-for-notify
+  void begin_queries_();
+  void model_read_finished_();
+  void start_query_round_();
+  bool read_handle_(uint16_t handle, const char *name);
+  bool register_notify_handle_(uint16_t handle, const char *name);
+  void log_refusal_(const char *name, const uint8_t *bytes, size_t len);
   bool write_raw_(uint16_t handle, const uint8_t *bytes, size_t len, const char *name);
   // Staggered: Write With Response allows one outstanding write. Returns the ms
   // offset at which the read queries may start without colliding.
@@ -309,11 +318,13 @@ class OcleanHub : public ble_client::BLEClientNode,
 
   State state_{State::IDLE};
   bool expose_dev_sensors_{false};
+  bool read_only_{false};
 
   // Handles resolved at SEARCH_CMPL for the characteristics this hub uses.
   uint16_t battery_handle_{0};
   uint16_t model_handle_{0};
   uint16_t hw_rev_handle_{0};
+  uint16_t fw_rev_handle_{0};
   uint16_t sw_rev_handle_{0};
   uint16_t rx_main_handle_{0};
   uint16_t rx_session_handle_{0};
@@ -328,6 +339,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   // millis(); the staleness check subtracts, so a wrap works out
   bool dis_cached_{false};
   uint32_t last_dis_read_ms_{0};
+
+  bool awaiting_model_{false};
+  uint8_t notify_regs_pending_{0};
 
   struct PendingWrite {
     std::vector<uint8_t> bytes;

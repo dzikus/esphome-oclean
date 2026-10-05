@@ -40,7 +40,7 @@ using RecordDecoder = bool (*)(const uint8_t *rec, SessionRecord *out);
 // Plain data, no virtuals: the table lives in flash and allocates nothing.
 struct OcleanProfile {
   const char *name;
-  uint8_t confidence;  // 2 = hardware-validated, 1 = ported / unconfirmed
+  uint8_t confidence;  // 2 = hardware-validated, 1 = ported / unconfirmed, 0 = probe
 
   const ProfileCmd *query_cmds;  // in send order
   uint8_t query_cmd_count;
@@ -50,14 +50,22 @@ struct OcleanProfile {
   RecordDecoder decode_record;  // nullptr = no session records on this profile
 
   SettingsKind settings_kind;
+
+  bool allows_writes;
+  bool skip_cccd_write;
 };
 
 extern const OcleanProfile PROFILE_TYPE1;
 extern const OcleanProfile PROFILE_UNKNOWN;
 extern const OcleanProfile PROFILE_TYPE_Z1;
+extern const OcleanProfile PROFILE_PROBE;
 
 // Longest-matching prefix, never null: anything unrecognised, empty or null
 // lands on PROFILE_UNKNOWN. model need not be null-terminated.
 const OcleanProfile *profile_for_model(const char *model, size_t len);
+
+bool writes_locked(bool read_only, const OcleanProfile &profile);
+
+bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8_t *bytes, size_t len);
 
 }  // namespace esphome::oclean

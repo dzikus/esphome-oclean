@@ -1216,6 +1216,139 @@ void test_profile_z1_routing() {
   TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_TYPE1_34B, PROFILE_TYPE_Z1.settings_kind);
 }
 
+void test_profile_select_v20_probe() {
+  const char *m = "OCLEANV20";
+  TEST_ASSERT_EQUAL_PTR(&PROFILE_PROBE, profile_for_model(m, strlen(m)));
+  const char *v1 = "OCLEANV1";
+  TEST_ASSERT_EQUAL_PTR(&PROFILE_TYPE1, profile_for_model(v1, strlen(v1)));
+}
+
+void test_profile_probe_contract() {
+  TEST_ASSERT_EQUAL_UINT8(0, PROFILE_PROBE.confidence);
+  TEST_ASSERT_FALSE(PROFILE_PROBE.allows_writes);
+  TEST_ASSERT_FALSE(PROFILE_PROBE.skip_cccd_write);
+  TEST_ASSERT_NULL(PROFILE_PROBE.decode_record);
+  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_NONE, PROFILE_PROBE.settings_kind);
+}
+
+void test_profile_probe_reads_on_both_tx_chars() {
+  const uint8_t status[] = {0x03, 0x03};
+  const uint8_t settings[] = {0x03, 0x02, 0x01};
+  const uint8_t download[] = {0x03, 0x07};
+  struct Expected {
+    const uint8_t *bytes;
+    uint8_t len;
+    WriteTarget target;
+  };
+  const Expected expected[] = {
+      {status, 2, WriteTarget::TX_MAIN},      {settings, 3, WriteTarget::TX_MAIN},
+      {download, 2, WriteTarget::TX_SESSION}, {status, 2, WriteTarget::TX_SESSION},
+      {settings, 3, WriteTarget::TX_SESSION}, {download, 2, WriteTarget::TX_MAIN},
+  };
+  TEST_ASSERT_EQUAL_UINT8(6, PROFILE_PROBE.query_cmd_count);
+  for (uint8_t i = 0; i < 6; i++) {
+    const ProfileCmd &q = PROFILE_PROBE.query_cmds[i];
+    TEST_ASSERT_EQUAL_INT(expected[i].target, q.target);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].len, q.len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected[i].bytes, q.bytes, q.len);
+  }
+}
+
+void test_validated_profiles_keep_writes_and_cccd_skip() {
+  TEST_ASSERT_TRUE(PROFILE_TYPE1.allows_writes);
+  TEST_ASSERT_TRUE(PROFILE_TYPE1.skip_cccd_write);
+  TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.allows_writes);
+  TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.skip_cccd_write);
+  TEST_ASSERT_TRUE(PROFILE_UNKNOWN.allows_writes);
+  TEST_ASSERT_TRUE(PROFILE_UNKNOWN.skip_cccd_write);
+}
+
+void test_writes_locked() {
+  TEST_ASSERT_FALSE(writes_locked(false, PROFILE_TYPE1));
+  TEST_ASSERT_TRUE(writes_locked(true, PROFILE_TYPE1));
+  TEST_ASSERT_TRUE(writes_locked(false, PROFILE_PROBE));
+  TEST_ASSERT_TRUE(writes_locked(true, PROFILE_PROBE));
+}
+
+void test_command_permitted_locked_allows_only_profile_reads() {
+  const uint8_t status[] = {0x03, 0x03};
+  const uint8_t settings[] = {0x03, 0x02, 0x01};
+  const uint8_t download[] = {0x03, 0x07};
+  const uint8_t clear_running_data[] = {0x02, 0x02};
+  const uint8_t set_clock[] = {0x02, 0x01, 0x1A, 0x0A, 0x05, 0x13, 0x2D, 0x00, 0x00, 0x10};
+  const uint8_t area_reminder_on[] = {0x02, 0x0D, 0x01};
+  const uint8_t force_update[] = {0x03, 0x13, 0x00, 0x08, 0x03, 0x07};
+  const uint8_t status_prefix[] = {0x03};
+  for (bool const read_only : {true, false}) {
+    const OcleanProfile &p = read_only ? PROFILE_TYPE1 : PROFILE_PROBE;
+    TEST_ASSERT_TRUE(command_permitted(read_only, p, status, sizeof(status)));
+    TEST_ASSERT_TRUE(command_permitted(read_only, p, settings, sizeof(settings)));
+    TEST_ASSERT_TRUE(command_permitted(read_only, p, download, sizeof(download)));
+    TEST_ASSERT_FALSE(command_permitted(read_only, p, clear_running_data, sizeof(clear_running_data)));
+    TEST_ASSERT_FALSE(command_permitted(read_only, p, set_clock, sizeof(set_clock)));
+    TEST_ASSERT_FALSE(command_permitted(read_only, p, area_reminder_on, sizeof(area_reminder_on)));
+    TEST_ASSERT_FALSE(command_permitted(read_only, p, force_update, sizeof(force_update)));
+    TEST_ASSERT_FALSE(command_permitted(read_only, p, status_prefix, sizeof(status_prefix)));
+    TEST_ASSERT_FALSE(command_permitted(read_only, p, nullptr, 0));
+  }
+}
+
+void test_command_permitted_unlocked_type1_unchanged() {
+  const uint8_t clear_running_data[] = {0x02, 0x02};
+  const uint8_t area_reminder_on[] = {0x02, 0x0D, 0x01};
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE1, clear_running_data, sizeof(clear_running_data)));
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE1, area_reminder_on, sizeof(area_reminder_on)));
+}
+
+void test_decode_hw_revision_code() {
+  const uint8_t coded[] = {'H', 'H', 0x00, 0x05, 0x00, 0x01};
+  HwRevisionCode code{};
+  TEST_ASSERT_TRUE(decode_hw_revision_code(coded, sizeof(coded), &code));
+  TEST_ASSERT_EQUAL_HEX16(0x0005, code.protocol);
+  TEST_ASSERT_EQUAL_HEX16(0x0001, code.ota_type);
+  TEST_ASSERT_FALSE(decode_hw_revision_code(coded, 5, &code));
+  const uint8_t ascii[] = {'R', 'e', 'v', '.', 'D', 0x00};
+  TEST_ASSERT_FALSE(decode_hw_revision_code(ascii, sizeof(ascii), &code));
+  TEST_ASSERT_FALSE(decode_hw_revision_code(nullptr, 6, &code));
+  TEST_ASSERT_FALSE(decode_hw_revision_code(coded, sizeof(coded), nullptr));
+}
+
+void test_hw_revision_text() {
+  const uint8_t coded[] = {'H', 'H', 0x00, 0x05, 0x00, 0x01};
+  TEST_ASSERT_EQUAL_STRING("HH 0005/0001", hw_revision_text(coded, sizeof(coded)).c_str());
+  const uint8_t ascii[] = {'R', 'e', 'v', '.', 'D'};
+  TEST_ASSERT_EQUAL_STRING("Rev.D", hw_revision_text(ascii, sizeof(ascii)).c_str());
+  const uint8_t short_hh[] = {'H', 'H', 0x00, 0x05};
+  TEST_ASSERT_EQUAL_STRING("HH", hw_revision_text(short_hh, sizeof(short_hh)).c_str());
+}
+
+void test_dis_printable_text() {
+  const uint8_t raw[] = {'O', 'C', 0x00, 'L', 0x7F, 'E', 0x1F, 'A', 0xFF, 'N'};
+  TEST_ASSERT_EQUAL_STRING("OCLEAN", dis_printable_text(raw, sizeof(raw)).c_str());
+  TEST_ASSERT_EQUAL_STRING("", dis_printable_text(nullptr, 4).c_str());
+}
+
+void test_gatt_props_text() {
+  TEST_ASSERT_EQUAL_STRING("RN", gatt_props_text(0x12).c_str());
+  TEST_ASSERT_EQUAL_STRING("RW", gatt_props_text(0x0A).c_str());
+  TEST_ASSERT_EQUAL_STRING("w", gatt_props_text(0x04).c_str());
+  TEST_ASSERT_EQUAL_STRING("I", gatt_props_text(0x20).c_str());
+  TEST_ASSERT_EQUAL_STRING("RWwNI", gatt_props_text(0x3E).c_str());
+  TEST_ASSERT_EQUAL_STRING("-", gatt_props_text(0x00).c_str());
+}
+
+void test_ble_uuid_text() {
+  const uint8_t u16[] = {0x0A, 0x18};
+  TEST_ASSERT_EQUAL_STRING("0x180A", ble_uuid_text(u16, sizeof(u16)).c_str());
+  const uint8_t u32[] = {0x78, 0x56, 0x34, 0x12};
+  TEST_ASSERT_EQUAL_STRING("0x12345678", ble_uuid_text(u32, sizeof(u32)).c_str());
+  const uint8_t service[] = {0x18, 0xCC, 0x54, 0xB9, 0xF9, 0x56, 0xC6, 0x91,
+                             0x21, 0x40, 0xA6, 0x41, 0xA8, 0xCA, 0x82, 0x80};
+  TEST_ASSERT_EQUAL_STRING("8082caa8-41a6-4021-91c6-56f9b954cc18", ble_uuid_text(service, sizeof(service)).c_str());
+  TEST_ASSERT_EQUAL_STRING("?", ble_uuid_text(service, 3).c_str());
+  TEST_ASSERT_EQUAL_STRING("?", ble_uuid_text(nullptr, 16).c_str());
+}
+
 // Real inline count=0 frames captured 2026-06-10 from both brushes.
 void test_decode_inline_0307() {
   static const uint8_t G[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x1A, 0x06, 0x0A,
@@ -1524,6 +1657,18 @@ int main() {
   RUN_TEST(test_profile_select_y5_z1);
   RUN_TEST(test_profile_z1_contract);
   RUN_TEST(test_profile_z1_routing);
+  RUN_TEST(test_profile_select_v20_probe);
+  RUN_TEST(test_profile_probe_contract);
+  RUN_TEST(test_profile_probe_reads_on_both_tx_chars);
+  RUN_TEST(test_validated_profiles_keep_writes_and_cccd_skip);
+  RUN_TEST(test_writes_locked);
+  RUN_TEST(test_command_permitted_locked_allows_only_profile_reads);
+  RUN_TEST(test_command_permitted_unlocked_type1_unchanged);
+  RUN_TEST(test_decode_hw_revision_code);
+  RUN_TEST(test_hw_revision_text);
+  RUN_TEST(test_dis_printable_text);
+  RUN_TEST(test_gatt_props_text);
+  RUN_TEST(test_ble_uuid_text);
   RUN_TEST(test_decode_inline_0307);
   RUN_TEST(test_decode_inline_0307_rejects);
 

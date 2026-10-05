@@ -87,6 +87,7 @@ void OcleanHub::dump_config() {
                 (unsigned)this->battery_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Hold link while docked: %s", YESNO(this->hold_while_docked_));
   ESP_LOGCONFIG(TAG, "  Expose dev sensors: %s", YESNO(this->expose_dev_sensors_));
+  ESP_LOGCONFIG(TAG, "  Read-only: %s", YESNO(this->read_only_));
   // Active protocol profile: the default until the first poll reads the DIS
   // model string and selects the per-device profile.
   ESP_LOGCONFIG(TAG, "  Profile: %s (confidence %u)", this->profile_->name, (unsigned)this->profile_->confidence);
@@ -221,6 +222,7 @@ void OcleanHub::begin_connect_cycle_(bool stamp_cadence) {
   this->battery_handle_ = 0;
   this->model_handle_ = 0;
   this->hw_rev_handle_ = 0;
+  this->fw_rev_handle_ = 0;
   this->sw_rev_handle_ = 0;
   this->rx_main_handle_ = 0;
   this->rx_session_handle_ = 0;
@@ -253,6 +255,9 @@ void OcleanHub::disconnect_() {
   this->cancel_timeout("poll_watchdog");
   this->cancel_timeout("capture_hold");
   this->cancel_timeout("enrichment_wait");
+  this->cancel_timeout("notify_reg_wait");
+  this->awaiting_model_ = false;
+  this->notify_regs_pending_ = 0;
   // Leaving held mode on every disconnect path: cancel the re-query timer and
   // clear the flag so a torn-down link never leaves a zombie held timer running.
   this->clear_hold_();
@@ -315,6 +320,9 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
       this->cancel_timeout("poll_watchdog");
       this->cancel_timeout("capture_hold");
       this->cancel_timeout("enrichment_wait");
+      this->cancel_timeout("notify_reg_wait");
+      this->awaiting_model_ = false;
+      this->notify_regs_pending_ = 0;
       // A remote disconnect while holding (e.g. brush lifted off the dock and
       // dropped the link) must clear the held timer and flag so the next cycle
       // returns to normal adaptive cadence.
@@ -331,10 +339,12 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
       // A BLEClientNode must mark itself established; nothing else does it,
       // and the settle callback below bails out on a non-established state.
       this->node_state = espbt::ClientState::ESTABLISHED;
-      // Resolve handles and subscribe to notifies synchronously here. The
-      // characteristic table is only valid during this event; a deferred
-      // lookup from the settle callback returns nullptr for everything.
+      // Resolve handles synchronously here. The characteristic table is only
+      // valid during this event; a deferred lookup from the settle callback
+      // returns nullptr for everything.
       this->resolve_handles_();
+      if (this->expose_dev_sensors_)
+        this->dump_gatt_map_();
       // Settle before issuing reads; some firmware drops early requests. By
       // now every handle is cached, so the callback only reads and never looks
       // characteristics up again.
@@ -364,19 +374,16 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
           ESP_LOGD(TAG, "[%s] device info served from cache (%s, profile %s)", this->parent_->address_str(),
                    this->model_string_.c_str(), this->profile_->name);
         } else {
-          this->read_handle_(this->model_handle_, "dis-model");
+          this->awaiting_model_ = this->read_handle_(this->model_handle_, "dis-model");
           this->read_handle_(this->hw_rev_handle_, "dis-hw-rev");
+          this->read_handle_(this->fw_rev_handle_, "dis-fw-rev");
           this->read_handle_(this->sw_rev_handle_, "dis-sw-rev");
         }
         this->read_handle_(this->battery_handle_, "battery");
         if (this->battery_handle_ == 0)
           this->got_battery_ = true;
-        // Every poll does the full query (status, settings, session download)
-        // so the session and status entities stay populated, not just after a
-        // manual capture. The query holds the link for the responses, then
-        // disconnects. capture_armed_ extends the hold and adds the probe.
-        this->query_device_(this->capture_armed_);
-        this->capture_armed_ = false;
+        if (!this->awaiting_model_)
+          this->begin_queries_();
       });
       break;
     }
@@ -385,12 +392,21 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
         ESP_LOGW(TAG, "[%s] register_for_notify failed handle=0x%04X status=%d", this->parent_->address_str(),
                  param->reg_for_notify.handle, param->reg_for_notify.status);
       }
+      // the base client queues the CCCD write while handling this event, so
+      // the first query goes out one stagger after the last registration
+      if (this->notify_regs_pending_ > 0) {
+        this->notify_regs_pending_--;
+        if (this->notify_regs_pending_ == 0)
+          this->set_timeout("notify_reg_wait", QUERY_STAGGER_MS, [this]() { this->start_query_round_(); });
+      }
       break;
     }
     case ESP_GATTC_READ_CHAR_EVT: {
       if (param->read.status != ESP_GATT_OK) {
         ESP_LOGW(TAG, "[%s] read handle=0x%04X failed status=%d", this->parent_->address_str(), param->read.handle,
                  param->read.status);
+        if (param->read.handle == this->model_handle_)
+          this->model_read_finished_();
         break;
       }
       uint16_t const h = param->read.handle;
@@ -398,8 +414,11 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
         this->handle_battery_(param->read.value, param->read.value_len);
       } else if (h == this->model_handle_) {
         this->handle_dis_read_(DIS_MODEL_UUID16, param->read.value, param->read.value_len);
+        this->model_read_finished_();
       } else if (h == this->hw_rev_handle_) {
         this->handle_dis_read_(DIS_HW_REV_UUID16, param->read.value, param->read.value_len);
+      } else if (h == this->fw_rev_handle_) {
+        this->handle_dis_read_(DIS_FW_REV_UUID16, param->read.value, param->read.value_len);
       } else if (h == this->sw_rev_handle_) {
         this->handle_dis_read_(DIS_SW_REV_UUID16, param->read.value, param->read.value_len);
       } else {
@@ -466,6 +485,7 @@ void OcleanHub::resolve_handles_() {
   this->battery_handle_ = resolve16(BATTERY_SERVICE_UUID16, BATTERY_CHAR_UUID16);
   this->model_handle_ = resolve16(DIS_SERVICE_UUID16, DIS_MODEL_UUID16);
   this->hw_rev_handle_ = resolve16(DIS_SERVICE_UUID16, DIS_HW_REV_UUID16);
+  this->fw_rev_handle_ = resolve16(DIS_SERVICE_UUID16, DIS_FW_REV_UUID16);
   this->sw_rev_handle_ = resolve16(DIS_SERVICE_UUID16, DIS_SW_REV_UUID16);
   this->rx_main_handle_ = resolve_full(RX_MAIN);
   this->rx_session_handle_ = resolve_full(RX_SESSION);
@@ -473,58 +493,134 @@ void OcleanHub::resolve_handles_() {
   this->tx_main_handle_ = resolve_full(TX_MAIN);
 
   ESP_LOGD(TAG,
-           "[%s] handles bat=0x%04X model=0x%04X hw=0x%04X sw=0x%04X "
+           "[%s] handles bat=0x%04X model=0x%04X hw=0x%04X fw=0x%04X sw=0x%04X "
            "rx-main=0x%04X rx-session=0x%04X tx-session=0x%04X tx-main=0x%04X",
            this->parent_->address_str(), this->battery_handle_, this->model_handle_, this->hw_rev_handle_,
-           this->sw_rev_handle_, this->rx_main_handle_, this->rx_session_handle_, this->tx_session_handle_,
-           this->tx_main_handle_);
+           this->fw_rev_handle_, this->sw_rev_handle_, this->rx_main_handle_, this->rx_session_handle_,
+           this->tx_session_handle_, this->tx_main_handle_);
 
   // A missing DIS model must not stall the cycle waiting on a read event.
   if (this->model_handle_ == 0) {
     this->got_model_ = true;
   }
-
-  // The base client, on each register-for-notify completion, looks up the
-  // characteristic's config descriptor to auto-write the notify enable bit.
-  // On this device that descriptor list is malformed and the lookup can
-  // dereference a bad pointer and fault the task. Switching to the cache
-  // connection type makes the base client skip that lookup and assume the
-  // client owns the descriptor. The brush streams notifies without a
-  // descriptor write anyway, so nothing is lost. Reset on disconnect.
-  this->parent_->set_connection_type(espbt::ConnectionType::V3_WITH_CACHE);
-
-  // Subscribe to every known notify characteristic. Missing characteristics
-  // are logged and skipped, never fatal.
-  this->register_notify_handle_(this->battery_handle_, "battery");
-  this->register_notify_handle_(this->rx_main_handle_, "rx-main");
-  this->register_notify_handle_(this->rx_session_handle_, "rx-session");
 }
 
-void OcleanHub::read_handle_(uint16_t handle, const char *name) {
+void OcleanHub::dump_gatt_map_() {
+  auto uuid_text = [](const esp_bt_uuid_t &u) {
+    return ble_uuid_text(reinterpret_cast<const uint8_t *>(&u.uuid), u.len);
+  };
+  for (uint16_t s = 0;; s++) {
+    esp_gattc_service_elem_t svc{};
+    uint16_t svc_count = 1;
+    if (esp_ble_gattc_get_service(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), nullptr, &svc,
+                                  &svc_count, s) != ESP_GATT_OK ||
+        svc_count == 0)
+      break;
+    ESP_LOGI(TAG, "[%s] GATT service %s handles 0x%04X-0x%04X", this->parent_->address_str(),
+             uuid_text(svc.uuid).c_str(), svc.start_handle, svc.end_handle);
+    for (uint16_t c = 0;; c++) {
+      esp_gattc_char_elem_t chr{};
+      uint16_t chr_count = 1;
+      if (esp_ble_gattc_get_all_char(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), svc.start_handle,
+                                     svc.end_handle, &chr, &chr_count, c) != ESP_GATT_OK ||
+          chr_count == 0)
+        break;
+      ESP_LOGI(TAG, "[%s] GATT char %s handle 0x%04X props %s", this->parent_->address_str(),
+               uuid_text(chr.uuid).c_str(), chr.char_handle, gatt_props_text(chr.properties).c_str());
+    }
+  }
+}
+
+void OcleanHub::begin_queries_() {
+  if (this->state_ != State::POLLING)
+    return;
+  bool const wait_for_cccd = !this->profile_->skip_cccd_write;
+  if (!wait_for_cccd) {
+    // The base client, on each register-for-notify completion, looks up the
+    // characteristic's config descriptor to auto-write the notify enable bit.
+    // On the validated brushes that descriptor list is malformed and the lookup
+    // can dereference a bad pointer and fault the task. The cache connection
+    // type makes the base client skip that lookup. Those brushes notify without
+    // a descriptor write, so nothing is lost. Reset on disconnect.
+    this->parent_->set_connection_type(espbt::ConnectionType::V3_WITH_CACHE);
+  }
+  this->notify_regs_pending_ = 0;
+  if (this->register_notify_handle_(this->battery_handle_, "battery") && wait_for_cccd)
+    this->notify_regs_pending_++;
+  if (this->register_notify_handle_(this->rx_main_handle_, "rx-main") && wait_for_cccd)
+    this->notify_regs_pending_++;
+  if (this->register_notify_handle_(this->rx_session_handle_, "rx-session") && wait_for_cccd)
+    this->notify_regs_pending_++;
+  if (this->notify_regs_pending_ == 0) {
+    this->start_query_round_();
+    return;
+  }
+  this->set_timeout("notify_reg_wait", NOTIFY_REG_TIMEOUT_MS, [this]() {
+    ESP_LOGW(TAG, "[%s] %u notify registration(s) unconfirmed, querying anyway", this->parent_->address_str(),
+             (unsigned)this->notify_regs_pending_);
+    this->start_query_round_();
+  });
+}
+
+void OcleanHub::model_read_finished_() {
+  if (!this->awaiting_model_)
+    return;
+  this->awaiting_model_ = false;
+  this->begin_queries_();
+}
+
+void OcleanHub::start_query_round_() {
+  this->cancel_timeout("notify_reg_wait");
+  this->notify_regs_pending_ = 0;
+  if (this->state_ != State::POLLING)
+    return;
+  this->query_device_(this->capture_armed_);
+  this->capture_armed_ = false;
+}
+
+bool OcleanHub::read_handle_(uint16_t handle, const char *name) {
   if (handle == 0) {
     ESP_LOGD(TAG, "[%s] no handle for %s, skipping read", this->parent_->address_str(), name);
-    return;
+    return false;
   }
   auto status = esp_ble_gattc_read_char(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), handle,
                                         ESP_GATT_AUTH_REQ_NONE);
   if (status != ESP_OK) {
     ESP_LOGW(TAG, "[%s] read %s failed status=%d", this->parent_->address_str(), name, status);
+    return false;
   }
+  return true;
 }
 
-void OcleanHub::register_notify_handle_(uint16_t handle, const char *name) {
+bool OcleanHub::register_notify_handle_(uint16_t handle, const char *name) {
   if (handle == 0) {
     ESP_LOGD(TAG, "[%s] notify char %s not found, skipping", this->parent_->address_str(), name);
-    return;
+    return false;
   }
   auto status =
       esp_ble_gattc_register_for_notify(this->parent_->get_gattc_if(), this->parent_->get_remote_bda(), handle);
   if (status != ESP_OK) {
     ESP_LOGD(TAG, "[%s] register_for_notify %s failed status=%d", this->parent_->address_str(), name, status);
+    return false;
+  }
+  return true;
+}
+
+void OcleanHub::log_refusal_(const char *name, const uint8_t *bytes, size_t len) {
+  if (this->read_only_) {
+    ESP_LOGW(TAG, "[%s] read-only: refusing %s -> %s", this->parent_->address_str(), name,
+             format_hex_pretty(bytes, len).c_str());
+  } else {
+    ESP_LOGW(TAG, "[%s] profile %s: refusing %s -> %s", this->parent_->address_str(), this->profile_->name, name,
+             format_hex_pretty(bytes, len).c_str());
   }
 }
 
 bool OcleanHub::write_raw_(uint16_t handle, const uint8_t *bytes, size_t len, const char *name) {
+  if (!command_permitted(this->read_only_, *this->profile_, bytes, len)) {
+    this->log_refusal_(name, bytes, len);
+    return false;
+  }
   if (handle == 0) {
     ESP_LOGW(TAG, "[%s] write char for %s not found", this->parent_->address_str(), name);
     return false;
@@ -546,6 +642,10 @@ bool OcleanHub::send_command(std::vector<uint8_t> bytes, const char *name, Write
     // whenever BLE comes back, and the optimistic entity state would lie until
     // then.
     ESP_LOGW(TAG, "[%s] command %s ignored: BLE user-disabled", this->parent_->address_str(), name);
+    return false;
+  }
+  if (writes_locked(this->read_only_, *this->profile_)) {
+    this->log_refusal_(name, bytes.data(), bytes.size());
     return false;
   }
   if (this->pending_writes_.size() >= MAX_PENDING_WRITES) {
@@ -658,7 +758,8 @@ void OcleanHub::queue_set_clock_(const char *reason) {
 
 void OcleanHub::maybe_auto_sync_clock_(const DeviceSettings &ds) {
 #ifdef USE_TIME
-  if (!this->auto_sync_time_ || this->time_ == nullptr || !ds.clock_valid)
+  if (!this->auto_sync_time_ || writes_locked(this->read_only_, *this->profile_) || this->time_ == nullptr ||
+      !ds.clock_valid)
     return;
   ESPTime const now = this->time_->now();
   if (!now.is_valid())
@@ -774,12 +875,19 @@ void OcleanHub::handle_dis_read_(uint16_t uuid16, const uint8_t *data, size_t le
   // len comes straight from the device (value_len), so clamp it before building
   // the string to bound the heap a hostile peripheral could otherwise pin.
   size_t const n = std::min(len, (size_t)MAX_DIS_STRING_LEN);
-  std::string s(reinterpret_cast<const char *>(data), n);
+  if (uuid16 == DIS_HW_REV_UUID16) {
+    ESP_LOGI(TAG, "[%s] DIS hw revision raw: %s", this->parent_->address_str(), format_hex_pretty(data, n).c_str());
+    HwRevisionCode code{};
+    if (decode_hw_revision_code(data, n, &code)) {
+      ESP_LOGI(TAG, "[%s] DIS hw revision: HH protocol 0x%04X ota 0x%04X", this->parent_->address_str(),
+               (unsigned)code.protocol, (unsigned)code.ota_type);
+    }
+    this->hw_rev_string_ = hw_revision_text(data, n);
+    esphome::oclean::OcleanHub::publish_(this->hw_rev_text_sensor_, this->hw_rev_string_);
+    return;
+  }
   // DIS strings come from an unauthenticated peripheral; keep printable ASCII only.
-  std::erase_if(s, [](char c) {
-    auto u = static_cast<unsigned char>(c);
-    return u < 0x20 || u > 0x7E;
-  });
+  std::string const s = dis_printable_text(data, n);
   switch (uuid16) {
     case DIS_MODEL_UUID16:
       this->model_string_ = s;
@@ -796,10 +904,8 @@ void OcleanHub::handle_dis_read_(uint16_t uuid16, const uint8_t *data, size_t le
       this->last_dis_read_ms_ = millis();
       this->maybe_finish_poll_();
       break;
-    case DIS_HW_REV_UUID16:
-      this->hw_rev_string_ = s;
-      ESP_LOGI(TAG, "[%s] hw rev: %s", this->parent_->address_str(), s.c_str());
-      esphome::oclean::OcleanHub::publish_(this->hw_rev_text_sensor_, s);
+    case DIS_FW_REV_UUID16:
+      ESP_LOGI(TAG, "[%s] DIS firmware revision: %s", this->parent_->address_str(), s.c_str());
       break;
     case DIS_SW_REV_UUID16:
       this->sw_rev_string_ = s;
@@ -1196,8 +1302,8 @@ void OcleanHub::maybe_finish_poll_() {
   // window; the hold exits via the charging=false path, never from here.
   if (this->holding_)
     return;
-  if (this->capture_active_)
-    return;  // hold the link open for the capture window
+  if (this->query_round_open_())
+    return;
   if (this->got_battery_ && this->got_model_) {
     ESP_LOGD(TAG, "[%s] poll complete, disconnecting", this->parent_->address_str());
     this->disconnect_();
@@ -1245,8 +1351,8 @@ void OcleanHub::trigger_session_capture() {
   // POLLING; firing query_device_ during DISCOVERING (settle still pending)
   // would double-run it and reset the assemblers mid-stream. In that case just
   // arm capture and let the settle-driven query_device_ pick it up.
-  if (this->state_ == State::POLLING) {
-    if (this->query_round_open_()) {
+  if (this->state_ == State::POLLING && !this->round_setup_pending_()) {
+    if (this->capture_active_) {
       ESP_LOGI(TAG, "[%s] session capture ignored: query round already open", this->parent_->address_str());
       return;
     }
@@ -1267,7 +1373,13 @@ void OcleanHub::trigger_immediate_poll() {
   // query directly on it instead of trying to start a new cycle: update() would
   // skip while connected. Same gate as trigger_session_capture.
   if (this->state_ == State::POLLING) {
-    if (this->query_round_open_()) {
+    if (this->round_setup_pending_()) {
+      this->capture_armed_ = true;
+      ESP_LOGI(TAG, "[%s] poll-now pressed, query round being set up, capture hold armed",
+               this->parent_->address_str());
+      return;
+    }
+    if (this->capture_active_) {
       ESP_LOGI(TAG, "[%s] poll-now ignored: query round already open", this->parent_->address_str());
       return;
     }
@@ -1329,14 +1441,14 @@ void OcleanHub::query_device_(bool capture_mode) {
       this->write_raw_(handle, bytes, len, wname);
     });
   }
-  // read-only; its reply falls through to the main-notify dump
   this->set_timeout("query_info", base + (uint32_t(prof->query_cmd_count) * QUERY_STAGGER_MS), [this]() {
     // Skip the query if the watchdog tore the link down
     // before it fired.
     if (this->state_ != State::POLLING)
       return;
-    static const uint8_t DEVICE_INFO_CMD[] = {0x02, 0x02};
-    this->write_raw_(this->tx_main_handle_, DEVICE_INFO_CMD, sizeof(DEVICE_INFO_CMD), "DEVICE_INFO");
+    static const uint8_t CLEAR_RUNNING_DATA_CMD[] = {0x02, 0x02};
+    this->write_raw_(this->tx_main_handle_, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD),
+                     "CLEAR_RUNNING_DATA");
   });
   // Capture mode only extends the hold below; every read query above already
   // runs on a normal poll. The longer window catches late or pushed responses.
