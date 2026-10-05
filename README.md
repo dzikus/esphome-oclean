@@ -91,7 +91,7 @@ being hardcoded to a single model.
 | Line | Model id (DIS 0x2A24) | Profile | Status |
 |---|---|---|---|
 | X / X Pro / Pro Elite / Ultra / Pro 20 | `OCLEANY3`, `OCLEANY3M*`, `OCLEANY3P*`, `OCLEANV1`, `OCLEANX20` | TYPE1 | X Pro Elite (`OCLEANY3P` / `OCLEANY3PD`) verified on hardware; others untested |
-| X Ultra 20 | `OCLEANV20` | PROBE | read queries only, no writes; protocol not yet captured |
+| X Ultra 20 | `OCLEANV20` | PROBE | read queries and the clock write (`0201`) only; session record not decoded yet |
 | Z1 | `OCLEANY5` | TYPE_Z1 | untested (needs a capture to freeze the record layout) |
 | other / new firmware | unmatched | UNKNOWN fallback | battery + status only |
 

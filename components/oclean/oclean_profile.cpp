@@ -69,6 +69,7 @@ const OcleanProfile PROFILE_TYPE1 = {
     /*decode_record=*/.decode_record = &decode_session_record,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_TYPE1_34B,
     /*allows_writes=*/.allows_writes = true,
+    /*allows_clock_write=*/.allows_clock_write = true,
     /*skip_cccd_write=*/.skip_cccd_write = true,
 };
 
@@ -81,6 +82,7 @@ const OcleanProfile PROFILE_UNKNOWN = {
     /*decode_record=*/.decode_record = nullptr,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_NONE,
     /*allows_writes=*/.allows_writes = true,
+    /*allows_clock_write=*/.allows_clock_write = true,
     /*skip_cccd_write=*/.skip_cccd_write = true,
 };
 
@@ -97,6 +99,7 @@ const OcleanProfile PROFILE_TYPE_Z1 = {
     /*decode_record=*/.decode_record = &decode_session_record,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_TYPE1_34B,
     /*allows_writes=*/.allows_writes = true,
+    /*allows_clock_write=*/.allows_clock_write = true,
     /*skip_cccd_write=*/.skip_cccd_write = true,
 };
 
@@ -109,6 +112,7 @@ const OcleanProfile PROFILE_PROBE = {
     /*decode_record=*/.decode_record = nullptr,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_NONE,
     /*allows_writes=*/.allows_writes = false,
+    /*allows_clock_write=*/.allows_clock_write = true,
     /*skip_cccd_write=*/.skip_cccd_write = false,
 };
 
@@ -154,21 +158,23 @@ const OcleanProfile *profile_for_model(const char *model, size_t len) {
   return &PROFILE_UNKNOWN;
 }
 
-bool writes_locked(bool read_only, const OcleanProfile &profile) {
-  return read_only || !profile.allows_writes;
+bool clock_write_permitted(bool read_only, const OcleanProfile &profile) {
+  return !read_only && (profile.allows_writes || profile.allows_clock_write);
 }
 
 bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8_t *bytes, size_t len) {
-  if (!writes_locked(read_only, profile))
-    return true;
-  if (bytes == nullptr)
+  if (bytes == nullptr || len == 0)
     return false;
   for (uint8_t i = 0; i < profile.query_cmd_count; i++) {
     const ProfileCmd &q = profile.query_cmds[i];
     if (q.len == len && memcmp(q.bytes, bytes, len) == 0)
       return true;
   }
-  return false;
+  if (read_only)
+    return false;
+  if (profile.allows_writes)
+    return true;
+  return clock_write_permitted(read_only, profile) && len == SET_CLOCK_CMD_LEN && bytes[0] == 0x02 && bytes[1] == 0x01;
 }
 
 }  // namespace esphome::oclean

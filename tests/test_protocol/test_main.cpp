@@ -1226,6 +1226,7 @@ void test_profile_select_v20_probe() {
 void test_profile_probe_contract() {
   TEST_ASSERT_EQUAL_UINT8(0, PROFILE_PROBE.confidence);
   TEST_ASSERT_FALSE(PROFILE_PROBE.allows_writes);
+  TEST_ASSERT_TRUE(PROFILE_PROBE.allows_clock_write);
   TEST_ASSERT_FALSE(PROFILE_PROBE.skip_cccd_write);
   TEST_ASSERT_NULL(PROFILE_PROBE.decode_record);
   TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_NONE, PROFILE_PROBE.settings_kind);
@@ -1256,6 +1257,7 @@ void test_profile_probe_reads_on_both_tx_chars() {
 
 void test_validated_profiles_keep_writes_and_cccd_skip() {
   TEST_ASSERT_TRUE(PROFILE_TYPE1.allows_writes);
+  TEST_ASSERT_TRUE(PROFILE_TYPE1.allows_clock_write);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.skip_cccd_write);
   TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.allows_writes);
   TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.skip_cccd_write);
@@ -1263,41 +1265,50 @@ void test_validated_profiles_keep_writes_and_cccd_skip() {
   TEST_ASSERT_TRUE(PROFILE_UNKNOWN.skip_cccd_write);
 }
 
-void test_writes_locked() {
-  TEST_ASSERT_FALSE(writes_locked(false, PROFILE_TYPE1));
-  TEST_ASSERT_TRUE(writes_locked(true, PROFILE_TYPE1));
-  TEST_ASSERT_TRUE(writes_locked(false, PROFILE_PROBE));
-  TEST_ASSERT_TRUE(writes_locked(true, PROFILE_PROBE));
+void test_clock_write_permitted() {
+  TEST_ASSERT_TRUE(clock_write_permitted(false, PROFILE_TYPE1));
+  TEST_ASSERT_FALSE(clock_write_permitted(true, PROFILE_TYPE1));
+  TEST_ASSERT_TRUE(clock_write_permitted(false, PROFILE_PROBE));
+  TEST_ASSERT_FALSE(clock_write_permitted(true, PROFILE_PROBE));
 }
 
-void test_command_permitted_locked_allows_only_profile_reads() {
-  const uint8_t status[] = {0x03, 0x03};
-  const uint8_t settings[] = {0x03, 0x02, 0x01};
-  const uint8_t download[] = {0x03, 0x07};
-  const uint8_t clear_running_data[] = {0x02, 0x02};
-  const uint8_t set_clock[] = {0x02, 0x01, 0x1A, 0x0A, 0x05, 0x13, 0x2D, 0x00, 0x00, 0x10};
-  const uint8_t area_reminder_on[] = {0x02, 0x0D, 0x01};
-  const uint8_t force_update[] = {0x03, 0x13, 0x00, 0x08, 0x03, 0x07};
+static const uint8_t STATUS_CMD[] = {0x03, 0x03};
+static const uint8_t SETTINGS_CMD[] = {0x03, 0x02, 0x01};
+static const uint8_t DOWNLOAD_CMD[] = {0x03, 0x07};
+static const uint8_t CLEAR_RUNNING_DATA_CMD[] = {0x02, 0x02};
+static const uint8_t SET_CLOCK_CMD[] = {0x02, 0x01, 0x1A, 0x0A, 0x05, 0x13, 0x2D, 0x00, 0x00, 0x10};
+static const uint8_t AREA_REMINDER_ON_CMD[] = {0x02, 0x0D, 0x01};
+static const uint8_t FORCE_UPDATE_CMD[] = {0x03, 0x13, 0x00, 0x08, 0x03, 0x07};
+
+void test_command_permitted_read_only_allows_only_profile_reads() {
   const uint8_t status_prefix[] = {0x03};
-  for (bool const read_only : {true, false}) {
-    const OcleanProfile &p = read_only ? PROFILE_TYPE1 : PROFILE_PROBE;
-    TEST_ASSERT_TRUE(command_permitted(read_only, p, status, sizeof(status)));
-    TEST_ASSERT_TRUE(command_permitted(read_only, p, settings, sizeof(settings)));
-    TEST_ASSERT_TRUE(command_permitted(read_only, p, download, sizeof(download)));
-    TEST_ASSERT_FALSE(command_permitted(read_only, p, clear_running_data, sizeof(clear_running_data)));
-    TEST_ASSERT_FALSE(command_permitted(read_only, p, set_clock, sizeof(set_clock)));
-    TEST_ASSERT_FALSE(command_permitted(read_only, p, area_reminder_on, sizeof(area_reminder_on)));
-    TEST_ASSERT_FALSE(command_permitted(read_only, p, force_update, sizeof(force_update)));
-    TEST_ASSERT_FALSE(command_permitted(read_only, p, status_prefix, sizeof(status_prefix)));
-    TEST_ASSERT_FALSE(command_permitted(read_only, p, nullptr, 0));
+  for (const OcleanProfile *p : {&PROFILE_TYPE1, &PROFILE_PROBE}) {
+    TEST_ASSERT_TRUE(command_permitted(true, *p, STATUS_CMD, sizeof(STATUS_CMD)));
+    TEST_ASSERT_TRUE(command_permitted(true, *p, SETTINGS_CMD, sizeof(SETTINGS_CMD)));
+    TEST_ASSERT_TRUE(command_permitted(true, *p, DOWNLOAD_CMD, sizeof(DOWNLOAD_CMD)));
+    TEST_ASSERT_FALSE(command_permitted(true, *p, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
+    TEST_ASSERT_FALSE(command_permitted(true, *p, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD)));
+    TEST_ASSERT_FALSE(command_permitted(true, *p, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
+    TEST_ASSERT_FALSE(command_permitted(true, *p, FORCE_UPDATE_CMD, sizeof(FORCE_UPDATE_CMD)));
+    TEST_ASSERT_FALSE(command_permitted(true, *p, status_prefix, sizeof(status_prefix)));
+    TEST_ASSERT_FALSE(command_permitted(true, *p, nullptr, 0));
   }
 }
 
+void test_command_permitted_probe_allows_reads_and_the_clock() {
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_PROBE, STATUS_CMD, sizeof(STATUS_CMD)));
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_PROBE, DOWNLOAD_CMD, sizeof(DOWNLOAD_CMD)));
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_PROBE, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD)));
+  TEST_ASSERT_FALSE(command_permitted(false, PROFILE_PROBE, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD) - 1));
+  TEST_ASSERT_FALSE(command_permitted(false, PROFILE_PROBE, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
+  TEST_ASSERT_FALSE(command_permitted(false, PROFILE_PROBE, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
+  TEST_ASSERT_FALSE(command_permitted(false, PROFILE_PROBE, FORCE_UPDATE_CMD, sizeof(FORCE_UPDATE_CMD)));
+}
+
 void test_command_permitted_unlocked_type1_unchanged() {
-  const uint8_t clear_running_data[] = {0x02, 0x02};
-  const uint8_t area_reminder_on[] = {0x02, 0x0D, 0x01};
-  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE1, clear_running_data, sizeof(clear_running_data)));
-  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE1, area_reminder_on, sizeof(area_reminder_on)));
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE1, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE1, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE1, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD)));
 }
 
 void test_decode_hw_revision_code() {
@@ -1661,8 +1672,9 @@ int main() {
   RUN_TEST(test_profile_probe_contract);
   RUN_TEST(test_profile_probe_reads_on_both_tx_chars);
   RUN_TEST(test_validated_profiles_keep_writes_and_cccd_skip);
-  RUN_TEST(test_writes_locked);
-  RUN_TEST(test_command_permitted_locked_allows_only_profile_reads);
+  RUN_TEST(test_clock_write_permitted);
+  RUN_TEST(test_command_permitted_read_only_allows_only_profile_reads);
+  RUN_TEST(test_command_permitted_probe_allows_reads_and_the_clock);
   RUN_TEST(test_command_permitted_unlocked_type1_unchanged);
   RUN_TEST(test_decode_hw_revision_code);
   RUN_TEST(test_hw_revision_text);

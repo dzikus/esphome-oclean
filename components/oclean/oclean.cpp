@@ -696,7 +696,7 @@ bool OcleanHub::send_command(std::vector<uint8_t> bytes, const char *name, Write
     ESP_LOGW(TAG, "[%s] command %s ignored: BLE user-disabled", this->parent_->address_str(), name);
     return false;
   }
-  if (writes_locked(this->read_only_, *this->profile_)) {
+  if (!command_permitted(this->read_only_, *this->profile_, bytes.data(), bytes.size())) {
     this->log_refusal_(name, bytes.data(), bytes.size());
     return false;
   }
@@ -810,7 +810,7 @@ void OcleanHub::queue_set_clock_(const char *reason) {
 
 void OcleanHub::maybe_auto_sync_clock_(const DeviceSettings &ds) {
 #ifdef USE_TIME
-  if (!this->auto_sync_time_ || writes_locked(this->read_only_, *this->profile_) || this->time_ == nullptr ||
+  if (!this->auto_sync_time_ || !clock_write_permitted(this->read_only_, *this->profile_) || this->time_ == nullptr ||
       !ds.clock_valid)
     return;
   ESPTime const now = this->time_->now();

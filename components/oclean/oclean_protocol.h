@@ -359,6 +359,7 @@ std::vector<std::vector<uint8_t>> build_scheme_packets(uint8_t pnum, const std::
 //   02 01 [year-2000][month][day][hour][minute][second][weekday][tz_index]
 // Plain decimal per byte, not BCD (minute 30 -> 0x1E), device local wall-clock
 // rather than UTC, weekday 0=Sunday..6=Saturday.
+static constexpr size_t SET_CLOCK_CMD_LEN = 10;
 std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute,
                                              uint8_t second, uint8_t weekday, uint8_t tz_index);
 

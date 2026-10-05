@@ -52,6 +52,8 @@ struct OcleanProfile {
   SettingsKind settings_kind;
 
   bool allows_writes;
+  // 0201 passes even when allows_writes is false
+  bool allows_clock_write;
   bool skip_cccd_write;
 };
 
@@ -64,7 +66,7 @@ extern const OcleanProfile PROFILE_PROBE;
 // lands on PROFILE_UNKNOWN. model need not be null-terminated.
 const OcleanProfile *profile_for_model(const char *model, size_t len);
 
-bool writes_locked(bool read_only, const OcleanProfile &profile);
+bool clock_write_permitted(bool read_only, const OcleanProfile &profile);
 
 bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8_t *bytes, size_t len);
 
