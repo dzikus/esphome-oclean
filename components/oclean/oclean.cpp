@@ -57,7 +57,7 @@ void OcleanHub::setup() {
   if (this->session_last_pref_.load(&last)) {
     if (last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION) {
       this->newest_record_epoch_ = session_record_epoch(last.record);
-      this->publish_session_record_(last.record, last.partial != 0);
+      this->publish_session_record_(last.record, last.partial != 0 ? SessionDetail::NO_SCORE : SessionDetail::FULL);
     } else {
       // right length, wrong content; the next ring download refills the entities
       ESP_LOGW(TAG, "[%s] stored session is not v%u (magic 0x%04X, version %u): discarded",
@@ -969,34 +969,38 @@ void OcleanHub::handle_dis_read_(uint16_t uuid16, const uint8_t *data, size_t le
   }
 }
 
-void OcleanHub::publish_session_record_(const SessionRecord &r, bool partial) {
+void OcleanHub::publish_session_record_(const SessionRecord &r, SessionDetail detail) {
   // Score is 0-100; a spoofed byte outside that (0xFF already means "no score")
   // is clamped so downstream stats never see an out-of-range reading.
   float score = NAN;
-  if (!partial && r.has_score)
+  if (detail == SessionDetail::FULL && r.has_score)
     score = (float)(r.score > 100 ? 100 : r.score);
   esphome::oclean::OcleanHub::publish_(this->session_score_sensor_, score);
   // Durations are 16-bit fields from the peer; bound them like score so a
   // spoofed 65535 s never reaches the entities or recorder statistics.
+  bool const has_brushed_time = detail != SessionDetail::HEAD;
   esphome::oclean::OcleanHub::publish_(this->session_duration_sensor_, (float)clamp_session_duration(r.duration_s));
   esphome::oclean::OcleanHub::publish_(this->session_valid_duration_sensor_,
-                                       (float)clamp_session_duration(r.valid_duration_s));
+                                       has_brushed_time ? (float)clamp_session_duration(r.valid_duration_s) : NAN);
   if (this->session_mode_text_sensor_ != nullptr) {
     // Decode the scheme id into the select's option label; an id outside the
     // preset table falls back to the bare number.
     std::string scheme_name;
 #ifdef USE_SELECT
-    if (this->scheme_select_ != nullptr)
+    if (this->scheme_select_ != nullptr && this->profile_->cloud_scheme_ids)
       scheme_name = this->scheme_select_->name_for_pnum(r.scheme);
 #endif
     if (scheme_name.empty())
       scheme_name = to_string((unsigned)r.scheme);
     this->session_mode_text_sensor_->publish_state(scheme_name);
   }
-  esphome::oclean::OcleanHub::publish_(this->session_coverage_sensor_,
-                                       session_coverage_percent(r.valid_duration_s, r.duration_s));
-  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
-    esphome::oclean::OcleanHub::publish_(this->zone_sensors_[i], partial ? NAN : (float)r.zones[i]);
+  esphome::oclean::OcleanHub::publish_(
+      this->session_coverage_sensor_,
+      has_brushed_time ? session_coverage_percent(r.valid_duration_s, r.duration_s) : NAN);
+  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++) {
+    bool const known = detail == SessionDetail::FULL && r.zones[i] != SESSION_ZONE_ABSENT;
+    esphome::oclean::OcleanHub::publish_(this->zone_sensors_[i], known ? (float)r.zones[i] : NAN);
+  }
   if (this->session_time_text_sensor_ != nullptr) {
     // 32, not 24: date fields are unvalidated uint8, three digits each in the
     // worst case (26 bytes with the terminator)
@@ -1018,16 +1022,27 @@ void OcleanHub::schedule_next_session_publish_() {
       return;
     SessionRecord const rec = this->pending_session_publish_.front();
     this->pending_session_publish_.erase(this->pending_session_publish_.begin());
-    this->publish_session_record_(rec, false);
+    this->publish_session_record_(rec, SessionDetail::FULL);
     this->schedule_next_session_publish_();
   });
 }
 
 void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
-  // unknown record layout: the dispatcher already hex-dumped the bytes, and
-  // decoding them on a guess would publish nonsense
-  if (this->profile_->decode_record == nullptr)
-    return;
+  switch (this->profile_->session_format) {
+    case SessionFormat::FIXED_42:
+      this->handle_fixed_session_notify_(data, len);
+      break;
+    case SessionFormat::VARIABLE:
+      this->handle_variable_session_notify_(data, len);
+      break;
+    case SessionFormat::NONE:
+      // unknown record layout: the dispatcher already hex-dumped the bytes, and
+      // decoding them on a guess would publish nonsense
+      break;
+  }
+}
+
+void OcleanHub::handle_fixed_session_notify_(const uint8_t *data, size_t len) {
   // past the end of the stream everything on this channel is an enrichment
   // push, not more record bytes
   if (this->session_asm_.complete()) {
@@ -1036,7 +1051,6 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
   }
   if (this->session_asm_.failed())
     return;
-  const int64_t now_local = this->local_now_epoch_();
   // Inline count=0 reply: no unread sessions, but the head of the newest
   // already-read record rides along. Published live and never persisted, since
   // a genuinely new session always arrives as a full ring. The epoch gate stops
@@ -1049,8 +1063,8 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
              "scheme=%u dur=%us valid=%us (no unread ring)",
              this->parent_->address_str(), inl.year, inl.month, inl.day, inl.hour, inl.minute, inl.second,
              (unsigned)inl.scheme, (unsigned)inl.duration_s, (unsigned)inl.valid_duration_s);
-    if (accept_inline_record(ts, this->newest_record_epoch_, now_local)) {
-      this->publish_session_record_(inl, true);
+    if (accept_inline_record(ts, this->newest_record_epoch_, this->local_now_epoch_())) {
+      this->publish_session_record_(inl, SessionDetail::NO_SCORE);
       this->newest_record_epoch_ = ts;
     }
     return;
@@ -1073,8 +1087,62 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
     if (this->session_asm_.record(i, &rec))
       records.push_back(rec);
   }
+  // indexed off the reassembler, not the plan, so a failed decode only
+  // mislabels the raw dump
+  int const slot = this->session_asm_.newest_index();
+  const uint8_t *raw = slot >= 0 ? this->session_asm_.raw_record((uint16_t)slot) : nullptr;
+  this->ingest_session_records_(records, raw, raw != nullptr ? SESSION_RECORD_SIZE : 0);
+}
+
+void OcleanHub::handle_variable_session_notify_(const uint8_t *data, size_t len) {
+  VarSessionAssembler &assembler = this->session_v20_asm_;
+  if (assembler.complete() || assembler.empty() || assembler.failed())
+    return;
+  SessionRecord inl{};
+  if (!assembler.started() && decode_inline_0307_v20(data, len, &inl)) {
+    uint32_t const ts = session_record_epoch(inl);
+    ESP_LOGI(TAG,
+             "[%s] inline newest session %04u-%02u-%02u %02u:%02u:%02u "
+             "scheme=%u program=%us (no unread ring)",
+             this->parent_->address_str(), inl.year, inl.month, inl.day, inl.hour, inl.minute, inl.second,
+             (unsigned)inl.scheme, (unsigned)inl.duration_s);
+    if (accept_inline_record(ts, this->newest_record_epoch_, this->local_now_epoch_())) {
+      this->publish_session_record_(inl, SessionDetail::HEAD);
+      this->newest_record_epoch_ = ts;
+    }
+    return;
+  }
+  bool const done = assembler.feed(data, len);
+  if (assembler.failed()) {
+    ESP_LOGW(TAG, "[%s] session stream rejected (bad header)", this->parent_->address_str());
+    return;
+  }
+  if (assembler.empty()) {
+    ESP_LOGD(TAG, "[%s] no sessions on the brush", this->parent_->address_str());
+    return;
+  }
+  if (!done)
+    return;
+
+  size_t const count = assembler.record_count();
+  ESP_LOGD(TAG, "[%s] session stream complete: %u records", this->parent_->address_str(), (unsigned)count);
+  std::vector<SessionRecord> records;
+  records.reserve(count);
+  for (size_t i = 0; i < count; i++) {
+    SessionRecord rec{};
+    if (assembler.record(i, &rec))
+      records.push_back(rec);
+  }
+  int const slot = assembler.newest_index();
+  size_t raw_len = 0;
+  const uint8_t *raw = slot >= 0 ? assembler.raw_record((size_t)slot, &raw_len) : nullptr;
+  this->ingest_session_records_(records, raw, raw_len);
+}
+
+void OcleanHub::ingest_session_records_(const std::vector<SessionRecord> &records, const uint8_t *newest_raw,
+                                        size_t newest_raw_len) {
   SessionIngestPlan plan =
-      plan_session_ingest(records, this->last_session_emitted_, this->newest_record_epoch_, now_local);
+      plan_session_ingest(records, this->last_session_emitted_, this->newest_record_epoch_, this->local_now_epoch_());
 
   for (const auto &rec : plan.implausible) {
     ESP_LOGW(TAG, "[%s] dropping session dated %04u-%02u-%02u: implausibly future", this->parent_->address_str(),
@@ -1114,13 +1182,10 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
       this->newest_record_epoch_ = plan.new_newest_epoch;
     }
 
-    // bytes past the mapped offsets are still unidentified. Indexed off the
-    // reassembler, not the plan, so a failed decode only mislabels this line.
-    int const newest_slot = this->session_asm_.newest_index();
-    const uint8_t *raw = newest_slot >= 0 ? this->session_asm_.raw_record((uint16_t)newest_slot) : nullptr;
-    if (raw != nullptr) {
+    // bytes past the mapped offsets are still unidentified
+    if (newest_raw != nullptr) {
       ESP_LOGI(TAG, "[%s] newest raw: %s", this->parent_->address_str(),
-               format_hex_pretty(raw, SESSION_RECORD_SIZE).c_str());
+               format_hex_pretty(newest_raw, newest_raw_len).c_str());
     }
   }
 
@@ -1129,11 +1194,11 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
   // nothing new is republished to keep the live state right without adding a
   // history row.
   if (!plan.to_publish.empty()) {
-    this->publish_session_record_(plan.to_publish.front(), false);
+    this->publish_session_record_(plan.to_publish.front(), SessionDetail::FULL);
     this->pending_session_publish_.assign(plan.to_publish.begin() + 1, plan.to_publish.end());
     this->schedule_next_session_publish_();
   } else if (plan.have_newest && plan.newest_plausible) {
-    this->publish_session_record_(plan.newest, false);
+    this->publish_session_record_(plan.newest, SessionDetail::FULL);
   }
 
   // The record stream is in. Hold the link a short while longer for a possible
@@ -1184,8 +1249,13 @@ void OcleanHub::emit_session_event_(const SessionRecord &r, uint32_t ts) {
   if (coverage > 100)
     coverage = 100;
   data["coverage"] = to_string(coverage);
-  data["zones"] = str_sprintf("%u,%u,%u,%u,%u,%u,%u,%u", r.zones[0], r.zones[1], r.zones[2], r.zones[3], r.zones[4],
-                              r.zones[5], r.zones[6], r.zones[7]);
+  std::string zones;
+  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++) {
+    if (i > 0)
+      zones += ',';
+    zones += r.zones[i] == SESSION_ZONE_ABSENT ? std::string("-") : to_string((unsigned)r.zones[i]);
+  }
+  data["zones"] = zones;
   ESP_LOGI(TAG, "[%s] session event %s score=%s scheme=%s", this->parent_->address_str(), data["local"].c_str(),
            data["score"].c_str(), data["scheme"].c_str());
   // fires whether or not the HA event below is compiled in
@@ -1251,10 +1321,10 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       }
     }
   } else if (len >= 2 && data[0] == 0x03 && data[1] == 0x02 &&
-             this->profile_->settings_kind == SettingsKind::SETTINGS_TYPE1_34B) {
+             this->profile_->settings_kind != SettingsKind::SETTINGS_NONE) {
     // The settings response is a two-frame transfer. Feed both 0302 frames into
-    // the reassembler and publish from the 34-byte buffer as fields arrive. Only
-    // profiles that use the TYPE1 34-byte settings buffer take this path.
+    // the reassembler and publish from the 34-byte buffer as fields arrive. Both
+    // settings kinds share the transfer and the continuation region.
     this->settings_asm_.feed(data, len);
     DeviceSettings ds{};
     parse_device_settings(this->settings_asm_.buffer(), &ds);
@@ -1306,7 +1376,9 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       }
 #endif
     }
-    if (this->settings_asm_.has_start()) {
+    if (this->settings_asm_.has_start() && this->profile_->settings_kind == SettingsKind::SETTINGS_V20_34B) {
+      this->publish_v20_start_settings_(this->settings_asm_.buffer());
+    } else if (this->settings_asm_.has_start()) {
       // Start region: scheme pNum drives the select readback; the config toggles
       // and the raw indices correct their optimistic state.
 #ifdef USE_SELECT
@@ -1346,6 +1418,27 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
     ESP_LOGD(TAG, "[%s] main notify (unmapped): %s", this->parent_->address_str(),
              format_hex_pretty(data, len).c_str());
   }
+}
+
+void OcleanHub::publish_v20_start_settings_(const uint8_t *buf) {
+  DeviceSettingsV20Start s{};
+  parse_device_settings_v20_start(buf, &s);
+  ESP_LOGI(TAG,
+           "[%s] settings: battery=%u%% mode=%u of %u scheme_type=%u brush_mode=%s raise_wake=%s auto=%s "
+           "voice=%s voice_zone=%s voice_pressure=%s festival=%s auto_update=%s network=%u bus=%u",
+           this->parent_->address_str(), s.battery, s.mode, s.mode_count, s.scheme_type, ONOFF(s.brush_mode_on),
+           ONOFF(s.raise_wake), ONOFF(s.auto_mode), ONOFF(s.voice), ONOFF(s.voice_zone_change), ONOFF(s.voice_pressure),
+           ONOFF(s.festival_reminder), ONOFF(s.auto_update), s.network_status, s.bus_brushing);
+  if (s.battery <= 100)
+    esphome::oclean::OcleanHub::publish_(this->battery_sensor_, (float)s.battery);
+#ifdef USE_SWITCH
+  if (this->raise_wake_switch_ != nullptr)
+    this->raise_wake_switch_->publish_state(s.raise_wake);
+  if (this->brush_mode_switch_ != nullptr)
+    this->brush_mode_switch_->publish_state(s.brush_mode_on);
+#endif
+  esphome::oclean::OcleanHub::publish_(this->auto_mode_binary_sensor_, s.auto_mode);
+  esphome::oclean::OcleanHub::publish_(this->head_used_time_sensor_, (float)clamp_head_counter(s.head_used_time));
 }
 
 void OcleanHub::maybe_finish_poll_() {
@@ -1457,6 +1550,7 @@ void OcleanHub::query_device_(bool capture_mode) {
   this->notify_count_this_round_ = 0;
   this->notify_flood_warned_ = false;
   this->session_asm_.reset();
+  this->session_v20_asm_.reset();
   this->settings_asm_.reset();
   // Writes go first and the reads start past them, so the readback reflects the
   // new state rather than the old.
@@ -1493,15 +1587,17 @@ void OcleanHub::query_device_(bool capture_mode) {
       this->write_raw_(handle, bytes, len, wname);
     });
   }
-  this->set_timeout("query_info", base + (uint32_t(prof->query_cmd_count) * QUERY_STAGGER_MS), [this]() {
-    // Skip the query if the watchdog tore the link down
-    // before it fired.
-    if (this->state_ != State::POLLING)
-      return;
-    static const uint8_t CLEAR_RUNNING_DATA_CMD[] = {0x02, 0x02};
-    this->write_raw_(this->tx_main_handle_, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD),
-                     "CLEAR_RUNNING_DATA");
-  });
+  if (prof->sends_clear_running_data) {
+    this->set_timeout("query_info", base + (uint32_t(prof->query_cmd_count) * QUERY_STAGGER_MS), [this]() {
+      // Skip the query if the watchdog tore the link down
+      // before it fired.
+      if (this->state_ != State::POLLING)
+        return;
+      static const uint8_t CLEAR_RUNNING_DATA_CMD[] = {0x02, 0x02};
+      this->write_raw_(this->tx_main_handle_, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD),
+                       "CLEAR_RUNNING_DATA");
+    });
+  }
   // Capture mode only extends the hold below; every read query above already
   // runs on a normal poll. The longer window catches late or pushed responses.
   uint32_t const hold_ms = capture_mode ? CAPTURE_HOLD_MS : POLL_QUERY_HOLD_MS;

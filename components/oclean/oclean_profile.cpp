@@ -34,32 +34,6 @@ static const ProfileCmd UNKNOWN_QUERY_CMDS[] = {
      .name = "STATUS"},
 };
 
-// The TYPE1 reads on both write characteristics: which one an unvalidated model
-// answers on is not known.
-static const ProfileCmd PROBE_QUERY_CMDS[] = {
-    {.bytes = TYPE1_STATUS_BYTES, .len = sizeof(TYPE1_STATUS_BYTES), .target = WriteTarget::TX_MAIN, .name = "STATUS"},
-    {.bytes = TYPE1_SETTINGS_BYTES,
-     .len = sizeof(TYPE1_SETTINGS_BYTES),
-     .target = WriteTarget::TX_MAIN,
-     .name = "SETTINGS"},
-    {.bytes = TYPE1_DOWNLOAD_BYTES,
-     .len = sizeof(TYPE1_DOWNLOAD_BYTES),
-     .target = WriteTarget::TX_SESSION,
-     .name = "SESSION_DOWNLOAD"},
-    {.bytes = TYPE1_STATUS_BYTES,
-     .len = sizeof(TYPE1_STATUS_BYTES),
-     .target = WriteTarget::TX_SESSION,
-     .name = "STATUS_ON_SESSION_TX"},
-    {.bytes = TYPE1_SETTINGS_BYTES,
-     .len = sizeof(TYPE1_SETTINGS_BYTES),
-     .target = WriteTarget::TX_SESSION,
-     .name = "SETTINGS_ON_SESSION_TX"},
-    {.bytes = TYPE1_DOWNLOAD_BYTES,
-     .len = sizeof(TYPE1_DOWNLOAD_BYTES),
-     .target = WriteTarget::TX_MAIN,
-     .name = "SESSION_DOWNLOAD_ON_MAIN_TX"},
-};
-
 const OcleanProfile PROFILE_TYPE1 = {
     /*name=*/.name = "TYPE1",
     /*confidence=*/.confidence = 2,
@@ -67,12 +41,17 @@ const OcleanProfile PROFILE_TYPE1 = {
     /*query_cmd_count=*/.query_cmd_count = sizeof(TYPE1_QUERY_CMDS) / sizeof(TYPE1_QUERY_CMDS[0]),
     /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
     /*decode_record=*/.decode_record = &decode_session_record,
+    /*session_format=*/.session_format = SessionFormat::FIXED_42,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_TYPE1_34B,
     /*allows_writes=*/.allows_writes = true,
     /*allows_clock_write=*/.allows_clock_write = true,
     /*skip_cccd_write=*/.skip_cccd_write = true,
+    /*sends_clear_running_data=*/.sends_clear_running_data = true,
+    /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
 };
 
+// 0202 clears the session ring on the models where its effect is known, so an
+// unrecognised device never gets it.
 const OcleanProfile PROFILE_UNKNOWN = {
     /*name=*/.name = "UNKNOWN",
     /*confidence=*/.confidence = 1,
@@ -80,10 +59,13 @@ const OcleanProfile PROFILE_UNKNOWN = {
     /*query_cmd_count=*/.query_cmd_count = sizeof(UNKNOWN_QUERY_CMDS) / sizeof(UNKNOWN_QUERY_CMDS[0]),
     /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
     /*decode_record=*/.decode_record = nullptr,
+    /*session_format=*/.session_format = SessionFormat::NONE,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_NONE,
     /*allows_writes=*/.allows_writes = true,
     /*allows_clock_write=*/.allows_clock_write = true,
     /*skip_cccd_write=*/.skip_cccd_write = true,
+    /*sends_clear_running_data=*/.sends_clear_running_data = false,
+    /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
 };
 
 // === Z1 profile (model OCLEANY5) ===
@@ -97,23 +79,32 @@ const OcleanProfile PROFILE_TYPE_Z1 = {
     /*query_cmd_count=*/.query_cmd_count = sizeof(TYPE1_QUERY_CMDS) / sizeof(TYPE1_QUERY_CMDS[0]),
     /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
     /*decode_record=*/.decode_record = &decode_session_record,
+    /*session_format=*/.session_format = SessionFormat::FIXED_42,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_TYPE1_34B,
     /*allows_writes=*/.allows_writes = true,
     /*allows_clock_write=*/.allows_clock_write = true,
     /*skip_cccd_write=*/.skip_cccd_write = true,
+    /*sends_clear_running_data=*/.sends_clear_running_data = true,
+    /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
 };
 
-const OcleanProfile PROFILE_PROBE = {
-    /*name=*/.name = "PROBE",
-    /*confidence=*/.confidence = 0,
-    /*query_cmds=*/.query_cmds = PROBE_QUERY_CMDS,
-    /*query_cmd_count=*/.query_cmd_count = sizeof(PROBE_QUERY_CMDS) / sizeof(PROBE_QUERY_CMDS[0]),
+// === X Ultra 20 (model OCLEANV20*, hardware revision protocol 0x000D) ===
+// TYPE1 queries and routing; it only notifies after a CCCD write. Writes other
+// than the clock wait for per-command validation on hardware.
+const OcleanProfile PROFILE_TYPE_V20 = {
+    /*name=*/.name = "TYPE_V20",
+    /*confidence=*/.confidence = 1,
+    /*query_cmds=*/.query_cmds = TYPE1_QUERY_CMDS,
+    /*query_cmd_count=*/.query_cmd_count = sizeof(TYPE1_QUERY_CMDS) / sizeof(TYPE1_QUERY_CMDS[0]),
     /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
     /*decode_record=*/.decode_record = nullptr,
-    /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_NONE,
+    /*session_format=*/.session_format = SessionFormat::VARIABLE,
+    /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_V20_34B,
     /*allows_writes=*/.allows_writes = false,
     /*allows_clock_write=*/.allows_clock_write = true,
     /*skip_cccd_write=*/.skip_cccd_write = false,
+    /*sends_clear_running_data=*/.sends_clear_running_data = false,
+    /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
 };
 
 // Order matters: first match wins, so the most specific prefix comes first
@@ -134,7 +125,7 @@ static const ProfileEntry PROFILE_TABLE[] = {
     {.prefix = "OCLEANY3T", .profile = &PROFILE_TYPE1},
     {.prefix = "OCLEANY3", .profile = &PROFILE_TYPE1},  // generic X / X Pro, shorter prefix last
     {.prefix = "OCLEANR3L", .profile = &PROFILE_TYPE1},
-    {.prefix = "OCLEANV20", .profile = &PROFILE_PROBE},  // X Ultra 20
+    {.prefix = "OCLEANV20", .profile = &PROFILE_TYPE_V20},  // X Ultra 20
     {.prefix = "OCLEANX20", .profile = &PROFILE_TYPE1},
     {.prefix = "OCLEANV1", .profile = &PROFILE_TYPE1},
     {.prefix = "OCLEANA1e", .profile = &PROFILE_TYPE1},

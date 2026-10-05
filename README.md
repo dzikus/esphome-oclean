@@ -91,7 +91,7 @@ being hardcoded to a single model.
 | Line | Model id (DIS 0x2A24) | Profile | Status |
 |---|---|---|---|
 | X / X Pro / Pro Elite / Ultra / Pro 20 | `OCLEANY3`, `OCLEANY3M*`, `OCLEANY3P*`, `OCLEANV1`, `OCLEANX20` | TYPE1 | X Pro Elite (`OCLEANY3P` / `OCLEANY3PD`) verified on hardware; others untested |
-| X Ultra 20 | `OCLEANV20` | PROBE | read queries and the clock write (`0201`) only; session record not decoded yet |
+| X Ultra 20 | `OCLEANV20*` | TYPE_V20 | status, settings and the clock write (`0201`) verified on hardware; session record decoded from its documented layout, not yet confirmed on a full record; other writes refused |
 | Z1 | `OCLEANY5` | TYPE_Z1 | untested (needs a capture to freeze the record layout) |
 | other / new firmware | unmatched | UNKNOWN fallback | battery + status only |
 
@@ -693,7 +693,7 @@ characteristic; rejected opcodes return a one-byte `02` stub.
 |---|---|
 | `03 03` | STATUS: 8-byte reply, battery at byte 5, dock/charge state at byte 2 (`01` charging, `02` off dock, `03` docked and full) |
 | `03 02 01` | SETTINGS: replied as a two-frame transfer reassembled into a 34-byte buffer |
-| `02 02` | clear running data, sent after the queries; never sent by a `read_only` hub or the PROBE profile |
+| `02 02` | clear running data, sent after the queries; never sent by a `read_only` hub, the TYPE_V20 profile or an unrecognised model |
 | `03 07` | session download (reply streams on the session notify characteristic) |
 | `02 01` + 8B | set clock: `[year-2000][month][day][hour][min][sec][weekday][tzindex]`, plain decimal bytes, local time, weekday 0 = Sunday |
 | `02 0F` | reset brush-head counter |
@@ -751,6 +751,25 @@ newest already-read record, enough for timestamp, scheme, duration and valid
 duration (`decode_inline_0307`); score and zones do not fit and are published
 only from full records. A timestamp gate keeps a partial inline decode from
 overwriting the score/zones of an already-published session.
+
+The X Ultra 20 (TYPE_V20) frames the same reply differently:
+`03 07 2A 42 23 [count u16 BE] [stream length u16 BE]`, then length-prefixed
+records of 29 to 182 bytes (`VarSessionAssembler`, at most 33 records). With
+count 0 the head of the newest record follows: length, start time, mode and
+program length, without the brushed time.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0-1 | 2 BE | record length |
+| 2-7 | 6 | year - 2000 / month / day / hour / min / sec (brush clock) |
+| 8 | 1 | mode (the brush's own modes, not the cloud scheme ids) |
+| 9-10 | 2 BE | program length (s) |
+| 11-12 | 2 BE | brushed time (s) |
+| 13-17 | 5 | pressure ratios |
+| 28 | 1 | score 0-100 (`0xFF` = none) |
+
+The zone bytes are not mapped, so the zone sensors stay unknown on this model.
+This layout has not yet been checked against a full record from a brush.
 
 ### Scheme write format
 

@@ -1216,60 +1216,46 @@ void test_profile_z1_routing() {
   TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_TYPE1_34B, PROFILE_TYPE_Z1.settings_kind);
 }
 
-void test_profile_select_v20_probe() {
-  const char *m = "OCLEANV20";
-  TEST_ASSERT_EQUAL_PTR(&PROFILE_PROBE, profile_for_model(m, strlen(m)));
+void test_profile_select_v20() {
+  const char *m = "OCLEANV20B";
+  TEST_ASSERT_EQUAL_PTR(&PROFILE_TYPE_V20, profile_for_model(m, strlen(m)));
   const char *v1 = "OCLEANV1";
   TEST_ASSERT_EQUAL_PTR(&PROFILE_TYPE1, profile_for_model(v1, strlen(v1)));
 }
 
-void test_profile_probe_contract() {
-  TEST_ASSERT_EQUAL_UINT8(0, PROFILE_PROBE.confidence);
-  TEST_ASSERT_FALSE(PROFILE_PROBE.allows_writes);
-  TEST_ASSERT_TRUE(PROFILE_PROBE.allows_clock_write);
-  TEST_ASSERT_FALSE(PROFILE_PROBE.skip_cccd_write);
-  TEST_ASSERT_NULL(PROFILE_PROBE.decode_record);
-  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_NONE, PROFILE_PROBE.settings_kind);
-}
-
-void test_profile_probe_reads_on_both_tx_chars() {
-  const uint8_t status[] = {0x03, 0x03};
-  const uint8_t settings[] = {0x03, 0x02, 0x01};
-  const uint8_t download[] = {0x03, 0x07};
-  struct Expected {
-    const uint8_t *bytes;
-    uint8_t len;
-    WriteTarget target;
-  };
-  const Expected expected[] = {
-      {status, 2, WriteTarget::TX_MAIN},      {settings, 3, WriteTarget::TX_MAIN},
-      {download, 2, WriteTarget::TX_SESSION}, {status, 2, WriteTarget::TX_SESSION},
-      {settings, 3, WriteTarget::TX_SESSION}, {download, 2, WriteTarget::TX_MAIN},
-  };
-  TEST_ASSERT_EQUAL_UINT8(6, PROFILE_PROBE.query_cmd_count);
-  for (uint8_t i = 0; i < 6; i++) {
-    const ProfileCmd &q = PROFILE_PROBE.query_cmds[i];
-    TEST_ASSERT_EQUAL_INT(expected[i].target, q.target);
-    TEST_ASSERT_EQUAL_UINT8(expected[i].len, q.len);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected[i].bytes, q.bytes, q.len);
-  }
+void test_profile_v20_contract() {
+  TEST_ASSERT_EQUAL_INT(SessionFormat::VARIABLE, PROFILE_TYPE_V20.session_format);
+  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_V20_34B, PROFILE_TYPE_V20.settings_kind);
+  TEST_ASSERT_FALSE(PROFILE_TYPE_V20.allows_writes);
+  TEST_ASSERT_TRUE(PROFILE_TYPE_V20.allows_clock_write);
+  TEST_ASSERT_FALSE(PROFILE_TYPE_V20.skip_cccd_write);
+  TEST_ASSERT_FALSE(PROFILE_TYPE_V20.sends_clear_running_data);
+  TEST_ASSERT_FALSE(PROFILE_TYPE_V20.cloud_scheme_ids);
+  TEST_ASSERT_EQUAL_PTR(PROFILE_TYPE1.query_cmds, PROFILE_TYPE_V20.query_cmds);
+  TEST_ASSERT_EQUAL_UINT8(PROFILE_TYPE1.query_cmd_count, PROFILE_TYPE_V20.query_cmd_count);
 }
 
 void test_validated_profiles_keep_writes_and_cccd_skip() {
   TEST_ASSERT_TRUE(PROFILE_TYPE1.allows_writes);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.allows_clock_write);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.skip_cccd_write);
+  TEST_ASSERT_TRUE(PROFILE_TYPE1.sends_clear_running_data);
+  TEST_ASSERT_TRUE(PROFILE_TYPE1.cloud_scheme_ids);
+  TEST_ASSERT_EQUAL_INT(SessionFormat::FIXED_42, PROFILE_TYPE1.session_format);
   TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.allows_writes);
   TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.skip_cccd_write);
+  TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.sends_clear_running_data);
   TEST_ASSERT_TRUE(PROFILE_UNKNOWN.allows_writes);
   TEST_ASSERT_TRUE(PROFILE_UNKNOWN.skip_cccd_write);
+  TEST_ASSERT_FALSE(PROFILE_UNKNOWN.sends_clear_running_data);
+  TEST_ASSERT_EQUAL_INT(SessionFormat::NONE, PROFILE_UNKNOWN.session_format);
 }
 
 void test_clock_write_permitted() {
   TEST_ASSERT_TRUE(clock_write_permitted(false, PROFILE_TYPE1));
   TEST_ASSERT_FALSE(clock_write_permitted(true, PROFILE_TYPE1));
-  TEST_ASSERT_TRUE(clock_write_permitted(false, PROFILE_PROBE));
-  TEST_ASSERT_FALSE(clock_write_permitted(true, PROFILE_PROBE));
+  TEST_ASSERT_TRUE(clock_write_permitted(false, PROFILE_TYPE_V20));
+  TEST_ASSERT_FALSE(clock_write_permitted(true, PROFILE_TYPE_V20));
 }
 
 static const uint8_t STATUS_CMD[] = {0x03, 0x03};
@@ -1282,7 +1268,7 @@ static const uint8_t FORCE_UPDATE_CMD[] = {0x03, 0x13, 0x00, 0x08, 0x03, 0x07};
 
 void test_command_permitted_read_only_allows_only_profile_reads() {
   const uint8_t status_prefix[] = {0x03};
-  for (const OcleanProfile *p : {&PROFILE_TYPE1, &PROFILE_PROBE}) {
+  for (const OcleanProfile *p : {&PROFILE_TYPE1, &PROFILE_TYPE_V20}) {
     TEST_ASSERT_TRUE(command_permitted(true, *p, STATUS_CMD, sizeof(STATUS_CMD)));
     TEST_ASSERT_TRUE(command_permitted(true, *p, SETTINGS_CMD, sizeof(SETTINGS_CMD)));
     TEST_ASSERT_TRUE(command_permitted(true, *p, DOWNLOAD_CMD, sizeof(DOWNLOAD_CMD)));
@@ -1295,14 +1281,186 @@ void test_command_permitted_read_only_allows_only_profile_reads() {
   }
 }
 
-void test_command_permitted_probe_allows_reads_and_the_clock() {
-  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_PROBE, STATUS_CMD, sizeof(STATUS_CMD)));
-  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_PROBE, DOWNLOAD_CMD, sizeof(DOWNLOAD_CMD)));
-  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_PROBE, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD)));
-  TEST_ASSERT_FALSE(command_permitted(false, PROFILE_PROBE, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD) - 1));
-  TEST_ASSERT_FALSE(command_permitted(false, PROFILE_PROBE, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
-  TEST_ASSERT_FALSE(command_permitted(false, PROFILE_PROBE, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
-  TEST_ASSERT_FALSE(command_permitted(false, PROFILE_PROBE, FORCE_UPDATE_CMD, sizeof(FORCE_UPDATE_CMD)));
+void test_command_permitted_v20_allows_reads_and_the_clock() {
+  const OcleanProfile &p = PROFILE_TYPE_V20;
+  TEST_ASSERT_TRUE(command_permitted(false, p, STATUS_CMD, sizeof(STATUS_CMD)));
+  TEST_ASSERT_TRUE(command_permitted(false, p, DOWNLOAD_CMD, sizeof(DOWNLOAD_CMD)));
+  TEST_ASSERT_TRUE(command_permitted(false, p, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD) - 1));
+  TEST_ASSERT_FALSE(command_permitted(false, p, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, FORCE_UPDATE_CMD, sizeof(FORCE_UPDATE_CMD)));
+}
+
+// captured 2026-10-05 from an X Ultra 20 (OCLEANV20B, firmware 0.0.2.1)
+static const uint8_t V20_SETTINGS_START[] = {0x03, 0x02, 0x23, 0x24, 0x5E, 0x00, 0x01, 0x01, 0x00, 0x05,
+                                             0x00, 0x01, 0x01, 0x01, 0x01, 0x05, 0x00, 0x02, 0x00, 0x00};
+static const uint8_t V20_SETTINGS_CONT[] = {0x03, 0x02, 0x1A, 0x0A, 0x06, 0x03, 0x2E, 0x1F, 0x00, 0x00,
+                                            0x1B, 0x00, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x03, 0x02, 0x00};
+// after the clock write at 22:04:22
+static const uint8_t V20_SETTINGS_CONT_SYNCED[] = {0x03, 0x02, 0x1A, 0x0A, 0x05, 0x16, 0x04, 0x17, 0x00, 0x00,
+                                                   0x10, 0x00, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x03, 0x02, 0x00};
+static const uint8_t V20_INLINE_0307[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                          0x8D, 0x1A, 0x0A, 0x06, 0x02, 0x27, 0x25, 0x02, 0x00, 0xB4};
+
+void test_v20_settings_real_frames() {
+  SettingsAssembler s;
+  s.reset();
+  s.feed(V20_SETTINGS_START, sizeof(V20_SETTINGS_START));
+  TEST_ASSERT_TRUE(s.feed(V20_SETTINGS_CONT, sizeof(V20_SETTINGS_CONT)));
+  DeviceSettingsV20Start start{};
+  parse_device_settings_v20_start(s.buffer(), &start);
+  TEST_ASSERT_EQUAL_UINT8(94, start.battery);
+  TEST_ASSERT_EQUAL_UINT8(0, start.network_status);
+  TEST_ASSERT_TRUE(start.raise_wake);
+  TEST_ASSERT_TRUE(start.auto_update);
+  TEST_ASSERT_FALSE(start.auto_mode);
+  TEST_ASSERT_EQUAL_UINT8(5, start.mode_count);
+  TEST_ASSERT_TRUE(start.voice);
+  TEST_ASSERT_TRUE(start.voice_zone_change);
+  TEST_ASSERT_TRUE(start.voice_pressure);
+  TEST_ASSERT_TRUE(start.festival_reminder);
+  TEST_ASSERT_EQUAL_UINT8(5, start.mode);
+  TEST_ASSERT_TRUE(start.brush_mode_on);
+  TEST_ASSERT_EQUAL_UINT8(2, start.scheme_type);
+  TEST_ASSERT_EQUAL_UINT16(0, start.head_used_time);
+  DeviceSettings ds{};
+  parse_device_settings(s.buffer(), &ds);
+  TEST_ASSERT_TRUE(ds.clock_valid);
+  TEST_ASSERT_EQUAL_UINT16(2026, ds.year);
+  TEST_ASSERT_EQUAL_UINT8(10, ds.month);
+  TEST_ASSERT_EQUAL_UINT8(6, ds.day);
+  TEST_ASSERT_EQUAL_UINT8(3, ds.hour);
+  TEST_ASSERT_EQUAL_UINT8(46, ds.minute);
+  TEST_ASSERT_EQUAL_UINT8(31, ds.second);
+  TEST_ASSERT_FALSE(ds.over_pressure);
+  TEST_ASSERT_FALSE(ds.area_reminder);
+  TEST_ASSERT_EQUAL_STRING("GMT+08:00", timezone_index_to_string(ds.tz_index));
+  TEST_ASSERT_EQUAL_UINT16(240, ds.head_max);
+  TEST_ASSERT_EQUAL_UINT16(0, ds.head_used_days);
+  TEST_ASSERT_EQUAL_UINT16(0, ds.head_used_times);
+  TEST_ASSERT_EQUAL_UINT8(3, ds.device_language);
+}
+
+void test_v20_settings_after_clock_write() {
+  SettingsAssembler s;
+  s.reset();
+  s.feed(V20_SETTINGS_CONT_SYNCED, sizeof(V20_SETTINGS_CONT_SYNCED));
+  DeviceSettings ds{};
+  parse_device_settings(s.buffer(), &ds);
+  TEST_ASSERT_EQUAL_UINT8(5, ds.day);
+  TEST_ASSERT_EQUAL_UINT8(22, ds.hour);
+  TEST_ASSERT_EQUAL_UINT8(4, ds.minute);
+  TEST_ASSERT_EQUAL_UINT8(23, ds.second);
+  TEST_ASSERT_EQUAL_STRING("GMT+02:00", timezone_index_to_string(ds.tz_index));
+}
+
+void test_v20_inline_0307_real_frame() {
+  SessionRecord r{};
+  TEST_ASSERT_TRUE(decode_inline_0307_v20(V20_INLINE_0307, sizeof(V20_INLINE_0307), &r));
+  TEST_ASSERT_EQUAL_UINT16(2026, r.year);
+  TEST_ASSERT_EQUAL_UINT8(10, r.month);
+  TEST_ASSERT_EQUAL_UINT8(6, r.day);
+  TEST_ASSERT_EQUAL_UINT8(2, r.hour);
+  TEST_ASSERT_EQUAL_UINT8(39, r.minute);
+  TEST_ASSERT_EQUAL_UINT8(37, r.second);
+  TEST_ASSERT_EQUAL_UINT8(2, r.scheme);
+  TEST_ASSERT_EQUAL_UINT16(180, r.duration_s);
+  TEST_ASSERT_FALSE(r.has_score);
+  TEST_ASSERT_EQUAL_UINT8(SESSION_ZONE_ABSENT, r.zones[0]);
+  TEST_ASSERT_FALSE(decode_inline_0307_v20(V20_INLINE_0307, sizeof(V20_INLINE_0307) - 1, &r));
+  const uint8_t y3p_inline[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x1A, 0x06, 0x0A,
+                                0x07, 0x22, 0x2B, 0x00, 0x00, 0x78, 0x00, 0x44, 0x05, 0x16};
+  TEST_ASSERT_FALSE(decode_inline_0307_v20(y3p_inline, sizeof(y3p_inline), &r));
+}
+
+static std::vector<uint8_t> v20_record(size_t len, uint8_t hour, uint8_t minute, uint8_t mode, uint16_t program,
+                                       uint16_t brushed, uint8_t score) {
+  std::vector<uint8_t> r(len, 0xFF);
+  r[0] = static_cast<uint8_t>(len >> 8);
+  r[1] = static_cast<uint8_t>(len);
+  const uint8_t when[] = {0x1A, 0x0A, 0x06, hour, minute, 0x00};
+  for (size_t i = 0; i < sizeof(when); i++)
+    r[2 + i] = when[i];
+  r[8] = mode;
+  r[9] = static_cast<uint8_t>(program >> 8);
+  r[10] = static_cast<uint8_t>(program);
+  r[11] = static_cast<uint8_t>(brushed >> 8);
+  r[12] = static_cast<uint8_t>(brushed);
+  const uint8_t ratios[] = {10, 20, 70, 0, 0, 0, 0x10};
+  for (size_t i = 0; i < sizeof(ratios); i++)
+    r[13 + i] = ratios[i];
+  r[SESSION_V20_SCORE_OFFSET] = score;
+  return r;
+}
+
+void test_v20_assembler_splits_length_prefixed_records() {
+  std::vector<uint8_t> const a = v20_record(51, 7, 30, 2, 180, 80, 75);
+  std::vector<uint8_t> const b = v20_record(61, 21, 10, 3, 120, 20, 30);
+  std::vector<uint8_t> body(a);
+  body.insert(body.end(), b.begin(), b.end());
+  std::vector<uint8_t> first = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x02, 0x00, static_cast<uint8_t>(body.size())};
+  first.insert(first.end(), body.begin(), body.begin() + 11);
+  VarSessionAssembler s;
+  TEST_ASSERT_FALSE(s.feed(first.data(), first.size()));
+  TEST_ASSERT_FALSE(s.feed(body.data() + 11, 60));
+  TEST_ASSERT_TRUE(s.feed(body.data() + 71, body.size() - 71));
+  TEST_ASSERT_EQUAL_UINT(2, s.record_count());
+  SessionRecord r{};
+  TEST_ASSERT_TRUE(s.record(0, &r));
+  TEST_ASSERT_EQUAL_UINT8(7, r.hour);
+  TEST_ASSERT_EQUAL_UINT16(180, r.duration_s);
+  TEST_ASSERT_EQUAL_UINT16(80, r.valid_duration_s);
+  TEST_ASSERT_EQUAL_UINT8(75, r.score);
+  TEST_ASSERT_TRUE(r.has_score);
+  TEST_ASSERT_TRUE(s.record(1, &r));
+  TEST_ASSERT_EQUAL_UINT8(21, r.hour);
+  TEST_ASSERT_EQUAL_UINT8(10, r.minute);
+  TEST_ASSERT_EQUAL_UINT8(3, r.scheme);
+  TEST_ASSERT_EQUAL_UINT16(120, r.duration_s);
+  TEST_ASSERT_EQUAL_UINT16(20, r.valid_duration_s);
+  TEST_ASSERT_EQUAL_UINT8(10, r.areas[0]);
+  TEST_ASSERT_EQUAL_UINT8(SESSION_ZONE_ABSENT, r.zones[7]);
+  TEST_ASSERT_EQUAL_INT(1, s.newest_index());
+  size_t raw_len = 0;
+  TEST_ASSERT_NOT_NULL(s.raw_record(1, &raw_len));
+  TEST_ASSERT_EQUAL_UINT(61, raw_len);
+  TEST_ASSERT_TRUE(s.feed(first.data(), first.size()));
+}
+
+void test_v20_assembler_header_cases() {
+  const uint8_t empty[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00, 0x00, 0x00};
+  VarSessionAssembler e;
+  TEST_ASSERT_FALSE(e.feed(empty, sizeof(empty)));
+  TEST_ASSERT_TRUE(e.empty());
+  TEST_ASSERT_FALSE(e.failed());
+  const uint8_t bad_magic[] = {0x03, 0x07, 0x2A, 0x42, 0x24, 0x00, 0x01, 0x00, 0x33};
+  VarSessionAssembler m;
+  m.feed(bad_magic, sizeof(bad_magic));
+  TEST_ASSERT_TRUE(m.failed());
+  const uint8_t too_many[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x22, 0x00, 0x33};
+  VarSessionAssembler t;
+  t.feed(too_many, sizeof(too_many));
+  TEST_ASSERT_TRUE(t.failed());
+  const uint8_t too_long[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x01, 0x18, 0x00};
+  VarSessionAssembler l;
+  l.feed(too_long, sizeof(too_long));
+  TEST_ASSERT_TRUE(l.failed());
+  VarSessionAssembler n;
+  TEST_ASSERT_FALSE(n.feed(nullptr, 9));
+  TEST_ASSERT_TRUE(n.failed());
+}
+
+void test_v20_assembler_stops_at_a_bad_length() {
+  std::vector<uint8_t> body = v20_record(51, 7, 30, 2, 180, 80, 75);
+  std::vector<uint8_t> bogus = v20_record(51, 8, 0, 2, 180, 80, 75);
+  bogus[1] = 200;
+  body.insert(body.end(), bogus.begin(), bogus.end());
+  std::vector<uint8_t> frame = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x02, 0x00, static_cast<uint8_t>(body.size())};
+  frame.insert(frame.end(), body.begin(), body.end());
+  VarSessionAssembler s;
+  TEST_ASSERT_TRUE(s.feed(frame.data(), frame.size()));
+  TEST_ASSERT_EQUAL_UINT(1, s.record_count());
 }
 
 void test_command_permitted_unlocked_type1_unchanged() {
@@ -1427,8 +1585,8 @@ void test_session_epoch_clamps_out_of_range() {
 
 void test_session_epoch_plausible() {
   const int64_t now = 1780000000;  // 2026, same civil-as-UTC basis
-  // Well past the one-day margin: implausible.
   TEST_ASSERT_FALSE(session_epoch_plausible(now + 7 * 86400, now, SESSION_FUTURE_MARGIN_S));
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 6 * 3600, now, SESSION_FUTURE_MARGIN_S));
   // Within the margin, exactly now, and any past date: plausible.
   TEST_ASSERT_TRUE(session_epoch_plausible(now + 3600, now, SESSION_FUTURE_MARGIN_S));
   TEST_ASSERT_TRUE(session_epoch_plausible((uint32_t)now, now, SESSION_FUTURE_MARGIN_S));
@@ -1668,13 +1826,18 @@ int main() {
   RUN_TEST(test_profile_select_y5_z1);
   RUN_TEST(test_profile_z1_contract);
   RUN_TEST(test_profile_z1_routing);
-  RUN_TEST(test_profile_select_v20_probe);
-  RUN_TEST(test_profile_probe_contract);
-  RUN_TEST(test_profile_probe_reads_on_both_tx_chars);
+  RUN_TEST(test_profile_select_v20);
+  RUN_TEST(test_profile_v20_contract);
   RUN_TEST(test_validated_profiles_keep_writes_and_cccd_skip);
   RUN_TEST(test_clock_write_permitted);
   RUN_TEST(test_command_permitted_read_only_allows_only_profile_reads);
-  RUN_TEST(test_command_permitted_probe_allows_reads_and_the_clock);
+  RUN_TEST(test_command_permitted_v20_allows_reads_and_the_clock);
+  RUN_TEST(test_v20_settings_real_frames);
+  RUN_TEST(test_v20_settings_after_clock_write);
+  RUN_TEST(test_v20_inline_0307_real_frame);
+  RUN_TEST(test_v20_assembler_splits_length_prefixed_records);
+  RUN_TEST(test_v20_assembler_header_cases);
+  RUN_TEST(test_v20_assembler_stops_at_a_bad_length);
   RUN_TEST(test_command_permitted_unlocked_type1_unchanged);
   RUN_TEST(test_decode_hw_revision_code);
   RUN_TEST(test_hw_revision_text);

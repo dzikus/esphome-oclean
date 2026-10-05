@@ -211,6 +211,26 @@ void parse_device_settings(const uint8_t *buf, DeviceSettings *out) {
   out->device_language = buf[31];
 }
 
+void parse_device_settings_v20_start(const uint8_t *buf, DeviceSettingsV20Start *out) {
+  if (buf == nullptr || out == nullptr)
+    return;
+  out->battery = buf[0];
+  out->network_status = buf[1];
+  out->raise_wake = buf[2] != 0;
+  out->auto_update = buf[3] != 0;
+  out->auto_mode = buf[4] != 0;
+  out->mode_count = buf[5];
+  out->bus_brushing = buf[6];
+  out->voice = buf[7] != 0;
+  out->voice_zone_change = buf[8] != 0;
+  out->voice_pressure = buf[9] != 0;
+  out->festival_reminder = buf[10] != 0;
+  out->mode = buf[11];
+  out->brush_mode_on = buf[12] != 0xEC;
+  out->scheme_type = buf[13];
+  out->head_used_time = u16be(buf + 14);
+}
+
 bool decode_brush_areas_push(const uint8_t *data, size_t len, BrushAreasPush *out) {
   if (data == nullptr || out == nullptr)
     return false;
@@ -510,6 +530,135 @@ int SessionAssembler::newest_index() const {
     if (session_record_newer(cur, best_rec)) {
       best_rec = cur;
       best = i;
+    }
+  }
+  return best;
+}
+
+static bool is_session_header(const uint8_t *data, size_t len) {
+  return len >= SESSION_V20_HEADER_LEN && data[0] == 0x03 && data[1] == 0x07 && data[2] == SESSION_MAGIC[0] &&
+         data[3] == SESSION_MAGIC[1] && data[4] == SESSION_MAGIC[2];
+}
+
+static void decode_v20_head(const uint8_t *rec, SessionRecord *out) {
+  *out = SessionRecord{};
+  out->year = uint16_t(2000) + rec[2];
+  out->month = rec[3];
+  out->day = rec[4];
+  out->hour = rec[5];
+  out->minute = rec[6];
+  out->second = rec[7];
+  out->scheme = rec[8];
+  out->duration_s = u16be(rec + 9);
+  for (uint8_t &zone : out->zones)
+    zone = SESSION_ZONE_ABSENT;
+  out->score = SESSION_NO_SCORE;
+  out->has_score = false;
+}
+
+bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *out) {
+  if (rec == nullptr || out == nullptr || len < SESSION_V20_RECORD_MIN)
+    return false;
+  decode_v20_head(rec, out);
+  out->valid_duration_s = u16be(rec + 11);
+  for (size_t i = 0; i < 5; i++)
+    out->areas[i] = rec[13 + i];
+  out->score = rec[SESSION_V20_SCORE_OFFSET];
+  out->has_score = out->score != SESSION_NO_SCORE;
+  return true;
+}
+
+bool decode_inline_0307_v20(const uint8_t *data, size_t len, SessionRecord *out) {
+  if (data == nullptr || out == nullptr || len < SESSION_V20_HEADER_LEN + SESSION_V20_INLINE_LEN)
+    return false;
+  if (!is_session_header(data, len) || u16be(data + 5) != 0)
+    return false;
+  const uint8_t *rec = data + SESSION_V20_HEADER_LEN;
+  uint16_t const rec_len = u16be(rec);
+  if (rec_len < SESSION_V20_RECORD_MIN || rec_len > SESSION_V20_RECORD_MAX)
+    return false;
+  decode_v20_head(rec, out);
+  return true;
+}
+
+void VarSessionAssembler::reset() {
+  buf_.clear();
+  spans_.clear();
+  need_ = 0;
+  count_ = 0;
+  started_ = false;
+  failed_ = false;
+}
+
+bool VarSessionAssembler::feed(const uint8_t *data, size_t len) {
+  if (failed_)
+    return false;
+  if (data == nullptr) {
+    failed_ = true;
+    return false;
+  }
+  if (complete() || this->empty())
+    return complete();
+  size_t skip = 0;
+  if (!started_) {
+    if (!is_session_header(data, len)) {
+      failed_ = true;
+      return false;
+    }
+    count_ = u16be(data + 5);
+    need_ = u16be(data + 7);
+    started_ = true;
+    if (count_ == 0)
+      return false;
+    if (count_ > SESSION_V20_MAX_RECORDS || need_ < SESSION_V20_RECORD_MIN || need_ > SESSION_V20_MAX_BYTES) {
+      failed_ = true;
+      return false;
+    }
+    buf_.reserve(need_);
+    skip = SESSION_V20_HEADER_LEN;
+  }
+  size_t const take = std::min(len - skip, need_ - buf_.size());
+  buf_.insert(buf_.end(), data + skip, data + skip + take);
+  if (complete())
+    this->split_();
+  return complete();
+}
+
+void VarSessionAssembler::split_() {
+  spans_.clear();
+  size_t offset = 0;
+  while (offset + 2 <= buf_.size() && spans_.size() < count_) {
+    size_t const rec_len = u16be(buf_.data() + offset);
+    if (rec_len < SESSION_V20_RECORD_MIN || rec_len > SESSION_V20_RECORD_MAX || offset + rec_len > buf_.size())
+      break;
+    spans_.push_back(Span{.offset = offset, .len = rec_len});
+    offset += rec_len;
+  }
+}
+
+bool VarSessionAssembler::record(size_t i, SessionRecord *out) const {
+  if (i >= spans_.size())
+    return false;
+  return decode_session_record_v20(buf_.data() + spans_[i].offset, spans_[i].len, out);
+}
+
+const uint8_t *VarSessionAssembler::raw_record(size_t i, size_t *len) const {
+  if (i >= spans_.size() || len == nullptr)
+    return nullptr;
+  *len = spans_[i].len;
+  return buf_.data() + spans_[i].offset;
+}
+
+int VarSessionAssembler::newest_index() const {
+  int best = -1;
+  SessionRecord best_rec{};
+  for (size_t i = 0; i < spans_.size(); i++) {
+    SessionRecord cur{};
+    if (!this->record(i, &cur))
+      continue;
+    if (best < 0 || session_record_newer(cur, best_rec)) {
+      best_rec = cur;
+      best = static_cast<int>(i);
     }
   }
   return best;

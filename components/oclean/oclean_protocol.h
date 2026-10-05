@@ -60,6 +60,8 @@ static constexpr size_t SESSION_RECORD_SIZE = 42;
 // declared count as malformed rather than trusting it
 static constexpr uint16_t SESSION_MAX_RECORDS = 64;
 static constexpr uint8_t SESSION_NO_SCORE = 0xFF;
+// a zone the record does not carry; published as unknown
+static constexpr uint8_t SESSION_ZONE_ABSENT = 0xFF;
 // Per-region coverage, left 0-3 then right 4-7, each side ordered upper-outer /
 // upper-inner / lower-outer / lower-inner.
 static constexpr size_t SESSION_ZONES_OFFSET = 23;
@@ -105,8 +107,9 @@ int64_t civil_to_epoch(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, 
 uint32_t session_record_epoch(const SessionRecord &r);
 
 // How far past the local clock a session timestamp may sit before it is treated
-// as implausible. One day absorbs brush-clock drift and timezone skew.
-static constexpr uint32_t SESSION_FUTURE_MARGIN_S = 86400;
+// as implausible. Two hours absorb drift and a missed DST switch; a brush still on
+// its factory clock (the X Ultra 20 ships on UTC+8) lands outside.
+static constexpr uint32_t SESSION_FUTURE_MARGIN_S = 7200;
 
 // A wildly future date from a hostile or glitched peer would push the dedup
 // watermark past every real session and mute them for good. now_local_epoch
@@ -143,6 +146,60 @@ inline int64_t clamp_clock_drift(int64_t drift) {
     return -CLOCK_DRIFT_CLAMP_S;
   return drift;
 }
+
+// === Variable-length session stream (X Ultra 20) ===
+// First packet: [03 07][2A 42 23][count u16 BE][stream length u16 BE] then record
+// bytes; continuation packets are raw record bytes. Each record opens with its
+// own length (u16 BE). The firmware keeps at most 33 records of up to 182 bytes.
+static constexpr size_t SESSION_V20_HEADER_LEN = 9;
+static constexpr uint16_t SESSION_V20_MAX_RECORDS = 33;
+static constexpr size_t SESSION_V20_RECORD_MAX = 182;
+// through the score byte
+static constexpr size_t SESSION_V20_RECORD_MIN = 29;
+static constexpr size_t SESSION_V20_MAX_BYTES = size_t(SESSION_V20_MAX_RECORDS) * SESSION_V20_RECORD_MAX;
+static constexpr size_t SESSION_V20_SCORE_OFFSET = 28;
+// length, start time, mode, program length: what a count=0 reply carries
+static constexpr size_t SESSION_V20_INLINE_LEN = 11;
+
+// [0-1] length, [2-7] start time, [8] mode, [9-10] program length s, [11-12]
+// brushed s, [13-17] pressure ratios, [28] score. The zone bytes are not mapped,
+// so every zone comes back SESSION_ZONE_ABSENT.
+bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *out);
+
+// count=0 reply: the head of the newest record follows the header. No brushed
+// time, zones or score in it.
+bool decode_inline_0307_v20(const uint8_t *data, size_t len, SessionRecord *out);
+
+class VarSessionAssembler {
+ public:
+  void reset();
+  // Input after completion is ignored; a malformed header latches a failed
+  // state that never completes. A count=0 header leaves it empty().
+  bool feed(const uint8_t *data, size_t len);
+  bool complete() const { return started_ && !failed_ && need_ > 0 && buf_.size() >= need_; }
+  bool started() const { return started_; }
+  bool failed() const { return failed_; }
+  bool empty() const { return started_ && count_ == 0; }
+  size_t record_count() const { return spans_.size(); }
+  bool record(size_t i, SessionRecord *out) const;
+  const uint8_t *raw_record(size_t i, size_t *len) const;
+  // -1 when there is no record
+  int newest_index() const;
+
+ private:
+  struct Span {
+    size_t offset;
+    size_t len;
+  };
+  void split_();
+
+  std::vector<uint8_t> buf_{};
+  std::vector<Span> spans_{};
+  size_t need_ = 0;
+  uint16_t count_ = 0;
+  bool started_ = false;
+  bool failed_ = false;
+};
 
 // First packet carries SESSION_HEADER_LEN header bytes then inline record
 // bytes; continuation packets are raw record bytes, concatenated until
@@ -310,6 +367,28 @@ struct DeviceSettings {
 };
 
 void parse_device_settings(const uint8_t *buf, DeviceSettings *out);
+
+// X Ultra 20 start frame, buffer 0..15. Its continuation frame (16..33) matches
+// DeviceSettings.
+struct DeviceSettingsV20Start {
+  uint8_t battery;          // buffer 0, percent
+  uint8_t network_status;   // buffer 1
+  bool raise_wake;          // buffer 2 != 0
+  bool auto_update;         // buffer 3 != 0
+  bool auto_mode;           // buffer 4 != 0
+  uint8_t mode_count;       // buffer 5
+  uint8_t bus_brushing;     // buffer 6
+  bool voice;               // buffer 7 != 0
+  bool voice_zone_change;   // buffer 8 != 0
+  bool voice_pressure;      // buffer 9 != 0
+  bool festival_reminder;   // buffer 10 != 0
+  uint8_t mode;             // buffer 11
+  bool brush_mode_on;       // buffer 12 != 0xEC
+  uint8_t scheme_type;      // buffer 13
+  uint16_t head_used_time;  // buffer 14-15 BE
+};
+
+void parse_device_settings_v20_start(const uint8_t *buf, DeviceSettingsV20Start *out);
 
 // Unprompted push the device may send on the session characteristic after the
 // 0307 stream completes; prefix 02 1f (Y3P) or 26 04 (other TYPE1). HYPOTHESIS,

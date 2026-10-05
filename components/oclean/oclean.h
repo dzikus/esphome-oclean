@@ -243,15 +243,25 @@ class OcleanHub : public ble_client::BLEClientNode,
   void handle_dis_read_(uint16_t uuid16, const uint8_t *data, size_t len);
   void handle_battery_(const uint8_t *data, size_t len);
   void handle_session_notify_(const uint8_t *data, size_t len);
-  // A partial record (inline fragment) has no zones or score; those entities go
-  // unknown rather than keep an older session's values under a newer timestamp.
-  void publish_session_record_(const SessionRecord &r, bool partial);
+  void handle_fixed_session_notify_(const uint8_t *data, size_t len);
+  void handle_variable_session_notify_(const uint8_t *data, size_t len);
+  void ingest_session_records_(const std::vector<SessionRecord> &records, const uint8_t *newest_raw,
+                               size_t newest_raw_len);
+  // What a record carries. Fields it lacks go unknown rather than keep an older
+  // session's values under a newer timestamp.
+  enum class SessionDetail : uint8_t {
+    FULL,
+    NO_SCORE,  // no score, no zones
+    HEAD,      // no score, zones or brushed time
+  };
+  void publish_session_record_(const SessionRecord &r, SessionDetail detail);
   // One record per loop iteration: same-entity publishes inside one iteration
   // coalesce, so a backfilled ring would collapse to a single recorder row.
   void schedule_next_session_publish_();
   // ts is the ordering/dedup epoch, not the timestamp sent to Home Assistant
   void emit_session_event_(const SessionRecord &r, uint32_t ts);
   void handle_main_notify_(const uint8_t *data, size_t len);
+  void publish_v20_start_settings_(const uint8_t *buf);
   // notify on the session channel after the stream completed: enrichment push
   void handle_enrichment_notify_(const uint8_t *data, size_t len);
 
@@ -398,6 +408,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   // Reassembles the *B# record stream that arrives on the session notify
   // characteristic during a capture window.
   SessionAssembler session_asm_{};
+  VarSessionAssembler session_v20_asm_{};
   // Reassembles the two-frame settings response on the main notify char.
   SettingsAssembler settings_asm_{};
 
