@@ -110,12 +110,22 @@ uint32_t session_record_epoch(const SessionRecord &r);
 // as implausible. The X Ultra 20 ships on a UTC+8 clock, up to 20 h ahead of a
 // node in UTC-12; anything tighter drops every session of a brush nobody synced.
 static constexpr uint32_t SESSION_FUTURE_MARGIN_S = 86400;
+// the settings reply reports the clock that stamps the records, so only read
+// latency and rounding separate the two
+static constexpr uint32_t SESSION_BRUSH_CLOCK_MARGIN_S = 300;
+
+// Civil-as-UTC like session_record_epoch; 0 = not available.
+struct SessionClocks {
+  int64_t node_local;
+  int64_t brush;  // this round's settings reply, aged to now
+};
 
 // A wildly future date from a hostile or glitched peer would push the dedup
-// watermark past every real session and mute them for good. now_local_epoch
-// shares the civil-as-UTC basis of session_record_epoch; <= 0 means unsynced,
-// which cannot judge and passes. Past dates never advance the watermark.
-bool session_epoch_plausible(uint32_t epoch, int64_t now_local_epoch, uint32_t future_margin_s);
+// watermark past every real session and mute them for good, hence the node
+// bound. The brush bound rejects what the brush clock cannot have written yet:
+// a record left from before the clock was set back. A brush clock more than the
+// node margin behind is a lost clock, not a time zone, and judges nothing.
+bool session_epoch_plausible(uint32_t epoch, const SessionClocks &clocks);
 
 // The longest preset program runs 200 s and a 4-step custom one caps at 480 s,
 // so two hours leaves room for any future scheme while keeping a spoofed 65535
@@ -258,6 +268,8 @@ static constexpr uint32_t POLL_QUERY_HOLD_MS = 8000;
 static constexpr uint32_t DIS_CACHE_MS = 86400000UL;
 // grace period after the stream for a brush-areas push (021f) to show up
 static constexpr uint32_t ENRICHMENT_WAIT_MS = 2500;
+// a clock set, then one settings query QUERY_STAGGER_MS later to read it back
+static constexpr uint32_t CLOCK_READBACK_MS = 2000;
 // Comfortably past the API batch delay: same-entity updates inside one batch
 // window collapse to the last value, which would cost a backfilled ring all but
 // its newest recorder row.
@@ -442,8 +454,26 @@ static constexpr size_t SET_CLOCK_CMD_LEN = 10;
 std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute,
                                              uint8_t second, uint8_t weekday, uint8_t tz_index);
 
+// civil-as-UTC time a set-clock command writes; 0 when it is not one
+int64_t set_clock_command_epoch(const uint8_t *cmd, size_t len);
+
 // strictly greater than threshold_s, so a zero threshold still needs a 1 s gap
 bool should_resync_clock(int64_t brush_epoch, int64_t local_epoch, uint32_t threshold_s);
+
+// Seconds the brush clock moved back when set: its reading aged to the write,
+// minus the time written. Negative when it moved forward.
+int64_t clock_set_shift(int64_t brush_read, uint32_t ms_since_read, int64_t written);
+
+// Only a backward move within the node margin is carried into stored epochs. A
+// lost clock reads years behind, and lifting the watermark by that would mute
+// every session until then; a brush further ahead than the margin never got a
+// record past the plausibility check, so the watermark is not in its time base.
+bool clock_shift_applies(int64_t shift_s);
+
+// a later reading within half the shift of the node clock shows the write took
+bool clock_set_confirmed(int64_t shift_s, int64_t drift_s);
+
+uint32_t shift_epoch_back(uint32_t epoch, int64_t shift_s);
 
 bool poll_is_due(uint32_t since_ms, bool docked, uint32_t charging_interval_ms, uint32_t battery_interval_ms);
 
@@ -486,10 +516,17 @@ PollDecision plan_poll_tick(const PollTickState &s);
 // verbatim, and 100*83/120 renders as 69.1666641235352.
 float session_coverage_percent(uint16_t valid_duration_s, uint16_t duration_s);
 
-// A count=0 reply carries the head of the newest already-read record, without
-// zones or score. Publishing it blanks both, so it may only go out when strictly
-// newer than what the entities already show.
-bool accept_inline_record(uint32_t inline_epoch, uint32_t newest_epoch, int64_t now_local_epoch);
+// The fields an inline head and its full record share. Valid duration is left
+// out: the X Ultra 20 head does not carry it.
+bool same_session(const SessionRecord &a, const SessionRecord &b);
+
+// A count=0 reply carries the head of a read record, without zones or score.
+// Publishing it blanks both, so it goes out only when strictly newer than what
+// the entities show (the head is not always the newest record) and not the
+// session they show: after the clock is set back, that head keeps its old date
+// and would pass the epoch test. shown is nullptr when nothing is shown.
+bool accept_inline_record(const SessionRecord &inl, uint32_t newest_epoch, const SessionRecord *shown,
+                          const SessionClocks &clocks);
 
 // === Session ring ingest decision ===
 // No I/O in here. Which records are new, where the dedup watermark lands, and
@@ -512,10 +549,13 @@ struct SessionIngestPlan {
 
 // The newest record is picked here, not passed in. An index from the reassembler
 // would address a different record than the caller's vector as soon as one entry
-// fails to decode. now_local_epoch <= 0 means an unsynced clock, which the
-// plausibility check reads as "cannot judge".
+// fails to decode.
 SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records, uint32_t watermark,
-                                      uint32_t newest_epoch, int64_t now_local_epoch);
+                                      uint32_t newest_epoch, const SessionClocks &clocks);
+
+// The stored record keeps the time base it was written in, while the watermark
+// follows every clock shift, so after a set the watermark is the lower one.
+uint32_t restored_newest_epoch(uint32_t record_epoch, uint32_t watermark);
 
 // End of a query window. Holding the link costs no brush battery only while the
 // brush sits on its charger, and a round with no STATUS reply cannot vouch for

@@ -56,7 +56,8 @@ void OcleanHub::setup() {
   PersistedSession last{};
   if (this->session_last_pref_.load(&last)) {
     if (last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION) {
-      this->newest_record_epoch_ = session_record_epoch(last.record);
+      this->newest_record_epoch_ =
+          restored_newest_epoch(session_record_epoch(last.record), this->last_session_emitted_);
       this->publish_session_record_(last.record, last.partial != 0 ? SessionDetail::NO_SCORE : SessionDetail::FULL);
     } else {
       // right length, wrong content; the next ring download refills the entities
@@ -140,6 +141,7 @@ void OcleanHub::set_ble_user_enabled(bool en) {
     // Drop queued config writes: a disabled hub must not accumulate mutations
     // that would fire unannounced on a later connect.
     this->pending_writes_.clear();
+    this->clock_sync_due_ = false;
     this->capture_armed_ = false;
     if (this->state_ != State::IDLE) {
       // Tear down the in-flight cycle immediately. The brush buffers sessions
@@ -257,6 +259,7 @@ void OcleanHub::start_watchdog_() {
 void OcleanHub::disconnect_() {
   this->cancel_timeout("poll_watchdog");
   this->cancel_timeout("capture_hold");
+  this->cancel_timeout("clock_readback");
   this->cancel_timeout("enrichment_wait");
   this->cancel_timeout("notify_reg_wait");
   this->awaiting_model_ = false;
@@ -323,6 +326,7 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
       this->parent_->set_connection_type(espbt::ConnectionType::V1);
       this->cancel_timeout("poll_watchdog");
       this->cancel_timeout("capture_hold");
+      this->cancel_timeout("clock_readback");
       this->cancel_timeout("enrichment_wait");
       this->cancel_timeout("notify_reg_wait");
       this->awaiting_model_ = false;
@@ -688,7 +692,7 @@ bool OcleanHub::write_raw_(uint16_t handle, const uint8_t *bytes, size_t len, co
   return true;
 }
 
-bool OcleanHub::send_command(std::vector<uint8_t> bytes, const char *name, WriteKind kind) {
+bool OcleanHub::send_command(std::vector<uint8_t> bytes, const char *name) {
   if (!this->ble_user_enabled_) {
     // Drop, do not queue: a write queued while disabled would fire unannounced
     // whenever BLE comes back, and the optimistic entity state would lie until
@@ -708,24 +712,28 @@ bool OcleanHub::send_command(std::vector<uint8_t> bytes, const char *name, Write
     return false;
   }
   ESP_LOGI(TAG, "[%s] queued command %s (%u bytes)", this->parent_->address_str(), name, (unsigned)bytes.size());
-  this->pending_writes_.push_back(PendingWrite{.bytes = std::move(bytes), .name = name, .kind = kind});
-  // Bring the link up if it is down; the writes flush in the query window once
-  // discovery completes. If a cycle is already in flight they flush on its
-  // query window (or the next one). Mirrors the capture trigger.
+  this->pending_writes_.push_back(PendingWrite{.bytes = std::move(bytes), .name = name});
+  this->kick_link_();
+  return true;
+}
+
+void OcleanHub::kick_link_() {
+  // Bring the link up if it is down; queued work runs in the query window once
+  // discovery completes. If a cycle is already in flight it runs in that window
+  // (or the next one). Mirrors the capture trigger.
   bool const connected = this->node_state == espbt::ClientState::ESTABLISHED;
   if (this->holding_ && this->state_ == State::POLLING) {
     // Held link is up and idle between re-queries. Run a re-query round now so
     // the write flushes promptly instead of waiting out the charging interval.
     ESP_LOGI(TAG, "[%s] flushing queued command on held link", this->parent_->address_str());
     this->held_requery_();
-    return true;
+    return;
   }
   if (!connected && !this->parent_->enabled) {
     ESP_LOGI(TAG, "[%s] starting poll cycle to flush queued command", this->parent_->address_str());
     // not a scheduled poll, cadence untouched
     this->begin_connect_cycle_(false);
   }
-  return true;
 }
 
 void OcleanHub::sync_clock() {
@@ -734,11 +742,22 @@ void OcleanHub::sync_clock() {
     ESP_LOGW(TAG, "[%s] sync-clock pressed but no time source configured", this->parent_->address_str());
     return;
   }
-  if (!this->time_->now().is_valid()) {
+  std::vector<uint8_t> cmd;
+  if (!this->build_clock_command_(&cmd)) {
     ESP_LOGW(TAG, "[%s] sync-clock pressed but local time is not synced yet", this->parent_->address_str());
     return;
   }
-  this->queue_set_clock_("manual");
+  if (!this->ble_user_enabled_) {
+    ESP_LOGW(TAG, "[%s] command sync-clock ignored: BLE user-disabled", this->parent_->address_str());
+    return;
+  }
+  if (!command_permitted(this->read_only_, *this->profile_, cmd.data(), cmd.size())) {
+    this->log_refusal_("sync-clock", cmd.data(), cmd.size());
+    return;
+  }
+  this->clock_sync_due_ = true;
+  ESP_LOGI(TAG, "[%s] sync-clock due at the end of the next query round", this->parent_->address_str());
+  this->kick_link_();
 #else
   ESP_LOGW(TAG, "[%s] sync-clock pressed but the firmware was built without time support",
            this->parent_->address_str());
@@ -796,42 +815,73 @@ bool OcleanHub::build_clock_command_(std::vector<uint8_t> *out) {
 #endif
 }
 
-void OcleanHub::queue_set_clock_(const char *reason) {
-#ifdef USE_TIME
-  std::vector<uint8_t> cmd;
-  if (!this->build_clock_command_(&cmd))
-    return;
-  ESP_LOGI(TAG, "[%s] sync-clock (%s) queued, time is sampled again at write", this->parent_->address_str(), reason);
-  this->send_command(std::move(cmd), "sync-clock", WriteKind::CLOCK);
-#else
-  (void)reason;
-#endif
-}
-
 void OcleanHub::maybe_auto_sync_clock_(const DeviceSettings &ds) {
 #ifdef USE_TIME
-  if (!this->auto_sync_time_ || !clock_write_permitted(this->read_only_, *this->profile_) || this->time_ == nullptr ||
-      !ds.clock_valid)
+  if (this->clock_sync_due_ || !this->auto_sync_time_ || !clock_write_permitted(this->read_only_, *this->profile_) ||
+      this->time_ == nullptr || !ds.clock_valid)
     return;
   ESPTime const now = this->time_->now();
   if (!now.is_valid())
     return;
-  // Do not pile up: if a clock write is already queued, wait for it to flush and
-  // be read back before deciding again.
-  for (const auto &w : this->pending_writes_) {
-    if (w.kind == WriteKind::CLOCK)
-      return;
-  }
   int64_t const brush_epoch = civil_to_epoch(ds.year, ds.month, ds.day, ds.hour, ds.minute, ds.second);
   int64_t const local_epoch = epoch_of(now);
   if (!should_resync_clock(brush_epoch, local_epoch, this->sync_drift_threshold_s_))
     return;
-  ESP_LOGI(TAG, "[%s] clock drift %lld s exceeds %u s, queuing auto sync", this->parent_->address_str(),
-           (long long)(brush_epoch - local_epoch), (unsigned)this->sync_drift_threshold_s_);
-  this->queue_set_clock_("auto");
+  ESP_LOGI(TAG, "[%s] clock drift %lld s exceeds %u s, setting it at the end of this round",
+           this->parent_->address_str(), (long long)(brush_epoch - local_epoch),
+           (unsigned)this->sync_drift_threshold_s_);
+  this->clock_sync_due_ = true;
 #else
   (void)ds;
 #endif
+}
+
+bool OcleanHub::write_due_clock_() {
+  if (!this->clock_sync_due_ || this->state_ != State::POLLING)
+    return false;
+  if (this->round_brush_clock_ == 0) {
+    ESP_LOGD(TAG, "[%s] sync-clock waits for a round with a settings reply", this->parent_->address_str());
+    return false;
+  }
+  this->clock_sync_due_ = false;
+  std::vector<uint8_t> cmd;
+  if (!this->build_clock_command_(&cmd))
+    return false;
+  int64_t const shift = clock_set_shift(this->round_brush_clock_, millis() - this->round_brush_clock_ms_,
+                                        set_clock_command_epoch(cmd.data(), cmd.size()));
+  uint16_t const handle = (this->profile_->config_write_target == WriteTarget::TX_SESSION) ? this->tx_session_handle_
+                                                                                           : this->tx_main_handle_;
+  if (!this->write_raw_(handle, cmd.data(), cmd.size(), "sync-clock"))
+    return false;
+  this->clock_shift_pending_s_ = clock_shift_applies(shift) ? shift : 0;
+  ESP_LOGI(TAG, "[%s] brush clock was %lld s off", this->parent_->address_str(), (long long)shift);
+  return true;
+}
+
+void OcleanHub::confirm_clock_shift_(const DeviceSettings &ds) {
+  int64_t const shift = this->clock_shift_pending_s_;
+  int64_t const local = this->local_now_epoch_();
+  if (shift == 0 || !ds.clock_valid || local <= 0)
+    return;
+  this->clock_shift_pending_s_ = 0;
+  int64_t const drift = civil_to_epoch(ds.year, ds.month, ds.day, ds.hour, ds.minute, ds.second) - local;
+  if (!clock_set_confirmed(shift, drift)) {
+    ESP_LOGW(TAG, "[%s] clock set not taken (drift %lld s), stored sessions keep their time base",
+             this->parent_->address_str(), (long long)drift);
+    return;
+  }
+  this->last_session_emitted_ = shift_epoch_back(this->last_session_emitted_, shift);
+  this->session_wm_pref_.save(&this->last_session_emitted_);
+  this->newest_record_epoch_ = shift_epoch_back(this->newest_record_epoch_, shift);
+  ESP_LOGI(TAG, "[%s] clock set back %lld s, session watermark moved with it (ts=%u)", this->parent_->address_str(),
+           (long long)shift, (unsigned)this->last_session_emitted_);
+}
+
+SessionClocks OcleanHub::session_clocks_() {
+  SessionClocks c{.node_local = this->local_now_epoch_(), .brush = 0};
+  if (this->round_brush_clock_ != 0)
+    c.brush = this->round_brush_clock_ + static_cast<int64_t>((millis() - this->round_brush_clock_ms_) / 1000);
+  return c;
 }
 
 void OcleanHub::publish_clock_drift_(const DeviceSettings &ds) {
@@ -881,20 +931,13 @@ uint32_t OcleanHub::flush_pending_writes_() {
     // another, so they cannot share a name.
     std::vector<uint8_t> bytes = std::move(pw.bytes);
     const char *name = pw.name;
-    WriteKind const kind = pw.kind;
-    this->set_timeout(offset, [this, write_handle, kind, name, bytes = std::move(bytes)]() mutable {
+    this->set_timeout(offset, [this, write_handle, name, bytes = std::move(bytes)]() {
       // The watchdog can disconnect before this fires. Drop the write unless
       // the link is still in the query phase, so it never lands on a dead or
       // freshly reopened connection.
       if (this->state_ != State::POLLING) {
         ESP_LOGD(TAG, "[%s] dropping queued write %s, no longer polling", this->parent_->address_str(), name);
         return;
-      }
-      if (kind == WriteKind::CLOCK) {
-        // a queued write can wait out a whole poll interval, so resample here
-        std::vector<uint8_t> fresh;
-        if (this->build_clock_command_(&fresh))
-          bytes = std::move(fresh);
       }
       this->write_raw_(write_handle, bytes.data(), bytes.size(), name);
     });
@@ -970,6 +1013,8 @@ void OcleanHub::handle_dis_read_(uint16_t uuid16, const uint8_t *data, size_t le
 }
 
 void OcleanHub::publish_session_record_(const SessionRecord &r, SessionDetail detail) {
+  this->shown_session_ = r;
+  this->shown_session_valid_ = true;
   // Score is 0-100; a spoofed byte outside that (0xFF already means "no score")
   // is clamped so downstream stats never see an out-of-range reading.
   float score = NAN;
@@ -1063,7 +1108,8 @@ void OcleanHub::handle_fixed_session_notify_(const uint8_t *data, size_t len) {
              "scheme=%u dur=%us valid=%us (no unread ring)",
              this->parent_->address_str(), inl.year, inl.month, inl.day, inl.hour, inl.minute, inl.second,
              (unsigned)inl.scheme, (unsigned)inl.duration_s, (unsigned)inl.valid_duration_s);
-    if (accept_inline_record(ts, this->newest_record_epoch_, this->local_now_epoch_())) {
+    if (accept_inline_record(inl, this->newest_record_epoch_,
+                             this->shown_session_valid_ ? &this->shown_session_ : nullptr, this->session_clocks_())) {
       this->publish_session_record_(inl, SessionDetail::NO_SCORE);
       this->newest_record_epoch_ = ts;
     }
@@ -1106,7 +1152,8 @@ void OcleanHub::handle_variable_session_notify_(const uint8_t *data, size_t len)
              "scheme=%u program=%us (no unread ring)",
              this->parent_->address_str(), inl.year, inl.month, inl.day, inl.hour, inl.minute, inl.second,
              (unsigned)inl.scheme, (unsigned)inl.duration_s);
-    if (accept_inline_record(ts, this->newest_record_epoch_, this->local_now_epoch_())) {
+    if (accept_inline_record(inl, this->newest_record_epoch_,
+                             this->shown_session_valid_ ? &this->shown_session_ : nullptr, this->session_clocks_())) {
       this->publish_session_record_(inl, SessionDetail::HEAD);
       this->newest_record_epoch_ = ts;
     }
@@ -1142,7 +1189,7 @@ void OcleanHub::handle_variable_session_notify_(const uint8_t *data, size_t len)
 void OcleanHub::ingest_session_records_(const std::vector<SessionRecord> &records, const uint8_t *newest_raw,
                                         size_t newest_raw_len) {
   SessionIngestPlan plan =
-      plan_session_ingest(records, this->last_session_emitted_, this->newest_record_epoch_, this->local_now_epoch_());
+      plan_session_ingest(records, this->last_session_emitted_, this->newest_record_epoch_, this->session_clocks_());
 
   for (const auto &rec : plan.implausible) {
     ESP_LOGW(TAG, "[%s] dropping session dated %04u-%02u-%02u: implausibly future", this->parent_->address_str(),
@@ -1207,11 +1254,13 @@ void OcleanHub::ingest_session_records_(const std::vector<SessionRecord> &record
   this->cancel_timeout("capture_hold");
   this->set_timeout("enrichment_wait", ENRICHMENT_WAIT_MS, [this]() {
     ESP_LOGI(TAG, "[%s] enrichment window ended", this->parent_->address_str());
-    this->capture_active_ = false;
     // maybe_finish_poll_ may have already torn the link down by now. Only act
     // if the link is still up, to avoid a spurious second teardown.
-    if (this->state_ != State::IDLE && this->state_ != State::DISCONNECTING)
-      this->finish_or_hold_("enrichment window ended");
+    if (this->state_ != State::IDLE && this->state_ != State::DISCONNECTING) {
+      this->end_query_window_("enrichment window ended");
+    } else {
+      this->capture_active_ = false;
+    }
   });
 }
 
@@ -1345,9 +1394,12 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
                  ds.second);
         this->device_clock_text_sensor_->publish_state(clk);
       }
+      if (ds.clock_valid) {
+        this->round_brush_clock_ = civil_to_epoch(ds.year, ds.month, ds.day, ds.hour, ds.minute, ds.second);
+        this->round_brush_clock_ms_ = millis();
+      }
+      this->confirm_clock_shift_(ds);
       this->publish_clock_drift_(ds);
-      // Auto-correct the brush clock if it has drifted past the threshold. The
-      // brush clock here is freshest; the queued write flushes on the next poll.
       this->maybe_auto_sync_clock_(ds);
 #ifdef USE_SWITCH
       if (this->over_pressure_switch_ != nullptr)
@@ -1552,8 +1604,10 @@ void OcleanHub::query_device_(bool capture_mode) {
   this->session_asm_.reset();
   this->session_v20_asm_.reset();
   this->settings_asm_.reset();
+  this->round_brush_clock_ = 0;
   // Writes go first and the reads start past them, so the readback reflects the
-  // new state rather than the old.
+  // new state rather than the old. The clock is the exception, see
+  // write_due_clock_.
   uint32_t const base = this->flush_pending_writes_();
   // 500 ms apart: Write With Response allows one outstanding write.
   //
@@ -1603,9 +1657,31 @@ void OcleanHub::query_device_(bool capture_mode) {
   uint32_t const hold_ms = capture_mode ? CAPTURE_HOLD_MS : POLL_QUERY_HOLD_MS;
   this->set_timeout("capture_hold", base + hold_ms, [this]() {
     ESP_LOGI(TAG, "[%s] query window ended", this->parent_->address_str());
-    this->capture_active_ = false;
-    this->finish_or_hold_("query window ended");
+    this->end_query_window_("query window ended");
   });
+}
+
+void OcleanHub::end_query_window_(const char *reason) {
+  if (this->write_due_clock_()) {
+    // read the new clock back on this link, so the clock entities do not wait a
+    // whole poll interval for it; the round stays open until then
+    this->settings_asm_.reset();
+    this->set_timeout("clock_readback", QUERY_STAGGER_MS, [this]() {
+      const ProfileCmd *q = settings_query(*this->profile_);
+      if (this->state_ != State::POLLING || q == nullptr)
+        return;
+      this->write_raw_(q->target == WriteTarget::TX_SESSION ? this->tx_session_handle_ : this->tx_main_handle_,
+                       q->bytes, q->len, q->name);
+    });
+    this->set_timeout("capture_hold", CLOCK_READBACK_MS, [this, reason]() {
+      this->capture_active_ = false;
+      if (this->state_ != State::IDLE && this->state_ != State::DISCONNECTING)
+        this->finish_or_hold_(reason);
+    });
+    return;
+  }
+  this->capture_active_ = false;
+  this->finish_or_hold_(reason);
 }
 
 void OcleanHub::finish_or_hold_(const char *reason) {

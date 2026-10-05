@@ -82,4 +82,7 @@ bool clock_write_permitted(bool read_only, const OcleanProfile &profile);
 
 bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8_t *bytes, size_t len);
 
+// the query answered by the settings transfer; nullptr when the profile reads none
+const ProfileCmd *settings_query(const OcleanProfile &profile);
+
 }  // namespace esphome::oclean

@@ -352,10 +352,14 @@ uint32_t session_record_epoch(const SessionRecord &r) {
   return static_cast<uint32_t>(secs);
 }
 
-bool session_epoch_plausible(uint32_t epoch, int64_t now_local_epoch, uint32_t future_margin_s) {
-  if (now_local_epoch <= 0)
-    return true;  // no trustworthy clock: cannot judge
-  return static_cast<int64_t>(epoch) <= now_local_epoch + static_cast<int64_t>(future_margin_s);
+bool session_epoch_plausible(uint32_t epoch, const SessionClocks &clocks) {
+  auto const e = static_cast<int64_t>(epoch);
+  auto const node_margin = static_cast<int64_t>(SESSION_FUTURE_MARGIN_S);
+  if (clocks.node_local > 0 && e > clocks.node_local + node_margin)
+    return false;
+  bool const brush_usable =
+      clocks.brush > 0 && (clocks.node_local <= 0 || clocks.brush >= clocks.node_local - node_margin);
+  return !brush_usable || e <= clocks.brush + static_cast<int64_t>(SESSION_BRUSH_CLOCK_MARGIN_S);
 }
 
 bool should_resync_clock(int64_t brush_epoch, int64_t local_epoch, uint32_t threshold_s) {
@@ -363,6 +367,25 @@ bool should_resync_clock(int64_t brush_epoch, int64_t local_epoch, uint32_t thre
   if (drift < 0)
     drift = -drift;
   return drift > static_cast<int64_t>(threshold_s);
+}
+
+int64_t clock_set_shift(int64_t brush_read, uint32_t ms_since_read, int64_t written) {
+  return brush_read + static_cast<int64_t>(ms_since_read / 1000) - written;
+}
+
+bool clock_shift_applies(int64_t shift_s) {
+  return shift_s > 0 && shift_s <= static_cast<int64_t>(SESSION_FUTURE_MARGIN_S);
+}
+
+bool clock_set_confirmed(int64_t shift_s, int64_t drift_s) {
+  int64_t const magnitude = drift_s < 0 ? -drift_s : drift_s;
+  return shift_s > 0 && magnitude * 2 < shift_s;
+}
+
+uint32_t shift_epoch_back(uint32_t epoch, int64_t shift_s) {
+  if (!clock_shift_applies(shift_s) || static_cast<int64_t>(epoch) <= shift_s)
+    return epoch;
+  return epoch - static_cast<uint32_t>(shift_s);
 }
 
 bool poll_is_due(uint32_t since_ms, bool docked, uint32_t charging_interval_ms, uint32_t battery_interval_ms) {
@@ -398,12 +421,27 @@ float session_coverage_percent(uint16_t valid_duration_s, uint16_t duration_s) {
   return pct > 100.0f ? 100.0f : pct;
 }
 
-bool accept_inline_record(uint32_t inline_epoch, uint32_t newest_epoch, int64_t now_local_epoch) {
-  return inline_epoch > newest_epoch && session_epoch_plausible(inline_epoch, now_local_epoch, SESSION_FUTURE_MARGIN_S);
+bool same_session(const SessionRecord &a, const SessionRecord &b) {
+  return a.year == b.year && a.month == b.month && a.day == b.day && a.hour == b.hour && a.minute == b.minute &&
+         a.second == b.second && a.scheme == b.scheme && a.duration_s == b.duration_s;
+}
+
+bool accept_inline_record(const SessionRecord &inl, uint32_t newest_epoch, const SessionRecord *shown,
+                          const SessionClocks &clocks) {
+  uint32_t const epoch = session_record_epoch(inl);
+  if (epoch <= newest_epoch || (shown != nullptr && same_session(inl, *shown)))
+    return false;
+  return session_epoch_plausible(epoch, clocks);
+}
+
+uint32_t restored_newest_epoch(uint32_t record_epoch, uint32_t watermark) {
+  if (watermark == 0)
+    return record_epoch;
+  return record_epoch < watermark ? record_epoch : watermark;
 }
 
 SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records, uint32_t watermark,
-                                      uint32_t newest_epoch, int64_t now_local_epoch) {
+                                      uint32_t newest_epoch, const SessionClocks &clocks) {
   SessionIngestPlan plan;
   plan.new_watermark = watermark;
   plan.new_newest_epoch = newest_epoch;
@@ -416,7 +454,7 @@ SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
     uint32_t const ts = session_record_epoch(rec);
     if (ts <= watermark)
       continue;  // already emitted, possibly before a reboot
-    if (!session_epoch_plausible(ts, now_local_epoch, SESSION_FUTURE_MARGIN_S)) {
+    if (!session_epoch_plausible(ts, clocks)) {
       // A date far in the future would push the watermark past every real
       // session and mute them for good, so it never advances it.
       plan.implausible.push_back(rec);
@@ -442,7 +480,7 @@ SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
   }
   if (plan.have_newest) {
     uint32_t const epoch = session_record_epoch(plan.newest);
-    plan.newest_plausible = session_epoch_plausible(epoch, now_local_epoch, SESSION_FUTURE_MARGIN_S);
+    plan.newest_plausible = session_epoch_plausible(epoch, clocks);
     // strictly newer only. A peer re-serving one ring every poll would grind the
     // flash, and an older epoch would lower the gate that keeps a stale record
     // from overwriting the stored one.
@@ -778,6 +816,12 @@ std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8
   // never underflows; the caller guarantees a valid synced clock before calling.
   uint8_t const year_byte = (year >= 2000) ? static_cast<uint8_t>(year - 2000) : 0;
   return {0x02, 0x01, year_byte, month, day, hour, minute, second, weekday, tz_index};
+}
+
+int64_t set_clock_command_epoch(const uint8_t *cmd, size_t len) {
+  if (cmd == nullptr || len != SET_CLOCK_CMD_LEN || cmd[0] != 0x02 || cmd[1] != 0x01)
+    return 0;
+  return civil_to_epoch(static_cast<uint16_t>(2000 + cmd[2]), cmd[3], cmd[4], cmd[5], cmd[6], cmd[7]);
 }
 
 }  // namespace esphome::oclean

@@ -890,12 +890,16 @@ static SessionRecord ingest_record(uint8_t day, uint8_t hour, uint8_t score) {
   return r;
 }
 
+static SessionClocks node_only(int64_t now) {
+  return SessionClocks{.node_local = now, .brush = 0};
+}
+
 void test_plan_ingest_sorts_new_records_oldest_first() {
   // The ring is unordered; the live state has to settle on the newest session,
   // so the plan hands them back oldest-first with the newest last.
   std::vector<SessionRecord> ring = {ingest_record(6, 18, 99), ingest_record(5, 8, 70), ingest_record(6, 7, 83)};
   int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
-  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, now);
+  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, node_only(now));
   TEST_ASSERT_EQUAL_UINT(3, plan.to_publish.size());
   TEST_ASSERT_EQUAL_UINT8(5, plan.to_publish[0].day);
   TEST_ASSERT_EQUAL_UINT8(7, plan.to_publish[1].hour);
@@ -908,7 +912,7 @@ void test_plan_ingest_skips_at_or_below_watermark() {
   std::vector<SessionRecord> ring = {ingest_record(5, 8, 70), ingest_record(6, 7, 83)};
   int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
   uint32_t wm = session_record_epoch(ring[0]);
-  SessionIngestPlan plan = plan_session_ingest(ring, wm, 0, now);
+  SessionIngestPlan plan = plan_session_ingest(ring, wm, 0, node_only(now));
   TEST_ASSERT_EQUAL_UINT(1, plan.to_publish.size());
   TEST_ASSERT_EQUAL_UINT8(6, plan.to_publish[0].day);
 }
@@ -919,7 +923,7 @@ void test_plan_ingest_future_record_never_moves_watermark() {
   std::vector<SessionRecord> ring = {ingest_record(6, 7, 83)};
   ring[0].year = 2099;
   int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
-  SessionIngestPlan plan = plan_session_ingest(ring, 100, 0, now);
+  SessionIngestPlan plan = plan_session_ingest(ring, 100, 0, node_only(now));
   TEST_ASSERT_EQUAL_UINT(0, plan.to_publish.size());
   TEST_ASSERT_EQUAL_UINT(1, plan.implausible.size());
   TEST_ASSERT_EQUAL_UINT32(100, plan.new_watermark);
@@ -932,10 +936,10 @@ void test_plan_ingest_persists_only_strictly_newer() {
   std::vector<SessionRecord> ring = {ingest_record(6, 7, 83)};
   int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
   uint32_t epoch = session_record_epoch(ring[0]);
-  SessionIngestPlan first = plan_session_ingest(ring, 0, 0, now);
+  SessionIngestPlan first = plan_session_ingest(ring, 0, 0, node_only(now));
   TEST_ASSERT_TRUE(first.persist_newest);
   TEST_ASSERT_EQUAL_UINT32(epoch, first.new_newest_epoch);
-  SessionIngestPlan again = plan_session_ingest(ring, epoch, epoch, now);
+  SessionIngestPlan again = plan_session_ingest(ring, epoch, epoch, node_only(now));
   TEST_ASSERT_FALSE(again.persist_newest);
   TEST_ASSERT_EQUAL_UINT(0, again.to_publish.size());
   // Nothing new, but the newest is still sound: the caller republishes it to
@@ -944,10 +948,9 @@ void test_plan_ingest_persists_only_strictly_newer() {
 }
 
 void test_plan_ingest_unsynced_clock_cannot_judge() {
-  // now_local_epoch 0 means the node clock is unsynced, which must not reject
-  // real sessions.
+  // 0 means the node clock is unsynced, which must not reject real sessions.
   std::vector<SessionRecord> ring = {ingest_record(6, 7, 83)};
-  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, 0);
+  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, node_only(0));
   TEST_ASSERT_EQUAL_UINT(1, plan.to_publish.size());
   TEST_ASSERT_TRUE(plan.persist_newest);
 }
@@ -958,7 +961,7 @@ void test_plan_ingest_picks_newest_itself() {
   // one entry failed to decode.
   std::vector<SessionRecord> ring = {ingest_record(5, 8, 70), ingest_record(6, 18, 99), ingest_record(6, 7, 83)};
   int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
-  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, now);
+  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, node_only(now));
   TEST_ASSERT_TRUE(plan.have_newest);
   TEST_ASSERT_EQUAL_UINT8(6, plan.newest.day);
   TEST_ASSERT_EQUAL_UINT8(18, plan.newest.hour);
@@ -966,7 +969,7 @@ void test_plan_ingest_picks_newest_itself() {
 }
 
 void test_plan_ingest_empty_ring_is_inert() {
-  SessionIngestPlan plan = plan_session_ingest({}, 42, 7, 0);
+  SessionIngestPlan plan = plan_session_ingest({}, 42, 7, node_only(0));
   TEST_ASSERT_EQUAL_UINT(0, plan.to_publish.size());
   TEST_ASSERT_EQUAL_UINT32(42, plan.new_watermark);
   TEST_ASSERT_EQUAL_UINT32(7, plan.new_newest_epoch);
@@ -981,20 +984,110 @@ void test_accept_inline_only_when_strictly_newer() {
   // The inline fragment has no zones and no score, so publishing it blanks both.
   // A brush at rest sends one on every poll, which is why "not older" is not
   // enough: it has to be strictly newer than what the entities already show.
-  int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
-  uint32_t newest = (uint32_t)civil_to_epoch(2026, 6, 7, 7, 30, 0);
-  TEST_ASSERT_FALSE(accept_inline_record(newest, newest, now));
-  TEST_ASSERT_FALSE(accept_inline_record(newest - 1, newest, now));
-  TEST_ASSERT_TRUE(accept_inline_record(newest + 1, newest, now));
+  SessionClocks const clocks = node_only(civil_to_epoch(2026, 6, 7, 12, 0, 0));
+  SessionRecord const inl = ingest_record(7, 7, 0);
+  uint32_t const epoch = session_record_epoch(inl);
+  TEST_ASSERT_FALSE(accept_inline_record(inl, epoch, nullptr, clocks));
+  TEST_ASSERT_FALSE(accept_inline_record(inl, epoch + 1, nullptr, clocks));
+  TEST_ASSERT_TRUE(accept_inline_record(inl, epoch - 1, nullptr, clocks));
 }
 
 void test_accept_inline_rejects_implausible_future() {
-  int64_t now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
-  uint32_t far = (uint32_t)civil_to_epoch(2030, 1, 1, 0, 0, 0);
-  TEST_ASSERT_FALSE(accept_inline_record(far, 0, now));
+  SessionRecord far = ingest_record(1, 0, 0);
+  far.year = 2030;
+  TEST_ASSERT_FALSE(accept_inline_record(far, 0, nullptr, node_only(civil_to_epoch(2026, 6, 7, 12, 0, 0))));
   // An unsynced node clock cannot judge, so it must not reject the only session
   // data available.
-  TEST_ASSERT_TRUE(accept_inline_record(far, 0, 0));
+  TEST_ASSERT_TRUE(accept_inline_record(far, 0, nullptr, node_only(0)));
+}
+
+void test_accept_inline_never_republishes_the_shown_session() {
+  // A clock set back 6 h moves the gate back with it, while the head the brush
+  // keeps sending still carries its old, later date.
+  SessionRecord const shown = ingest_record(7, 20, 91);
+  uint32_t const moved = session_record_epoch(shown) - (6 * 3600);
+  SessionRecord inl = shown;
+  inl.valid_duration_s = 0;
+  inl.has_score = false;
+  SessionClocks const clocks = node_only(civil_to_epoch(2026, 6, 8, 12, 0, 0));
+  TEST_ASSERT_FALSE(accept_inline_record(inl, moved, &shown, clocks));
+  inl.second = 1;
+  TEST_ASSERT_TRUE(accept_inline_record(inl, moved, &shown, clocks));
+}
+
+void test_plan_ingest_judges_by_brush_clock() {
+  // A brush 6 h ahead dates its ring by its own clock, so the ring goes out
+  // whole. Once the clock is set back, the same dates predate the set.
+  std::vector<SessionRecord> ring = {ingest_record(7, 14, 80), ingest_record(7, 17, 90)};
+  int64_t const now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
+  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, SessionClocks{.node_local = now, .brush = now + (6 * 3600)});
+  TEST_ASSERT_EQUAL_UINT(2, plan.to_publish.size());
+  plan = plan_session_ingest(ring, 0, 0, SessionClocks{.node_local = now, .brush = now});
+  TEST_ASSERT_EQUAL_UINT(0, plan.to_publish.size());
+  TEST_ASSERT_EQUAL_UINT(2, plan.implausible.size());
+  TEST_ASSERT_EQUAL_UINT32(0, plan.new_watermark);
+}
+
+void test_same_session_ignores_fields_a_head_lacks() {
+  SessionRecord full = ingest_record(7, 20, 91);
+  full.valid_duration_s = 110;
+  SessionRecord head = full;
+  head.valid_duration_s = 0;
+  head.has_score = false;
+  head.score = SESSION_NO_SCORE;
+  TEST_ASSERT_TRUE(same_session(full, head));
+  head.duration_s = 180;
+  TEST_ASSERT_FALSE(same_session(full, head));
+  head = full;
+  head.minute = 1;
+  TEST_ASSERT_FALSE(same_session(full, head));
+}
+
+void test_clock_set_shift_and_confirmation() {
+  // 2026-10-05: brush read 03:46:31 on its UTC+8 clock, set 2 s later to 21:45:14
+  int64_t const shift =
+      clock_set_shift(civil_to_epoch(2026, 10, 6, 3, 46, 31), 2000, civil_to_epoch(2026, 10, 5, 21, 45, 14));
+  TEST_ASSERT_EQUAL_INT64((6 * 3600) + 79, shift);
+  TEST_ASSERT_TRUE(clock_shift_applies(shift));
+  TEST_ASSERT_TRUE(clock_set_confirmed(shift, 1));
+  TEST_ASSERT_TRUE(clock_set_confirmed(shift, -1));
+  TEST_ASSERT_FALSE(clock_set_confirmed(shift, shift));
+  TEST_ASSERT_FALSE(clock_set_confirmed(0, 0));
+  TEST_ASSERT_FALSE(clock_shift_applies(-3600));
+  TEST_ASSERT_FALSE(clock_shift_applies((int64_t)SESSION_FUTURE_MARGIN_S + 1));
+}
+
+void test_shift_epoch_back() {
+  TEST_ASSERT_EQUAL_UINT32(1000000 - 3600, shift_epoch_back(1000000, 3600));
+  TEST_ASSERT_EQUAL_UINT32(1000000, shift_epoch_back(1000000, -3600));
+  TEST_ASSERT_EQUAL_UINT32(1000000, shift_epoch_back(1000000, (int64_t)SESSION_FUTURE_MARGIN_S + 1));
+  TEST_ASSERT_EQUAL_UINT32(0, shift_epoch_back(0, 3600));
+}
+
+void test_restored_newest_epoch() {
+  TEST_ASSERT_EQUAL_UINT32(500, restored_newest_epoch(500, 0));
+  TEST_ASSERT_EQUAL_UINT32(500, restored_newest_epoch(500, 900));
+  // watermark moved back below the stored record by a clock set
+  TEST_ASSERT_EQUAL_UINT32(300, restored_newest_epoch(500, 300));
+}
+
+void test_set_clock_command_epoch() {
+  // written to the X Ultra 20 on 2026-10-05 22:04:22
+  const uint8_t cmd[] = {0x02, 0x01, 0x1A, 0x0A, 0x05, 0x16, 0x04, 0x16, 0x01, 0x10};
+  TEST_ASSERT_EQUAL_INT64(civil_to_epoch(2026, 10, 5, 22, 4, 22), set_clock_command_epoch(cmd, sizeof(cmd)));
+  TEST_ASSERT_EQUAL_INT64(0, set_clock_command_epoch(cmd, sizeof(cmd) - 1));
+  TEST_ASSERT_EQUAL_INT64(0, set_clock_command_epoch(nullptr, sizeof(cmd)));
+  const uint8_t other[] = {0x02, 0x02, 0x1A, 0x0A, 0x05, 0x16, 0x04, 0x16, 0x01, 0x10};
+  TEST_ASSERT_EQUAL_INT64(0, set_clock_command_epoch(other, sizeof(other)));
+}
+
+void test_settings_query_per_profile() {
+  const ProfileCmd *q = settings_query(PROFILE_TYPE_V20);
+  TEST_ASSERT_NOT_NULL(q);
+  TEST_ASSERT_EQUAL_UINT8(3, q->len);
+  TEST_ASSERT_EQUAL_HEX8(0x01, q->bytes[2]);
+  TEST_ASSERT_NOT_NULL(settings_query(PROFILE_TYPE1));
+  TEST_ASSERT_NULL(settings_query(PROFILE_UNKNOWN));
 }
 
 // === Coverage percent ===
@@ -1374,11 +1467,20 @@ void test_v20_inline_0307_real_frame() {
   TEST_ASSERT_FALSE(decode_inline_0307_v20(y3p_inline, sizeof(y3p_inline), &r));
 }
 
-void test_v20_inline_on_factory_clock_accepted() {
-  // read 2026-10-05 21:45:12 UTC+2 from the brush still on its UTC+8 clock
+void test_v20_inline_against_brush_clock() {
   SessionRecord r{};
   TEST_ASSERT_TRUE(decode_inline_0307_v20(V20_INLINE_0307, sizeof(V20_INLINE_0307), &r));
-  TEST_ASSERT_TRUE(accept_inline_record(session_record_epoch(r), 0, civil_to_epoch(2026, 10, 5, 21, 45, 12)));
+  // read 2026-10-05 21:45:12 UTC+2 while the brush clock said 03:46:31 (UTC+8)
+  SessionClocks const factory{.node_local = civil_to_epoch(2026, 10, 5, 21, 45, 12),
+                              .brush = civil_to_epoch(2026, 10, 6, 3, 46, 31)};
+  TEST_ASSERT_TRUE(accept_inline_record(r, 0, nullptr, factory));
+  // after the 22:04 set the brush cannot have written 02:39:37 yet
+  SessionClocks const set{.node_local = civil_to_epoch(2026, 10, 5, 23, 0, 0),
+                          .brush = civil_to_epoch(2026, 10, 5, 23, 0, 2)};
+  TEST_ASSERT_FALSE(accept_inline_record(r, 0, nullptr, set));
+  SessionClocks const morning{.node_local = civil_to_epoch(2026, 10, 6, 7, 0, 0),
+                              .brush = civil_to_epoch(2026, 10, 6, 7, 0, 2)};
+  TEST_ASSERT_TRUE(accept_inline_record(r, 0, nullptr, morning));
 }
 
 static std::vector<uint8_t> v20_record(size_t len, uint8_t hour, uint8_t minute, uint8_t mode, uint16_t program,
@@ -1592,17 +1694,38 @@ void test_session_epoch_clamps_out_of_range() {
 
 void test_session_epoch_plausible() {
   const int64_t now = 1780000000;  // 2026, same civil-as-UTC basis
-  TEST_ASSERT_FALSE(session_epoch_plausible(now + 7 * 86400, now, SESSION_FUTURE_MARGIN_S));
-  TEST_ASSERT_FALSE(session_epoch_plausible(now + 86400 + 1, now, SESSION_FUTURE_MARGIN_S));
+  SessionClocks const node = node_only(now);
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 7 * 86400, node));
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 86400 + 1, node));
   // UTC+8 factory clock read by a node in UTC+2 (+6 h) and in UTC-12 (+20 h)
-  TEST_ASSERT_TRUE(session_epoch_plausible(now + 6 * 3600, now, SESSION_FUTURE_MARGIN_S));
-  TEST_ASSERT_TRUE(session_epoch_plausible(now + 20 * 3600, now, SESSION_FUTURE_MARGIN_S));
+  TEST_ASSERT_TRUE(session_epoch_plausible(now + 6 * 3600, node));
+  TEST_ASSERT_TRUE(session_epoch_plausible(now + 20 * 3600, node));
   // Within the margin, exactly now, and any past date: plausible.
-  TEST_ASSERT_TRUE(session_epoch_plausible(now + 3600, now, SESSION_FUTURE_MARGIN_S));
-  TEST_ASSERT_TRUE(session_epoch_plausible((uint32_t)now, now, SESSION_FUTURE_MARGIN_S));
-  TEST_ASSERT_TRUE(session_epoch_plausible((uint32_t)(now - 100 * 86400), now, SESSION_FUTURE_MARGIN_S));
+  TEST_ASSERT_TRUE(session_epoch_plausible(now + 3600, node));
+  TEST_ASSERT_TRUE(session_epoch_plausible((uint32_t)now, node));
+  TEST_ASSERT_TRUE(session_epoch_plausible((uint32_t)(now - 100 * 86400), node));
   // No synced clock (now <= 0): cannot judge, so accept.
-  TEST_ASSERT_TRUE(session_epoch_plausible(now + 7 * 86400, 0, SESSION_FUTURE_MARGIN_S));
+  TEST_ASSERT_TRUE(session_epoch_plausible(now + 7 * 86400, node_only(0)));
+}
+
+void test_session_epoch_plausible_brush_clock() {
+  const int64_t now = 1780000000;
+  SessionClocks const ahead{.node_local = now, .brush = now + (6 * 3600)};
+  TEST_ASSERT_TRUE(session_epoch_plausible(now + 5 * 3600, ahead));
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 6 * 3600 + SESSION_BRUSH_CLOCK_MARGIN_S + 1, ahead));
+  // set to local time: a record still 6 h ahead predates the set
+  SessionClocks const set{.node_local = now, .brush = now};
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 6 * 3600, set));
+  TEST_ASSERT_TRUE(session_epoch_plausible(now + SESSION_BRUSH_CLOCK_MARGIN_S, set));
+  // a clock lost to 2000 judges nothing, the node bound still does
+  SessionClocks const lost{.node_local = now, .brush = civil_to_epoch(2000, 1, 1, 0, 0, 0)};
+  TEST_ASSERT_TRUE(session_epoch_plausible(now - 3600, lost));
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 2 * 86400, lost));
+  // a brush clock agreeing with a far date does not lift the node bound
+  SessionClocks const far{.node_local = now, .brush = now + (30 * 86400)};
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 29 * 86400, far));
+  SessionClocks const brush_only{.node_local = 0, .brush = now};
+  TEST_ASSERT_FALSE(session_epoch_plausible(now + 3600, brush_only));
 }
 
 void test_clamp_session_duration() {
@@ -1816,6 +1939,14 @@ int main() {
   RUN_TEST(test_plan_ingest_empty_ring_is_inert);
   RUN_TEST(test_accept_inline_only_when_strictly_newer);
   RUN_TEST(test_accept_inline_rejects_implausible_future);
+  RUN_TEST(test_accept_inline_never_republishes_the_shown_session);
+  RUN_TEST(test_plan_ingest_judges_by_brush_clock);
+  RUN_TEST(test_same_session_ignores_fields_a_head_lacks);
+  RUN_TEST(test_clock_set_shift_and_confirmation);
+  RUN_TEST(test_shift_epoch_back);
+  RUN_TEST(test_restored_newest_epoch);
+  RUN_TEST(test_set_clock_command_epoch);
+  RUN_TEST(test_settings_query_per_profile);
   RUN_TEST(test_coverage_percent_is_whole_and_bounded);
   RUN_TEST(test_coverage_percent_zero_duration_is_nan);
   RUN_TEST(test_poll_is_due_charging_uses_fast_interval);
@@ -1845,7 +1976,7 @@ int main() {
   RUN_TEST(test_v20_settings_real_frames);
   RUN_TEST(test_v20_settings_after_clock_write);
   RUN_TEST(test_v20_inline_0307_real_frame);
-  RUN_TEST(test_v20_inline_on_factory_clock_accepted);
+  RUN_TEST(test_v20_inline_against_brush_clock);
   RUN_TEST(test_v20_assembler_splits_length_prefixed_records);
   RUN_TEST(test_v20_assembler_header_cases);
   RUN_TEST(test_v20_assembler_stops_at_a_bad_length);
@@ -1860,6 +1991,7 @@ int main() {
 
   RUN_TEST(test_session_epoch_clamps_out_of_range);
   RUN_TEST(test_session_epoch_plausible);
+  RUN_TEST(test_session_epoch_plausible_brush_clock);
   RUN_TEST(test_clamp_session_duration);
   RUN_TEST(test_clamp_head_counter);
   RUN_TEST(test_clamp_clock_drift);

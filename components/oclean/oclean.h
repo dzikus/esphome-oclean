@@ -156,18 +156,11 @@ class OcleanHub : public ble_client::BLEClientNode,
   // bypasses the adaptive off-dock gate
   void trigger_immediate_poll();
 
-  // a clock write is rebuilt at flush time, so the queue carries the kind
-  // instead of switching on the log label
-  enum class WriteKind : uint8_t {
-    PLAIN,
-    CLOCK,
-  };
-
   // bytes are the whole command, opcode included; they flush at the start of the
   // next query window. name labels the log line and must outlive the queue entry
   // (a literal). False means nothing was queued (BLE off or queue full), so the
   // caller must skip its optimistic publish.
-  bool send_command(std::vector<uint8_t> bytes, const char *name, WriteKind kind = WriteKind::PLAIN);
+  bool send_command(std::vector<uint8_t> bytes, const char *name);
 
   // Warns and writes nothing until the local clock is synced. A mutation, so it
   // runs on a button press only, never on boot or a poll.
@@ -186,19 +179,29 @@ class OcleanHub : public ble_client::BLEClientNode,
   bool query_round_open_() const { return this->capture_active_ || this->round_setup_pending_(); }
   bool round_setup_pending_() const { return this->awaiting_model_ || this->round_starting_; }
 
-  // caller guarantees a valid local time; reason labels the log line
-  void queue_set_clock_(const char *reason);
-
-  // A queued sync-clock can wait a whole off-dock interval, so the flush path
-  // rebuilds the bytes here at write time rather than sending a stale sample.
+  // samples the local time, so it runs at the moment of the write
   bool build_clock_command_(std::vector<uint8_t> *out);
 
   // node offset, DST-aware; falls back to tz_index_ when it has no table entry
   uint8_t effective_tz_index_();
 
-  // No-op unless the drift exceeds the threshold, and never stacks a second
-  // write while one is queued.
+  // no-op unless the drift exceeds the threshold
   void maybe_auto_sync_clock_(const DeviceSettings &ds);
+
+  // The clock is set at the end of a round, after the session download: a ring
+  // read after the set was recorded before it, in the old time base. Needs this
+  // round's clock reading, since the shift it measures moves the watermark.
+  // False when nothing was written.
+  bool write_due_clock_();
+
+  // the watermark and the newest-record gate follow a set only once a settings
+  // read shows the brush took it
+  void confirm_clock_shift_(const DeviceSettings &ds);
+
+  SessionClocks session_clocks_();
+
+  // brings the link up, or runs a round on a held one, for queued work
+  void kick_link_();
 
   // reports drift even when auto-correction is off
   void publish_clock_drift_(const DeviceSettings &ds);
@@ -269,8 +272,11 @@ class OcleanHub : public ble_client::BLEClientNode,
   void disconnect_();
   void start_watchdog_();
 
+  // Both window-end paths land here: a due clock set and its readback run on
+  // the link first, then finish_or_hold_.
+  void end_query_window_(const char *reason);
   // Ends a query window: holds the link only while docked with BLE enabled,
-  // otherwise disconnects. Both window-end paths funnel through here.
+  // otherwise disconnects.
   void finish_or_hold_(const char *reason);
   void enter_hold_();
   // one re-query round on the live link, under a per-round watchdog
@@ -362,7 +368,6 @@ class OcleanHub : public ble_client::BLEClientNode,
   struct PendingWrite {
     std::vector<uint8_t> bytes;
     const char *name;
-    WriteKind kind;
   };
   std::vector<PendingWrite> pending_writes_{};
 
@@ -390,6 +395,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   esphome::ESPPreferenceObject session_last_pref_;
   // gates the inline fragment: a full record must never downgrade to a partial
   uint32_t newest_record_epoch_{0};
+  SessionRecord shown_session_{};
+  bool shown_session_valid_{false};
   // oldest-first, drained one per loop iteration
   std::vector<SessionRecord> pending_session_publish_{};
   std::vector<OcleanSessionTrigger *> session_triggers_{};
@@ -430,6 +437,11 @@ class OcleanHub : public ble_client::BLEClientNode,
 
   bool auto_sync_time_{false};
   uint32_t sync_drift_threshold_s_{120};
+  bool clock_sync_due_{false};
+  // this round's brush clock and the millis() it arrived at; 0 = not read
+  int64_t round_brush_clock_{0};
+  uint32_t round_brush_clock_ms_{0};
+  int64_t clock_shift_pending_s_{0};
 
   bool ble_user_enabled_{true};
 

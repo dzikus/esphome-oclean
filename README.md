@@ -523,7 +523,8 @@ Names you write yourself are never touched, in either direction.
 Each new session from the brush's ring buffer fires an `esphome.oclean_session`
 event (score, duration, valid duration, coverage, scheme, per-zone values,
 timestamp). A per-brush watermark stored in NVS prevents re-emitting old
-sessions across reboots.
+sessions across reboots. A session dated after the brush's own clock, as read
+in the same poll, is dropped: it was stamped before the clock was set back.
 
 The events need `homeassistant_services: true` under `api:` (it is off by
 default in ESPHome). Without it the firmware still builds and every entity
@@ -667,6 +668,11 @@ PlatformIO unit tests link against. Everything else needs the ESPHome runtime.
   download).
 - Pending writes queued by HA controls flush at the start of the query phase
   of the next connect; a write while idle raises the link immediately.
+- The clock is the exception: it is set at the end of the round, after the
+  session download, and read back on the same link. A ring read after the set
+  was stamped before it, in the old time base. When the set moved the clock
+  back, the session watermark moves back by the same amount once the readback
+  confirms it.
 - The link is dropped after a short hold (8 s normal poll, 30 s capture). A
   60 s whole-poll watchdog tears down a stuck cycle; a cycle killed before the
   GATT open retries at the next tick instead of waiting a full interval.
@@ -679,8 +685,8 @@ PlatformIO unit tests link against. Everything else needs the ESPHome runtime.
 
 Timings (from `oclean_protocol.h`): post-connect settle 800 ms, whole poll 60 s,
 boot stagger 90 s per hub, capture hold 30 s, poll hold 8 s, DIS cache 24 h,
-enrichment wait 2.5 s, queued-write spacing 300 ms, query spacing 500 ms,
-backfill publish spacing 1.5 s.
+enrichment wait 2.5 s, clock readback 2 s, queued-write spacing 300 ms, query
+spacing 500 ms, backfill publish spacing 1.5 s.
 
 ### Command set
 

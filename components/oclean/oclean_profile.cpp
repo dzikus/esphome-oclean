@@ -168,4 +168,15 @@ bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8
   return clock_write_permitted(read_only, profile) && len == SET_CLOCK_CMD_LEN && bytes[0] == 0x02 && bytes[1] == 0x01;
 }
 
+const ProfileCmd *settings_query(const OcleanProfile &profile) {
+  if (profile.settings_kind == SettingsKind::SETTINGS_NONE)
+    return nullptr;
+  for (uint8_t i = 0; i < profile.query_cmd_count; i++) {
+    const ProfileCmd &q = profile.query_cmds[i];
+    if (q.len >= 2 && q.bytes[0] == 0x03 && q.bytes[1] == 0x02)
+      return &q;
+  }
+  return nullptr;
+}
+
 }  // namespace esphome::oclean
