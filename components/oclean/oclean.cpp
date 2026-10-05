@@ -228,6 +228,9 @@ void OcleanHub::begin_connect_cycle_(bool stamp_cadence) {
   this->rx_session_handle_ = 0;
   this->tx_session_handle_ = 0;
   this->tx_main_handle_ = 0;
+  this->battery_cccd_ = 0;
+  this->rx_main_cccd_ = 0;
+  this->rx_session_cccd_ = 0;
   this->set_state_(State::CONNECTING);
   this->parent_->set_enabled(true);
   this->arm_cycle_(stamp_cadence);
@@ -257,7 +260,8 @@ void OcleanHub::disconnect_() {
   this->cancel_timeout("enrichment_wait");
   this->cancel_timeout("notify_reg_wait");
   this->awaiting_model_ = false;
-  this->notify_regs_pending_ = 0;
+  this->round_starting_ = false;
+  this->cccd_writes_pending_ = 0;
   // Leaving held mode on every disconnect path: cancel the re-query timer and
   // clear the flag so a torn-down link never leaves a zombie held timer running.
   this->clear_hold_();
@@ -322,7 +326,8 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
       this->cancel_timeout("enrichment_wait");
       this->cancel_timeout("notify_reg_wait");
       this->awaiting_model_ = false;
-      this->notify_regs_pending_ = 0;
+      this->round_starting_ = false;
+      this->cccd_writes_pending_ = 0;
       // A remote disconnect while holding (e.g. brush lifted off the dock and
       // dropped the link) must clear the held timer and flag so the next cycle
       // returns to normal adaptive cadence.
@@ -392,13 +397,18 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
         ESP_LOGW(TAG, "[%s] register_for_notify failed handle=0x%04X status=%d", this->parent_->address_str(),
                  param->reg_for_notify.handle, param->reg_for_notify.status);
       }
-      // the base client queues the CCCD write while handling this event, so
-      // the first query goes out one stagger after the last registration
-      if (this->notify_regs_pending_ > 0) {
-        this->notify_regs_pending_--;
-        if (this->notify_regs_pending_ == 0)
-          this->set_timeout("notify_reg_wait", QUERY_STAGGER_MS, [this]() { this->start_query_round_(); });
+      break;
+    }
+    case ESP_GATTC_WRITE_DESCR_EVT: {
+      if (this->cccd_writes_pending_ == 0)
+        break;
+      if (param->write.status != ESP_GATT_OK) {
+        ESP_LOGW(TAG, "[%s] CCCD 0x%04X write failed, status=%d", this->parent_->address_str(), param->write.handle,
+                 param->write.status);
       }
+      this->cccd_writes_pending_--;
+      if (this->cccd_writes_pending_ == 0)
+        this->set_timeout("notify_reg_wait", QUERY_STAGGER_MS, [this]() { this->start_query_round_(); });
       break;
     }
     case ESP_GATTC_READ_CHAR_EVT: {
@@ -503,6 +513,43 @@ void OcleanHub::resolve_handles_() {
   if (this->model_handle_ == 0) {
     this->got_model_ = true;
   }
+
+  // BLEClient releases the stack's GATT cache right after this event, so the
+  // descriptors are looked up now and written later by handle.
+  if (!this->profile_->skip_cccd_write || this->parent_->get_service(BLUFI_SERVICE_UUID16) != nullptr) {
+    this->battery_cccd_ = this->lookup_cccd_(this->battery_handle_);
+    this->rx_main_cccd_ = this->lookup_cccd_(this->rx_main_handle_);
+    this->rx_session_cccd_ = this->lookup_cccd_(this->rx_session_handle_);
+    ESP_LOGD(TAG, "[%s] cccd bat=0x%04X rx-main=0x%04X rx-session=0x%04X", this->parent_->address_str(),
+             this->battery_cccd_, this->rx_main_cccd_, this->rx_session_cccd_);
+  }
+}
+
+uint16_t OcleanHub::lookup_cccd_(uint16_t char_handle) {
+  if (char_handle == 0)
+    return 0;
+  esp_bt_uuid_t cccd_uuid{};
+  cccd_uuid.len = ESP_UUID_LEN_16;
+  cccd_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
+  esp_gattc_descr_elem_t descr{};
+  uint16_t count = 1;
+  if (esp_ble_gattc_get_descr_by_char_handle(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), char_handle,
+                                             cccd_uuid, &descr, &count) != ESP_GATT_OK ||
+      count == 0)
+    return 0;
+  return descr.handle;
+}
+
+bool OcleanHub::write_cccd_(uint16_t cccd_handle) {
+  uint8_t notify_on[] = {0x01, 0x00};
+  auto status =
+      esp_ble_gattc_write_char_descr(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), cccd_handle,
+                                     sizeof(notify_on), notify_on, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+  if (status != ESP_OK) {
+    ESP_LOGW(TAG, "[%s] CCCD 0x%04X write failed status=%d", this->parent_->address_str(), cccd_handle, status);
+    return false;
+  }
+  return true;
 }
 
 void OcleanHub::dump_gatt_map_() {
@@ -534,30 +581,34 @@ void OcleanHub::dump_gatt_map_() {
 void OcleanHub::begin_queries_() {
   if (this->state_ != State::POLLING)
     return;
-  bool const wait_for_cccd = !this->profile_->skip_cccd_write;
-  if (!wait_for_cccd) {
-    // The base client, on each register-for-notify completion, looks up the
-    // characteristic's config descriptor to auto-write the notify enable bit.
-    // On the validated brushes that descriptor list is malformed and the lookup
-    // can dereference a bad pointer and fault the task. The cache connection
-    // type makes the base client skip that lookup. Those brushes notify without
-    // a descriptor write, so nothing is lost. Reset on disconnect.
-    this->parent_->set_connection_type(espbt::ConnectionType::V3_WITH_CACHE);
+  // The base client enables notifications by walking the stack's GATT cache,
+  // which is released by now (an earlier walk at this point faulted the node on
+  // the validated brushes). The cache connection type keeps it off that path;
+  // the hub writes the CCCD itself where the profile needs it. Reset on
+  // disconnect.
+  this->parent_->set_connection_type(espbt::ConnectionType::V3_WITH_CACHE);
+  this->round_starting_ = true;
+  this->cccd_writes_pending_ = 0;
+  this->register_notify_handle_(this->battery_handle_, "battery");
+  this->register_notify_handle_(this->rx_main_handle_, "rx-main");
+  this->register_notify_handle_(this->rx_session_handle_, "rx-session");
+  if (!this->profile_->skip_cccd_write) {
+    for (uint16_t const cccd : {this->battery_cccd_, this->rx_main_cccd_, this->rx_session_cccd_}) {
+      if (cccd != 0 && this->write_cccd_(cccd))
+        this->cccd_writes_pending_++;
+    }
+    if (this->cccd_writes_pending_ == 0) {
+      ESP_LOGW(TAG, "[%s] profile %s wants the CCCD written but none was found", this->parent_->address_str(),
+               this->profile_->name);
+    }
   }
-  this->notify_regs_pending_ = 0;
-  if (this->register_notify_handle_(this->battery_handle_, "battery") && wait_for_cccd)
-    this->notify_regs_pending_++;
-  if (this->register_notify_handle_(this->rx_main_handle_, "rx-main") && wait_for_cccd)
-    this->notify_regs_pending_++;
-  if (this->register_notify_handle_(this->rx_session_handle_, "rx-session") && wait_for_cccd)
-    this->notify_regs_pending_++;
-  if (this->notify_regs_pending_ == 0) {
+  if (this->cccd_writes_pending_ == 0) {
     this->start_query_round_();
     return;
   }
   this->set_timeout("notify_reg_wait", NOTIFY_REG_TIMEOUT_MS, [this]() {
-    ESP_LOGW(TAG, "[%s] %u notify registration(s) unconfirmed, querying anyway", this->parent_->address_str(),
-             (unsigned)this->notify_regs_pending_);
+    ESP_LOGW(TAG, "[%s] %u CCCD write(s) unconfirmed, querying anyway", this->parent_->address_str(),
+             (unsigned)this->cccd_writes_pending_);
     this->start_query_round_();
   });
 }
@@ -571,7 +622,8 @@ void OcleanHub::model_read_finished_() {
 
 void OcleanHub::start_query_round_() {
   this->cancel_timeout("notify_reg_wait");
-  this->notify_regs_pending_ = 0;
+  this->round_starting_ = false;
+  this->cccd_writes_pending_ = 0;
   if (this->state_ != State::POLLING)
     return;
   this->query_device_(this->capture_armed_);

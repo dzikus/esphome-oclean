@@ -184,7 +184,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   // query window open or being set up: a record stream may be in flight, and a
   // second round would reset the assemblers mid-transfer
   bool query_round_open_() const { return this->capture_active_ || this->round_setup_pending_(); }
-  bool round_setup_pending_() const { return this->awaiting_model_ || this->notify_regs_pending_ > 0; }
+  bool round_setup_pending_() const { return this->awaiting_model_ || this->round_starting_; }
 
   // caller guarantees a valid local time; reason labels the log line
   void queue_set_clock_(const char *reason);
@@ -224,6 +224,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   // must run inside SEARCH_CMPL: a deferred characteristic lookup returns
   // nullptr for everything
   void resolve_handles_();
+  uint16_t lookup_cccd_(uint16_t char_handle);
+  bool write_cccd_(uint16_t cccd_handle);
   void dump_gatt_map_();
   // runs once the profile is known: the connection type it picks has to be set
   // before the first register-for-notify
@@ -330,6 +332,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   uint16_t rx_session_handle_{0};
   uint16_t tx_session_handle_{0};
   uint16_t tx_main_handle_{0};
+  uint16_t battery_cccd_{0};
+  uint16_t rx_main_cccd_{0};
+  uint16_t rx_session_cccd_{0};
 
   // Per-cycle completion tracking. The poll is done once battery and DIS model
   // have been read (or their reads have failed) so the link can drop early.
@@ -341,7 +346,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   uint32_t last_dis_read_ms_{0};
 
   bool awaiting_model_{false};
-  uint8_t notify_regs_pending_{0};
+  bool round_starting_{false};
+  uint8_t cccd_writes_pending_{0};
 
   struct PendingWrite {
     std::vector<uint8_t> bytes;

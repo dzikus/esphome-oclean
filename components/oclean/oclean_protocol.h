@@ -27,6 +27,7 @@ static constexpr uint16_t DIS_MODEL_UUID16 = 0x2A24;
 static constexpr uint16_t DIS_FW_REV_UUID16 = 0x2A26;
 static constexpr uint16_t DIS_HW_REV_UUID16 = 0x2A27;
 static constexpr uint16_t DIS_SW_REV_UUID16 = 0x2A28;
+static constexpr uint16_t BLUFI_SERVICE_UUID16 = 0xFFFF;
 
 std::string dis_printable_text(const uint8_t *data, size_t len);
 
