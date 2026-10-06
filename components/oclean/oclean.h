@@ -127,6 +127,18 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_splash_prevent_binary_sensor(binary_sensor::BinarySensor *s) { this->splash_prevent_binary_sensor_ = s; }
   void set_fill_brush_binary_sensor(binary_sensor::BinarySensor *s) { this->fill_brush_binary_sensor_ = s; }
   void set_auto_mode_binary_sensor(binary_sensor::BinarySensor *s) { this->auto_mode_binary_sensor_ = s; }
+  // X Ultra 20 start-region flags; other models never publish them
+  void set_voice_prompts_binary_sensor(binary_sensor::BinarySensor *s) { this->voice_prompts_binary_sensor_ = s; }
+  void set_voice_zone_change_binary_sensor(binary_sensor::BinarySensor *s) {
+    this->voice_zone_change_binary_sensor_ = s;
+  }
+  void set_voice_pressure_binary_sensor(binary_sensor::BinarySensor *s) { this->voice_pressure_binary_sensor_ = s; }
+  void set_festival_reminder_binary_sensor(binary_sensor::BinarySensor *s) {
+    this->festival_reminder_binary_sensor_ = s;
+  }
+  void set_auto_update_binary_sensor(binary_sensor::BinarySensor *s) { this->auto_update_binary_sensor_ = s; }
+  void set_network_binary_sensor(binary_sensor::BinarySensor *s) { this->network_binary_sensor_ = s; }
+  void set_device_mode_sensor(sensor::Sensor *s) { this->device_mode_sensor_ = s; }
 
   // Settings-buffer scalar fields (raw indices and a usage counter).
   void set_device_theme_sensor(sensor::Sensor *s) { this->device_theme_sensor_ = s; }
@@ -320,6 +332,13 @@ class OcleanHub : public ble_client::BLEClientNode,
   binary_sensor::BinarySensor *splash_prevent_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *fill_brush_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *auto_mode_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *voice_prompts_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *voice_zone_change_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *voice_pressure_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *festival_reminder_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *auto_update_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *network_binary_sensor_{nullptr};
+  sensor::Sensor *device_mode_sensor_{nullptr};
   sensor::Sensor *device_theme_sensor_{nullptr};
   sensor::Sensor *volume_index_sensor_{nullptr};
   sensor::Sensor *head_used_time_sensor_{nullptr};

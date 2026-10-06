@@ -22,9 +22,9 @@ from . import (
     inject_entity_defaults,
 )
 
-# Raw settings indices with no use on the owned brushes: created only on hubs
-# with expose_dev_sensors.
-DEV_SENSOR_KEYS = frozenset({"volume_index"})
+# Raw settings indices with no use on the owned brushes, and the X Ultra 20
+# built-in mode: created only on hubs with expose_dev_sensors.
+DEV_SENSOR_KEYS = frozenset({"volume_index", "device_mode"})
 
 DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
@@ -136,6 +136,17 @@ SENSORS = [
         "mdi:volume-high",
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Volume index",
+    ),
+    (
+        "device_mode",
+        "set_device_mode_sensor",
+        UNIT_EMPTY,
+        0,
+        None,
+        None,
+        "mdi:toothbrush-electric",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Device mode",
     ),
     # unitless on purpose: the unit is unconfirmed, and total-increasing still
     # gives long-term statistics with the head reset absorbed as a counter reset

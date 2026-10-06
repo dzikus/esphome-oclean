@@ -129,11 +129,13 @@ entity.
 
 - 18 sensors always on: battery, last-session score / duration / valid
   duration / coverage, 8 per-zone gesture values, brush-head used days /
-  sessions / used time, device theme, clock drift. 1 dev sensor: volume index.
-  (device theme, head used time and clock drift are hidden by default.)
+  sessions / used time, device theme, clock drift. 2 dev sensors: volume
+  index, X Ultra 20 device mode. (device theme, head used time and clock drift
+  are hidden by default.)
 - 4 binary sensors always on: charging, docked, BLE connected (hidden),
-  auto mode (hidden). 4 dev binary sensors: volume / calendar / splash
-  prevention / fill brush readbacks.
+  auto mode (hidden). 10 dev binary sensors: volume / calendar / splash
+  prevention / fill brush readbacks, and six X Ultra 20 flags (three voice
+  prompt switches, holiday reminder, auto update, network).
 - 9 text sensors always on: last session, last session mode, device clock,
   hardware revision, software version, last seen, timezone, MAC address, model
   (the last six hidden).
@@ -271,6 +273,7 @@ entity). "Dev" rows exist only on hubs with `expose_dev_sensors: true`.
 | `head_used_time` | Brush head used time | settings buffer 14-15 BE | hidden; unit unconfirmed |
 | `device_theme` | Device theme | settings buffer 0 | hidden; raw index |
 | `volume_index` | Volume index | settings buffer 9 | **dev**; hidden; raw index |
+| `device_mode` | Device mode | settings buffer 11 | **dev**; X Ultra 20 only; built-in mode 1-5 |
 
 The last decoded session survives reboots: the newest record is persisted in
 NVS per hub and re-published on boot.
@@ -287,6 +290,12 @@ NVS per hub and re-published on boot.
 | `calendar_enabled` | Calendar enabled | settings buffer 10 (inverted) | **dev** |
 | `splash_prevent` | Splash prevention | settings buffer 13 | **dev** |
 | `fill_brush` | Fill brush | settings buffer 3 | **dev**; read-only (write opcode rejected) |
+| `voice_prompts` | Voice prompts | settings buffer 7 | **dev**; X Ultra 20 only |
+| `voice_zone_change` | Voice on zone change | settings buffer 8 | **dev**; X Ultra 20 only |
+| `voice_pressure` | Voice on over-pressure | settings buffer 9 | **dev**; X Ultra 20 only |
+| `festival_reminder` | Holiday reminder | settings buffer 10 | **dev**; X Ultra 20 only |
+| `auto_update` | Auto update | settings buffer 3 | **dev**; X Ultra 20 only |
+| `network` | Network | settings buffer 1 | **dev**; X Ultra 20 only; on when the buffer byte is non-zero |
 
 ### Entities (text_sensor)
 

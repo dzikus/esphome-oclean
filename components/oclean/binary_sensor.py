@@ -16,10 +16,22 @@ from . import (
     inject_entity_defaults,
 )
 
-# Settings readbacks with no observable effect on the owned brushes: created
-# only on hubs with expose_dev_sensors.
+# Settings readbacks with no observable effect on the owned brushes, and the
+# X Ultra 20 flags that other models never fill: created only on hubs with
+# expose_dev_sensors.
 DEV_BINARY_SENSOR_KEYS = frozenset(
-    {"volume_enabled", "calendar_enabled", "splash_prevent", "fill_brush"}
+    {
+        "volume_enabled",
+        "calendar_enabled",
+        "splash_prevent",
+        "fill_brush",
+        "voice_prompts",
+        "voice_zone_change",
+        "voice_pressure",
+        "festival_reminder",
+        "auto_update",
+        "network",
+    }
 )
 
 DEPENDENCIES = ["oclean"]
@@ -104,6 +116,54 @@ BINARY_SENSORS = [
         "mdi:autorenew",
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Auto mode",
+    ),
+    (
+        "voice_prompts",
+        "set_voice_prompts_binary_sensor",
+        None,
+        "mdi:account-voice",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Voice prompts",
+    ),
+    (
+        "voice_zone_change",
+        "set_voice_zone_change_binary_sensor",
+        None,
+        "mdi:swap-horizontal",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Voice on zone change",
+    ),
+    (
+        "voice_pressure",
+        "set_voice_pressure_binary_sensor",
+        None,
+        "mdi:gauge",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Voice on over-pressure",
+    ),
+    (
+        "festival_reminder",
+        "set_festival_reminder_binary_sensor",
+        None,
+        "mdi:party-popper",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Holiday reminder",
+    ),
+    (
+        "auto_update",
+        "set_auto_update_binary_sensor",
+        None,
+        "mdi:update",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Auto update",
+    ),
+    (
+        "network",
+        "set_network_binary_sensor",
+        DEVICE_CLASS_CONNECTIVITY,
+        None,
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Network",
     ),
 ]
 

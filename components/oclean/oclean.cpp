@@ -1509,6 +1509,13 @@ void OcleanHub::publish_v20_start_settings_(const uint8_t *buf) {
 #endif
   esphome::oclean::OcleanHub::publish_(this->auto_mode_binary_sensor_, s.auto_mode);
   esphome::oclean::OcleanHub::publish_(this->head_used_time_sensor_, (float)clamp_head_counter(s.head_used_time));
+  esphome::oclean::OcleanHub::publish_(this->voice_prompts_binary_sensor_, s.voice);
+  esphome::oclean::OcleanHub::publish_(this->voice_zone_change_binary_sensor_, s.voice_zone_change);
+  esphome::oclean::OcleanHub::publish_(this->voice_pressure_binary_sensor_, s.voice_pressure);
+  esphome::oclean::OcleanHub::publish_(this->festival_reminder_binary_sensor_, s.festival_reminder);
+  esphome::oclean::OcleanHub::publish_(this->auto_update_binary_sensor_, s.auto_update);
+  esphome::oclean::OcleanHub::publish_(this->network_binary_sensor_, s.network_status != 0);
+  esphome::oclean::OcleanHub::publish_(this->device_mode_sensor_, (float)s.mode);
 }
 
 void OcleanHub::maybe_finish_poll_() {
