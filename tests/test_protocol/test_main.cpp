@@ -691,7 +691,7 @@ void test_timezone_index_to_string() {
 }
 
 void test_tz_index_for_offset_seconds() {
-  // Exact match returns the 1-based wire index; CET/CEST are the Poland cases.
+  // Exact match returns the 1-based wire index.
   TEST_ASSERT_EQUAL_UINT8(15, tz_index_for_offset_seconds(3600));
   TEST_ASSERT_EQUAL_UINT8(16, tz_index_for_offset_seconds(7200));
   TEST_ASSERT_EQUAL_UINT8(14, tz_index_for_offset_seconds(0));
@@ -709,7 +709,7 @@ void test_tz_index_for_offset_seconds() {
 // === Set-clock builder (0201) ===
 
 void test_build_set_clock_summer() {
-  // 2026-06-05 16:37:14, Friday (weekday 5), CEST (tz_index 15). Every field is
+  // 2026-06-05 16:37:14, Friday (weekday 5), tz_index 15 (UTC+1). Every field is
   // decimal, not BCD: minute 37 -> 0x25, second 14 -> 0x0E.
   auto cmd = build_set_clock_command(2026, 6, 5, 16, 37, 14, 5, 15);
   const uint8_t expected[] = {0x02, 0x01, 0x1A, 0x06, 0x05, 0x10, 0x25, 0x0E, 0x05, 0x0F};
@@ -718,7 +718,7 @@ void test_build_set_clock_summer() {
 }
 
 void test_build_set_clock_winter_sunday_midnight_fields() {
-  // 2026-01-04 09:03:00, Sunday (weekday 0), CET (tz_index 14). Exercises the
+  // 2026-01-04 09:03:00, Sunday (weekday 0), tz_index 14 (UTC+0). Exercises the
   // zero weekday and a zero second so no field is mistaken for BCD.
   auto cmd = build_set_clock_command(2026, 1, 4, 9, 3, 0, 0, 14);
   const uint8_t expected[] = {0x02, 0x01, 0x1A, 0x01, 0x04, 0x09, 0x03, 0x00, 0x00, 0x0E};
