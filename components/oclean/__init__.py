@@ -129,6 +129,9 @@ MODEL_ENTITY_DEFAULTS = {
         "switch": {
             "area_reminder": ("Voice on zone change", "mdi:swap-horizontal"),
         },
+        "select": {
+            "device_language": ("Language", None),
+        },
     },
 }
 

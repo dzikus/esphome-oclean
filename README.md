@@ -161,7 +161,8 @@ X Ultra 20 (`model: x_ultra_20`):
   `area_reminder` key), auto mode, holiday reminder, voice prompts, voice on
   fast brushing, voice on over-pressure, bluetooth.
 - 1 number: head replacement days.
-- 1 select: display language.
+- 1 select: language (the `device_language` key), which also sets the voice
+  prompt language.
 - 3 buttons as above, 1 dev button: capture sessions.
 
 The brushing mode stays read-only on the X Ultra 20. Its two mode writes
@@ -373,7 +374,7 @@ boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 | Key | Default name | Options | Notes |
 |---|---|---|---|
 | `brush_scheme` | Brushing mode | 19 presets + named `custom_modes` + "Custom" | X Pro Elite only; writes the full per-step program (`02 06` / `02 0B`); current option read back from settings buffer 11 |
-| `device_language` | Display language | 17 languages | writes `02 16` + language id; readback from settings buffer 31 |
+| `device_language` | Display language | 17 languages | writes `02 16` + language id; readback from settings buffer 31. On the X Ultra 20 it is named Language: the same write also switches the voice prompts |
 
 Preset options are labelled "name (duration)", e.g. "Quick cleaning (1m20s)".
 Named custom modes are declared under the select:
@@ -750,7 +751,7 @@ characteristic; rejected opcodes return a one-byte `02` stub.
 | `02 0F` | reset brush-head counter |
 | `02 17` + 2B BE | head replacement days |
 | `02 06` / `02 0B` | brushing-scheme program (split frames) |
-| `02 16` + 1B | display language id |
+| `02 16` + 1B | display language id (X Ultra 20: also the voice prompt language) |
 | `02 0D` / `02 12` / `02 22` / `02 23` / `02 09` + 1B | config toggles (area reminder, over-pressure, brush pause, raise wake, brush mode; brush-mode off byte is `EC`) |
 | `02 25` / `02 28` + 1B | X Ultra 20: auto mode, holiday reminder |
 | `02 31` + 4B | X Ultra 20: voice prompts, `[main][fast brushing][over-pressure][00]` in one frame; the zone-change prompt is `02 0D` |
