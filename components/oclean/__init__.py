@@ -8,6 +8,7 @@ from esphome.components import ble_client, time
 from esphome.const import (
     CONF_DEVICE_ID,
     CONF_DISABLED_BY_DEFAULT,
+    CONF_ICON,
     CONF_ID,
     CONF_NAME,
     CONF_TIME_ID,
@@ -94,7 +95,7 @@ MODEL_ENTITY_SETS = {
                     "auto_mode",
                     "festival_reminder",
                     "voice_prompts",
-                    "voice_zone_change",
+                    "voice_fast_brushing",
                     "voice_pressure",
                 }
             ),
@@ -119,6 +120,14 @@ MODEL_ENTITY_SETS = {
         },
         "dev": {
             "button": frozenset({"capture_sessions"}),
+        },
+    },
+}
+
+MODEL_ENTITY_DEFAULTS = {
+    MODEL_X_ULTRA_20: {
+        "switch": {
+            "area_reminder": ("Voice on zone change", "mdi:swap-horizontal"),
         },
     },
 }
@@ -265,6 +274,7 @@ def inject_entity_defaults(
     prefix = entity_name_prefix(hub_id)
     model = raw_hub_model(hub_id)
     unavailable = MODEL_ENTITY_SETS[model]["unavailable"].get(platform, frozenset())
+    overrides = MODEL_ENTITY_DEFAULTS.get(model, {}).get(platform, {})
     for key, default_name in rows:
         want = config.get(key, ...)
         if key in unavailable:
@@ -291,9 +301,10 @@ def inject_entity_defaults(
                 path=[key],
             )
         sub = dict(sub)
-        sub.setdefault(
-            CONF_NAME, f"{prefix} {default_name}" if prefix else default_name
-        )
+        name, icon = overrides.get(key, (default_name, None))
+        sub.setdefault(CONF_NAME, f"{prefix} {name}" if prefix else name)
+        if icon is not None:
+            sub.setdefault(CONF_ICON, icon)
         if platform_device is not None and CONF_DEVICE_ID not in sub:
             sub[CONF_DEVICE_ID] = platform_device
         if key in hidden:

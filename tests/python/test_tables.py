@@ -101,6 +101,31 @@ class ModelEntitySets(unittest.TestCase):
         self.assertIn("auto_mode", ultra["binary_sensor"])
 
 
+class ModelEntityDefaults(unittest.TestCase):
+    def test_overridden_rows_exist_and_are_built_on_that_model(self):
+        for model, platforms in oc.MODEL_ENTITY_DEFAULTS.items():
+            sets = oc.MODEL_ENTITY_SETS[model]
+            for platform, rows in platforms.items():
+                keys = {key for key, _n in PLATFORMS[platform]._DEFAULT_NAMES}
+                missing = sets["unavailable"].get(platform, frozenset())
+                for key in rows:
+                    self.assertIn(key, keys, f"{model}.{platform}.{key}")
+                    self.assertNotIn(key, missing, f"{model}.{platform}.{key}")
+
+    def test_names_stay_unique_on_each_model(self):
+        for model, sets in oc.MODEL_ENTITY_SETS.items():
+            overrides = oc.MODEL_ENTITY_DEFAULTS.get(model, {})
+            for platform, mod in PLATFORMS.items():
+                missing = sets["unavailable"].get(platform, frozenset())
+                rows = overrides.get(platform, {})
+                names = [
+                    rows.get(key, (name, None))[0]
+                    for key, name in mod._DEFAULT_NAMES
+                    if key not in missing
+                ]
+                self.assertEqual(len(names), len(set(names)), f"{model}.{platform}")
+
+
 class VoiceSwitches(unittest.TestCase):
     def test_indexes_cover_the_three_flags_once(self):
         indexes = sorted(index for _key, index, *_row in ocsw.VOICE_SWITCHES)

@@ -1507,14 +1507,14 @@ void OcleanHub::publish_v20_start_settings_(const uint8_t *buf) {
   parse_device_settings_v20_start(buf, &s);
   ESP_LOGI(TAG,
            "[%s] settings: battery=%u%% mode=%u mode_num=%u scheme_type=%u brush_mode=%s raise_wake=%s auto=%s "
-           "voice=%s voice_zone=%s voice_pressure=%s festival=%s auto_update=%s network=%u bus=%u",
+           "voice=%s voice_fast=%s voice_pressure=%s festival=%s auto_update=%s network=%u bus=%u",
            this->parent_->address_str(), s.battery, s.mode, s.mode_num, s.scheme_type, ONOFF(s.brush_mode_on),
-           ONOFF(s.raise_wake), ONOFF(s.auto_mode), ONOFF(s.voice), ONOFF(s.voice_zone_change), ONOFF(s.voice_pressure),
-           ONOFF(s.festival_reminder), ONOFF(s.auto_update), s.network_status, s.bus_brushing);
+           ONOFF(s.raise_wake), ONOFF(s.auto_mode), ONOFF(s.voice), ONOFF(s.voice_fast_brushing),
+           ONOFF(s.voice_pressure), ONOFF(s.festival_reminder), ONOFF(s.auto_update), s.network_status, s.bus_brushing);
   if (s.battery <= 100)
     esphome::oclean::OcleanHub::publish_(this->battery_sensor_, (float)s.battery);
   this->voice_prompts_[0] = s.voice;
-  this->voice_prompts_[1] = s.voice_zone_change;
+  this->voice_prompts_[1] = s.voice_fast_brushing;
   this->voice_prompts_[2] = s.voice_pressure;
   this->voice_prompts_known_ = true;
 #ifdef USE_SWITCH

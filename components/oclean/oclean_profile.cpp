@@ -218,13 +218,16 @@ bool clock_write_permitted(bool read_only, const OcleanProfile &profile) {
   return !read_only && (profile.allows_writes || profile.allows_clock_write);
 }
 
+static constexpr uint8_t READ_CATEGORY = 0x03;
+
 bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8_t *bytes, size_t len) {
   if (bytes == nullptr || len == 0)
     return false;
   for (uint8_t i = 0; i < profile.query_cmd_count; i++) {
     const ProfileCmd &q = profile.query_cmds[i];
-    if (q.len == len && memcmp(q.bytes, bytes, len) == 0)
-      return true;
+    if (q.len != len || memcmp(q.bytes, bytes, len) != 0)
+      continue;
+    return !read_only || bytes[0] == READ_CATEGORY;
   }
   if (read_only)
     return false;

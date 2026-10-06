@@ -157,9 +157,9 @@ X Ultra 20 (`model: x_ultra_20`):
 - 9 binary sensors: charging, docked, BLE connected (hidden), voice teaching,
   Wi-Fi provisioned, zone guidance, retail display mode, auto update, network.
 - 9 text sensors, as above.
-- 9 switches: over-pressure alert, raise to wake, area reminder, auto mode,
-  holiday reminder, voice prompts, voice on zone change, voice on
-  over-pressure, bluetooth.
+- 9 switches: over-pressure alert, raise to wake, voice on zone change (the
+  `area_reminder` key), auto mode, holiday reminder, voice prompts, voice on
+  fast brushing, voice on over-pressure, bluetooth.
 - 1 number: head replacement days.
 - 1 select: display language.
 - 3 buttons as above, 1 dev button: capture sessions.
@@ -267,7 +267,7 @@ Set on the `oclean:` entry, not on the platforms.
 | `auto_sync_time` | bool | on when `time_id` is set, off otherwise | Resync the brush clock during a poll when it has drifted past `sync_drift_threshold`. Explicit `true` without `time_id` fails validation. |
 | `sync_drift_threshold` | time | `120s` | Drift that triggers an auto resync. `0s` resyncs whenever the clocks differ by at least one second. |
 | `expose_dev_sensors` | bool | `false` | Creates the dev entities of the hub's model (see the per-platform tables) and logs the brush's GATT services and characteristics on each connect. |
-| `read_only` | bool | `false` | The brush only receives the profile's read queries. Every write is refused and logged: controls, clock sync, `0202`. |
+| `read_only` | bool | `false` | The brush only receives the profile's `03` read queries; the X Ultra 20's Wi-Fi check `02 34` is held back too. Every write is refused and logged: controls, clock sync, `0202`. |
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
 
 The brushing-mode select additionally accepts `custom_modes` (a list of named
@@ -351,13 +351,13 @@ boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 | `over_pressure` | Over-pressure alert | `02 12` + 01/00 | readback at settings buffer 22 |
 | `raise_wake` | Raise to wake | `02 23` + 01/00 | readback at settings buffer 2 |
 | `bluetooth` | Bluetooth | local only | master switch for the BLE link; OFF drops pending writes and tears the link down; `RESTORE_DEFAULT_ON` so a reboot never leaves the brush silently unreachable |
-| `area_reminder` | Area reminder | `02 0D` + 01/00 | **dev** on the X Pro Elite, where it has no observable effect |
+| `area_reminder` | Area reminder | `02 0D` + 01/00 | **dev** on the X Pro Elite, where it has no observable effect. On the X Ultra 20 it is named Voice on zone change: it picks the cue at each 30 s zone change, a short motor stutter when off and a spoken prompt when on (only with voice prompts on); readback at settings buffer 23 |
 | `brush_pause` | Brush pause | `02 22` + 01/00 | X Pro Elite only; **dev** |
 | `brush_mode` | Brush mode | `02 09` + 01/EC | X Pro Elite only; **dev**; off byte is the 0xEC sentinel, not 0x00 |
 | `auto_mode` | Auto mode | `02 25` + 01/00 | X Ultra 20 only; readback at settings buffer 4 |
 | `festival_reminder` | Holiday reminder | `02 28` + 01/00 | X Ultra 20 only; readback at settings buffer 10 |
 | `voice_prompts` | Voice prompts | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 7 |
-| `voice_zone_change` | Voice on zone change | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 8 |
+| `voice_fast_brushing` | Voice on fast brushing | `02 31` + 4B | X Ultra 20 only; the prompt that warns of brushing too fast; readback at settings buffer 8 |
 | `voice_pressure` | Voice on over-pressure | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 9; the frame carries all three voice flags, so each switch resends the other two as last read |
 
 ### Entities (number)
@@ -753,9 +753,9 @@ characteristic; rejected opcodes return a one-byte `02` stub.
 | `02 16` + 1B | display language id |
 | `02 0D` / `02 12` / `02 22` / `02 23` / `02 09` + 1B | config toggles (area reminder, over-pressure, brush pause, raise wake, brush mode; brush-mode off byte is `EC`) |
 | `02 25` / `02 28` + 1B | X Ultra 20: auto mode, holiday reminder |
-| `02 31` + 4B | X Ultra 20: voice prompts, `[main][zone change][over-pressure][00]` in one frame |
+| `02 31` + 4B | X Ultra 20: voice prompts, `[main][fast brushing][over-pressure][00]` in one frame; the zone-change prompt is `02 0D` |
 | `03 14` / `03 16` / `03 A0` | X Ultra 20 reads: running state, zone guidance, retail display mode; reply `<op> <status> 4F 4B` |
-| `02 34` | X Ultra 20 read: Wi-Fi provisioned (status 1), same reply shape |
+| `02 34` | X Ultra 20 read: Wi-Fi provisioned (status 1), same reply shape; not sent by a `read_only` hub |
 
 ### Settings buffer (34 bytes)
 
@@ -820,7 +820,6 @@ program length, without the brushed time.
 | 8 | 1 | mode (the brush's own modes, not the cloud scheme ids) |
 | 9-10 | 2 BE | program length (s) |
 | 11-12 | 2 BE | brushed time (s) |
-| 13-17 | 5 | pressure ratios |
 | 28 | 1 | score 0-100 (`0xFF` = none) |
 
 The zone bytes are not mapped, so `model: x_ultra_20` has no zone sensors.

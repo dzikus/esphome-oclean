@@ -222,7 +222,7 @@ void parse_device_settings_v20_start(const uint8_t *buf, DeviceSettingsV20Start 
   out->mode_num = buf[5];
   out->bus_brushing = buf[6];
   out->voice = buf[7] != 0;
-  out->voice_zone_change = buf[8] != 0;
+  out->voice_fast_brushing = buf[8] != 0;
   out->voice_pressure = buf[9] != 0;
   out->festival_reminder = buf[10] != 0;
   out->mode = buf[11];
@@ -599,8 +599,6 @@ bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *ou
     return false;
   decode_v20_head(rec, out);
   out->valid_duration_s = u16be(rec + 11);
-  for (size_t i = 0; i < 5; i++)
-    out->areas[i] = rec[13 + i];
   out->score = rec[SESSION_V20_SCORE_OFFSET];
   out->has_score = out->score != SESSION_NO_SCORE;
   return true;

@@ -192,6 +192,37 @@ class InjectPerModel(RawConfigCase):
         self.assertIn("fill_brush", out)
 
 
+SWITCH_ROWS = [
+    ("area_reminder", "Area reminder"),
+    ("over_pressure", "Over-pressure alert"),
+]
+
+
+class InjectModelDefaults(RawConfigCase):
+    def _inject(self, config):
+        return oc.inject_entity_defaults(config, SWITCH_ROWS, platform="switch")
+
+    def test_x_ultra_20_names_the_zone_cue_after_what_it_does(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20", "name_prefix": "X20"})
+        out = self._inject({"oclean_id": "hub_a"})
+        self.assertEqual(out["area_reminder"]["name"], "X20 Voice on zone change")
+        self.assertEqual(out["area_reminder"]["icon"], "mdi:swap-horizontal")
+        self.assertEqual(out["over_pressure"]["name"], "X20 Over-pressure alert")
+        self.assertNotIn("icon", out["over_pressure"])
+
+    def test_x_pro_elite_keeps_the_shared_default(self):
+        self.set_hubs({"id": "hub_a"})
+        out = self._inject({"oclean_id": "hub_a"})
+        self.assertEqual(out["area_reminder"]["name"], "Area reminder")
+        self.assertNotIn("icon", out["area_reminder"])
+
+    def test_name_and_icon_from_yaml_win(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        mine = {"name": "Zone voice", "icon": "mdi:bell"}
+        out = self._inject({"oclean_id": "hub_a", "area_reminder": mine})
+        self.assertEqual(out["area_reminder"], mine)
+
+
 class HubBuilds(unittest.TestCase):
     """The dev gate, resolved off the validated config in to_code."""
 

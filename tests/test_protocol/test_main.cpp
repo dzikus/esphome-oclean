@@ -1434,11 +1434,12 @@ void test_command_permitted_v20_passes_only_listed_writes() {
   TEST_ASSERT_FALSE(command_permitted(true, p, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
 }
 
-void test_command_permitted_v20_extra_reads_pass_read_only() {
+void test_command_permitted_v20_extra_reads() {
   const uint8_t wifi_check[] = {0x02, 0x34};
   const uint8_t running[] = {0x03, 0x14};
-  TEST_ASSERT_TRUE(command_permitted(true, PROFILE_TYPE_V20, wifi_check, sizeof(wifi_check)));
   TEST_ASSERT_TRUE(command_permitted(true, PROFILE_TYPE_V20, running, sizeof(running)));
+  TEST_ASSERT_FALSE(command_permitted(true, PROFILE_TYPE_V20, wifi_check, sizeof(wifi_check)));
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE_V20, wifi_check, sizeof(wifi_check)));
   TEST_ASSERT_FALSE(command_permitted(true, PROFILE_TYPE1, wifi_check, sizeof(wifi_check)));
 }
 
@@ -1489,7 +1490,7 @@ void test_v20_settings_real_frames() {
   TEST_ASSERT_FALSE(start.auto_mode);
   TEST_ASSERT_EQUAL_UINT8(5, start.mode_num);
   TEST_ASSERT_TRUE(start.voice);
-  TEST_ASSERT_TRUE(start.voice_zone_change);
+  TEST_ASSERT_TRUE(start.voice_fast_brushing);
   TEST_ASSERT_TRUE(start.voice_pressure);
   TEST_ASSERT_TRUE(start.festival_reminder);
   TEST_ASSERT_EQUAL_UINT8(5, start.mode);
@@ -1575,9 +1576,9 @@ static std::vector<uint8_t> v20_record(size_t len, uint8_t hour, uint8_t minute,
   r[10] = static_cast<uint8_t>(program);
   r[11] = static_cast<uint8_t>(brushed >> 8);
   r[12] = static_cast<uint8_t>(brushed);
-  const uint8_t ratios[] = {10, 20, 70, 0, 0, 0, 0x10};
-  for (size_t i = 0; i < sizeof(ratios); i++)
-    r[13 + i] = ratios[i];
+  const uint8_t unread[] = {10, 20, 70, 0, 0, 0, 0x10};
+  for (size_t i = 0; i < sizeof(unread); i++)
+    r[13 + i] = unread[i];
   r[SESSION_V20_SCORE_OFFSET] = score;
   return r;
 }
@@ -1607,7 +1608,7 @@ void test_v20_assembler_splits_length_prefixed_records() {
   TEST_ASSERT_EQUAL_UINT8(3, r.scheme);
   TEST_ASSERT_EQUAL_UINT16(120, r.duration_s);
   TEST_ASSERT_EQUAL_UINT16(20, r.valid_duration_s);
-  TEST_ASSERT_EQUAL_UINT8(10, r.areas[0]);
+  TEST_ASSERT_EQUAL_UINT8(0, r.areas[0]);
   TEST_ASSERT_EQUAL_UINT8(SESSION_ZONE_ABSENT, r.zones[7]);
   TEST_ASSERT_EQUAL_INT(1, s.newest_index());
   size_t raw_len = 0;
@@ -2053,7 +2054,7 @@ int main() {
   RUN_TEST(test_clock_write_permitted);
   RUN_TEST(test_command_permitted_read_only_allows_only_profile_reads);
   RUN_TEST(test_command_permitted_v20_passes_only_listed_writes);
-  RUN_TEST(test_command_permitted_v20_extra_reads_pass_read_only);
+  RUN_TEST(test_command_permitted_v20_extra_reads);
   RUN_TEST(test_voice_prompts_command);
   RUN_TEST(test_parse_status_reply);
   RUN_TEST(test_v20_settings_real_frames);

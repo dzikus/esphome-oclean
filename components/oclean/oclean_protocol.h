@@ -173,8 +173,8 @@ static constexpr size_t SESSION_V20_SCORE_OFFSET = 28;
 static constexpr size_t SESSION_V20_INLINE_LEN = 11;
 
 // [0-1] length, [2-7] start time, [8] mode, [9-10] program length s, [11-12]
-// brushed s, [13-17] pressure ratios, [28] score. The zone bytes are not mapped,
-// so every zone comes back SESSION_ZONE_ABSENT.
+// brushed s, [28] score. The zone bytes are not mapped, so every zone comes back
+// SESSION_ZONE_ABSENT.
 bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *out);
 
 // count=0 reply: the head of the newest record follows the header. No brushed
@@ -384,21 +384,21 @@ void parse_device_settings(const uint8_t *buf, DeviceSettings *out);
 // X Ultra 20 start frame, buffer 0..15. Its continuation frame (16..33) matches
 // DeviceSettings.
 struct DeviceSettingsV20Start {
-  uint8_t battery;          // buffer 0, percent
-  uint8_t network_status;   // buffer 1
-  bool raise_wake;          // buffer 2 != 0
-  bool auto_update;         // buffer 3 != 0
-  bool auto_mode;           // buffer 4 != 0
-  uint8_t mode_num;         // buffer 5, moves with buffer 11: not a count
-  uint8_t bus_brushing;     // buffer 6
-  bool voice;               // buffer 7 != 0
-  bool voice_zone_change;   // buffer 8 != 0
-  bool voice_pressure;      // buffer 9 != 0
-  bool festival_reminder;   // buffer 10 != 0
-  uint8_t mode;             // buffer 11
-  bool brush_mode_on;       // buffer 12 != 0xEC
-  uint8_t scheme_type;      // buffer 13
-  uint16_t head_used_time;  // buffer 14-15 BE
+  uint8_t battery;           // buffer 0, percent
+  uint8_t network_status;    // buffer 1
+  bool raise_wake;           // buffer 2 != 0
+  bool auto_update;          // buffer 3 != 0
+  bool auto_mode;            // buffer 4 != 0
+  uint8_t mode_num;          // buffer 5, moves with buffer 11: not a count
+  uint8_t bus_brushing;      // buffer 6
+  bool voice;                // buffer 7 != 0
+  bool voice_fast_brushing;  // buffer 8 != 0
+  bool voice_pressure;       // buffer 9 != 0
+  bool festival_reminder;    // buffer 10 != 0
+  uint8_t mode;              // buffer 11
+  bool brush_mode_on;        // buffer 12 != 0xEC
+  uint8_t scheme_type;       // buffer 13
+  uint16_t head_used_time;   // buffer 14-15 BE
 };
 
 void parse_device_settings_v20_start(const uint8_t *buf, DeviceSettingsV20Start *out);
@@ -433,9 +433,9 @@ uint8_t encode_scheme_gear(uint8_t gear);
 // value is a per-toggle sentinel: brush-mode off is 0xEC.
 std::vector<uint8_t> build_toggle_command(uint8_t b0, uint8_t b1, uint8_t on_value, uint8_t off_value, bool state);
 
-// X Ultra 20 voice prompts: one frame carries all three flags (main, zone
-// change, over-pressure) plus a zero pad byte, so a single toggle has to resend
-// the other two.
+// X Ultra 20 voice prompts: one frame carries all three flags (main, fast
+// brushing, over-pressure) plus a zero pad byte, so a single toggle has to
+// resend the other two.
 static constexpr size_t VOICE_PROMPT_COUNT = 3;
 std::vector<uint8_t> build_voice_prompts_command(const std::array<bool, VOICE_PROMPT_COUNT> &flags);
 

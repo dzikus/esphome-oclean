@@ -144,7 +144,7 @@ SWITCHES = [
 # (yaml_key, flag index in the voice-prompt frame, icon, default_name)
 VOICE_SWITCHES = [
     ("voice_prompts", 0, "mdi:account-voice", "Voice prompts"),
-    ("voice_zone_change", 1, "mdi:swap-horizontal", "Voice on zone change"),
+    ("voice_fast_brushing", 1, "mdi:speedometer", "Voice on fast brushing"),
     ("voice_pressure", 2, "mdi:gauge", "Voice on over-pressure"),
 ]
 
