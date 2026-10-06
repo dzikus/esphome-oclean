@@ -64,10 +64,35 @@ class KeySets(unittest.TestCase):
     def test_hidden_text_sensor_keys_exist(self):
         self.assertLessEqual(octs.HIDDEN_TEXT_SENSOR_KEYS, self._keys(octs))
 
-    def test_dev_gated_keys_exist(self):
-        self.assertLessEqual(ocsens.DEV_SENSOR_KEYS, self._keys(ocsens))
-        self.assertLessEqual(ocbs.DEV_BINARY_SENSOR_KEYS, self._keys(ocbs))
-        self.assertLessEqual(ocsw.DEV_SWITCH_KEYS, self._keys(ocsw))
+
+class ModelEntitySets(unittest.TestCase):
+    # A key matching no row is a model restriction that silently does nothing.
+
+    def test_every_schema_model_has_an_entity_set(self):
+        self.assertEqual(set(oc.MODELS), set(oc.MODEL_ENTITY_SETS))
+        self.assertIn(oc.DEFAULT_MODEL, oc.MODELS)
+
+    def test_listed_keys_exist_on_their_platform(self):
+        for model, sets in oc.MODEL_ENTITY_SETS.items():
+            for kind in ("unavailable", "dev"):
+                for platform, keys in sets[kind].items():
+                    self.assertIn(platform, PLATFORMS, f"{model}.{kind}")
+                    rows = {key for key, _n in PLATFORMS[platform]._DEFAULT_NAMES}
+                    self.assertLessEqual(keys, rows, f"{model}.{kind}.{platform}")
+
+    def test_a_row_is_not_both_dev_and_unavailable(self):
+        for model, sets in oc.MODEL_ENTITY_SETS.items():
+            for platform, keys in sets["dev"].items():
+                missing = sets["unavailable"].get(platform, frozenset())
+                self.assertFalse(keys & missing, f"{model}.{platform}")
+
+    def test_each_model_has_rows_the_other_lacks(self):
+        # Guards the point of the option: drop either set and both models build
+        # the same entities again.
+        elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
+        ultra = oc.MODEL_ENTITY_SETS[oc.MODEL_X_ULTRA_20]["unavailable"]
+        self.assertIn("voice_prompts", elite["binary_sensor"])
+        self.assertIn("gesture_zone_1", ultra["sensor"])
 
 
 class SwitchSetters(unittest.TestCase):

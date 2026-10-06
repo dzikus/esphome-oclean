@@ -1329,6 +1329,17 @@ void test_profile_v20_contract() {
   TEST_ASSERT_EQUAL_UINT8(PROFILE_TYPE1.query_cmd_count, PROFILE_TYPE_V20.query_cmd_count);
 }
 
+// The keys are what the mismatch warning tells the user to type, so they must
+// match the yaml schema.
+void test_profile_entity_model() {
+  TEST_ASSERT_EQUAL_INT(BrushModel::X_ULTRA_20, PROFILE_TYPE_V20.entity_model);
+  TEST_ASSERT_EQUAL_INT(BrushModel::X_PRO_ELITE, PROFILE_TYPE1.entity_model);
+  TEST_ASSERT_EQUAL_INT(BrushModel::X_PRO_ELITE, PROFILE_TYPE_Z1.entity_model);
+  TEST_ASSERT_EQUAL_INT(BrushModel::X_PRO_ELITE, PROFILE_UNKNOWN.entity_model);
+  TEST_ASSERT_EQUAL_STRING("x_ultra_20", brush_model_key(BrushModel::X_ULTRA_20));
+  TEST_ASSERT_EQUAL_STRING("x_pro_elite", brush_model_key(BrushModel::X_PRO_ELITE));
+}
+
 void test_validated_profiles_keep_writes_and_cccd_skip() {
   TEST_ASSERT_TRUE(PROFILE_TYPE1.allows_writes);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.allows_clock_write);
@@ -1973,6 +1984,7 @@ int main() {
   RUN_TEST(test_profile_z1_routing);
   RUN_TEST(test_profile_select_v20);
   RUN_TEST(test_profile_v20_contract);
+  RUN_TEST(test_profile_entity_model);
   RUN_TEST(test_validated_profiles_keep_writes_and_cccd_skip);
   RUN_TEST(test_clock_write_permitted);
   RUN_TEST(test_command_permitted_read_only_allows_only_profile_reads);

@@ -64,6 +64,7 @@ class OcleanHub : public ble_client::BLEClientNode,
 
   void set_hub_index(int i) { this->hub_index_ = i; }
   void set_total_hubs(int n) { this->total_hubs_ = n; }
+  void set_model(BrushModel model) { this->model_ = model; }
   void set_expose_dev_sensors(bool en) { this->expose_dev_sensors_ = en; }
   void set_read_only(bool en) { this->read_only_ = en; }
 
@@ -354,6 +355,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   OcleanLanguageSelect *language_select_{nullptr};
 
   State state_{State::IDLE};
+  BrushModel model_{BrushModel::X_PRO_ELITE};
   bool expose_dev_sensors_{false};
   bool read_only_{false};
 

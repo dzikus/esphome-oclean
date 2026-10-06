@@ -185,7 +185,7 @@ _DEFAULT_NAMES = [
 
 
 def _inject_defaults(config):
-    return inject_entity_defaults(config, _DEFAULT_NAMES)
+    return inject_entity_defaults(config, _DEFAULT_NAMES, platform="select")
 
 
 CONFIG_SCHEMA = cv.All(

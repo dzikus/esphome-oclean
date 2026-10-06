@@ -15,7 +15,7 @@ from . import (
     DOMAIN,
     OCLEAN_COMPONENT_SCHEMA,
     OcleanHub,
-    hub_expose_dev,
+    hub_builds,
     inject_entity_defaults,
     oclean_ns,
 )
@@ -77,7 +77,7 @@ _DEFAULT_NAMES = [
 
 def _inject_defaults(config):
     return inject_entity_defaults(
-        config, _DEFAULT_NAMES, hidden=frozenset({CONF_POLL_NOW})
+        config, _DEFAULT_NAMES, hidden=frozenset({CONF_POLL_NOW}), platform="button"
     )
 
 
@@ -113,11 +113,11 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
 
-    # Capture is a dev hook, gated behind expose_dev_sensors.
     sub = config.get(CONF_CAPTURE_SESSIONS)
-    if sub is not None and expose_dev:
+    if sub is not None and hub_builds(
+        config[CONF_OCLEAN_ID], "button", CONF_CAPTURE_SESSIONS
+    ):
         btn = await button.new_button(sub)
         await cg.register_parented(btn, hub)
         cg.add(hub.set_capture_button(btn))

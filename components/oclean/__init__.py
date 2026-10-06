@@ -54,6 +54,64 @@ CONF_HOLD_CONNECTION_WHILE_DOCKED = "hold_connection_while_docked"
 
 CONF_NAME_PREFIX = "name_prefix"
 
+# Picks the entity set at build time. The protocol profile still comes from the
+# model id the brush reports, so a mismatch only costs entities, not data.
+CONF_MODEL = "model"
+MODEL_X_PRO_ELITE = "x_pro_elite"
+MODEL_X_ULTRA_20 = "x_ultra_20"
+DEFAULT_MODEL = MODEL_X_PRO_ELITE
+
+_ZONE_KEYS = frozenset(f"gesture_zone_{i + 1}" for i in range(8))
+_CUSTOM_STEP_KEYS = frozenset(
+    f"custom_step{i + 1}_{param}" for i in range(4) for param in ("gear", "duration")
+)
+_X_PRO_ELITE_FLAG_KEYS = frozenset(
+    {"volume_enabled", "calendar_enabled", "splash_prevent", "fill_brush"}
+)
+_X_ULTRA_20_FLAG_KEYS = frozenset(
+    {
+        "voice_prompts",
+        "voice_zone_change",
+        "voice_pressure",
+        "festival_reminder",
+        "auto_update",
+        "network",
+    }
+)
+
+# Per model and platform. "unavailable": rows the model has no data or opcode
+# for, never built. "dev": rows with no observable effect on that brush, built
+# only with expose_dev_sensors. Every other row is built on every model.
+MODEL_ENTITY_SETS = {
+    MODEL_X_PRO_ELITE: {
+        "unavailable": {
+            "sensor": frozenset({"device_mode"}),
+            "binary_sensor": _X_ULTRA_20_FLAG_KEYS,
+        },
+        "dev": {
+            "sensor": frozenset({"volume_index"}),
+            "binary_sensor": _X_PRO_ELITE_FLAG_KEYS,
+            "switch": frozenset({"area_reminder", "brush_pause", "brush_mode"}),
+            "button": frozenset({"capture_sessions"}),
+        },
+    },
+    # Settings bytes 0, 1, 3, 8-10 and 13 hold other fields on this brush, its
+    # app family has no 0222 / 0209 setter, its program frames differ, and its
+    # 12-zone record is not mapped.
+    MODEL_X_ULTRA_20: {
+        "unavailable": {
+            "sensor": frozenset({"device_theme", "volume_index"}) | _ZONE_KEYS,
+            "binary_sensor": _X_PRO_ELITE_FLAG_KEYS,
+            "switch": frozenset({"brush_pause", "brush_mode"}),
+            "number": _CUSTOM_STEP_KEYS,
+            "select": frozenset({"brush_scheme"}),
+        },
+        "dev": {
+            "button": frozenset({"capture_sessions"}),
+        },
+    },
+}
+
 UNIT_DAY = "d"
 
 MIN_UPDATE_INTERVAL_MS = 60000
@@ -126,6 +184,20 @@ def hub_expose_dev(hub_id):
     return bool(_hub_conf(hub_id).get(CONF_EXPOSE_DEV_SENSORS, False))
 
 
+def hub_model(hub_id):
+    return str(_hub_conf(hub_id).get(CONF_MODEL, DEFAULT_MODEL))
+
+
+def dev_keys(model, platform):
+    return MODEL_ENTITY_SETS[model]["dev"].get(platform, frozenset())
+
+
+def hub_builds(hub_id, platform, key):
+    if key not in dev_keys(hub_model(hub_id), platform):
+        return True
+    return hub_expose_dev(hub_id)
+
+
 def _raw_hubs():
     # Raw, because the prefix is resolved during validation, when CORE.config is
     # still None and the hub blocks may not have been validated yet.
@@ -159,16 +231,41 @@ def entity_name_prefix(hub_id):
     return str(conf.get(CONF_NAME_PREFIX, "")).strip()
 
 
-def inject_entity_defaults(config, rows, hidden=frozenset(), opt_in=frozenset()):
+def raw_hub_model(hub_id):
+    # An invalid value fails the hub schema; falling back here keeps the
+    # platform blocks from piling their own errors on top of that one.
+    conf = _raw_hub(hub_id) or {}
+    model = str(conf.get(CONF_MODEL, DEFAULT_MODEL)).strip().lower()
+    return model if model in MODEL_ENTITY_SETS else DEFAULT_MODEL
+
+
+def inject_entity_defaults(
+    config, rows, hidden=frozenset(), opt_in=frozenset(), platform=None
+):
     # Copy before mutating: the validator may run against a shared dict.
     config = dict(config)
     platform_device = config.get(CONF_DEVICE_ID)
+    hub_id = config.get(CONF_OCLEAN_ID)
     # Prefixed in validation, not in to_code. The duplicate-name check runs off
     # the entity schema, and the resolved config has to show the names the
     # generated code registers.
-    prefix = entity_name_prefix(config.get(CONF_OCLEAN_ID))
+    prefix = entity_name_prefix(hub_id)
+    model = raw_hub_model(hub_id)
+    unavailable = MODEL_ENTITY_SETS[model]["unavailable"].get(platform, frozenset())
     for key, default_name in rows:
         want = config.get(key, ...)
+        if key in unavailable:
+            # An error, not a warning: the entity would be missing from a node
+            # that compiled cleanly, which reads as a bug on the brush side.
+            if want is not ... and want is not False:
+                raise cv.Invalid(
+                    f"'{key}' does not exist on model: {model}. Remove it from "
+                    f"this {platform} block, or set model: on the hub to the "
+                    f"brush you have.",
+                    path=[key],
+                )
+            config.pop(key, None)
+            continue
         if want is False or (want is ... and key in opt_in):
             config.pop(key, None)
             continue
@@ -247,6 +344,12 @@ def _validate_adaptive_poll(config):
 oclean_ns = cg.esphome_ns.namespace("oclean")
 OcleanHub = oclean_ns.class_("OcleanHub", ble_client.BLEClientNode, cg.PollingComponent)
 
+BrushModel = oclean_ns.enum("BrushModel", is_class=True)
+MODELS = {
+    MODEL_X_PRO_ELITE: BrushModel.X_PRO_ELITE,
+    MODEL_X_ULTRA_20: BrushModel.X_ULTRA_20,
+}
+
 SessionRecord = oclean_ns.struct("SessionRecord")
 SessionRecordConstRef = SessionRecord.operator("const").operator("ref")
 OcleanSessionTrigger = oclean_ns.class_(
@@ -265,6 +368,7 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(OcleanHub),
+            cv.Optional(CONF_MODEL, default=DEFAULT_MODEL): cv.enum(MODELS, lower=True),
             cv.Optional(CONF_EXPOSE_DEV_SENSORS, default=False): cv.boolean,
             cv.Optional(CONF_READ_ONLY, default=False): cv.boolean,
             cv.Optional(CONF_UPDATE_INTERVAL, default="3600s"): _min_interval_validator(
@@ -410,6 +514,7 @@ async def to_code(config):
     cg.add(
         var.set_hold_connection_while_docked(config[CONF_HOLD_CONNECTION_WHILE_DOCKED])
     )
+    cg.add(var.set_model(config[CONF_MODEL]))
     cg.add(var.set_expose_dev_sensors(config[CONF_EXPOSE_DEV_SENSORS]))
     cg.add(var.set_read_only(config[CONF_READ_ONLY]))
     cg.add(var.set_tz_index(config[CONF_TZINDEX]))

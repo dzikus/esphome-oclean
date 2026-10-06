@@ -87,6 +87,7 @@ void OcleanHub::dump_config() {
   ESP_LOGCONFIG(TAG, "  Poll interval: %u ms docked / %u ms off dock", (unsigned)this->charging_interval_ms_,
                 (unsigned)this->battery_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Hold link while docked: %s", YESNO(this->hold_while_docked_));
+  ESP_LOGCONFIG(TAG, "  Model: %s", brush_model_key(this->model_));
   ESP_LOGCONFIG(TAG, "  Expose dev sensors: %s", YESNO(this->expose_dev_sensors_));
   ESP_LOGCONFIG(TAG, "  Read-only: %s", YESNO(this->read_only_));
   // Active protocol profile: the default until the first poll reads the DIS
@@ -1008,6 +1009,15 @@ void OcleanHub::handle_dis_read_(uint16_t uuid16, const uint8_t *data, size_t le
       this->profile_ = profile_for_model(this->model_string_.c_str(), this->model_string_.size());
       ESP_LOGI(TAG, "[%s] model: %s (profile %s, confidence %u)", this->parent_->address_str(), s.c_str(),
                this->profile_->name, this->profile_->confidence);
+      // Once per device-info read, so at boot and then daily rather than on
+      // every poll.
+      if (this->profile_->entity_model != this->model_) {
+        ESP_LOGW(TAG,
+                 "[%s] this brush reports %s, but the hub is built for model: %s, so its entity set does not "
+                 "match the brush. Set `model: %s` on the hub in the yaml.",
+                 this->parent_->address_str(), s.c_str(), brush_model_key(this->model_),
+                 brush_model_key(this->profile_->entity_model));
+      }
       esphome::oclean::OcleanHub::publish_(this->model_text_sensor_, s);
       this->got_model_ = true;
       this->dis_cached_ = true;

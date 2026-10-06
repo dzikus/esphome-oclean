@@ -9,17 +9,14 @@ from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
     OcleanHub,
-    hub_expose_dev,
+    hub_builds,
+    hub_model,
     inject_entity_defaults,
     oclean_ns,
     run_data,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# Toggles with no observable effect on the owned brushes: created only on hubs
-# with expose_dev_sensors so they do not crowd the dashboard as live controls.
-DEV_SWITCH_KEYS = frozenset({"area_reminder", "brush_pause", "brush_mode"})
 
 
 def _explicit_dev_switches():
@@ -34,7 +31,8 @@ def _explicit_dev_switches():
 def _record_explicit_dev(config):
     hub_id = config.get(CONF_OCLEAN_ID)
     hub_key = str(hub_id) if hub_id is not None else "__default__"
-    present = {k for k in DEV_SWITCH_KEYS if k in config}
+    # Which rows are dev depends on the model, resolved only in to_code.
+    present = {key for key, *_row in SWITCHES if key in config}
     if present:
         _explicit_dev_switches().setdefault(hub_key, set()).update(present)
 
@@ -129,7 +127,7 @@ _DEFAULT_NAMES = [
 def _inject_defaults(config):
     # Note explicit dev switches before auto-create hides which were user-listed.
     _record_explicit_dev(config)
-    return inject_entity_defaults(config, _DEFAULT_NAMES)
+    return inject_entity_defaults(config, _DEFAULT_NAMES, platform="switch")
 
 
 CONFIG_SCHEMA = cv.All(
@@ -162,7 +160,6 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     explicit = _explicit_dev_switches()
     # A single-hub config may omit oclean_id, so the record lands under the
     # placeholder key; merge both.
@@ -172,14 +169,15 @@ async def to_code(config):
     for key, b0, b1, _icon, _default_name, label, off_value in SWITCHES:
         if key not in config:
             continue
-        if key in DEV_SWITCH_KEYS and not expose_dev:
+        if not hub_builds(config[CONF_OCLEAN_ID], "switch", key):
             # Only auto-created dev rows are dropped quietly; a user who listed
             # one explicitly gets told why it is missing.
             if key in explicit_dev:
                 _LOGGER.warning(
-                    "oclean: switch '%s' is dev-only and not created; set "
-                    "expose_dev_sensors: true on hub '%s' to use it",
+                    "oclean: switch '%s' is dev-only on model: %s and not "
+                    "created; set expose_dev_sensors: true on hub '%s' to use it",
                     key,
+                    hub_model(config[CONF_OCLEAN_ID]),
                     config[CONF_OCLEAN_ID],
                 )
             continue

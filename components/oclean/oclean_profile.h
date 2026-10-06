@@ -44,6 +44,16 @@ enum class SessionFormat : uint8_t {
 // at directly
 using RecordDecoder = bool (*)(const uint8_t *rec, SessionRecord *out);
 
+// The hub's yaml model:, which fixes the entity set at build time. The profile
+// is still picked from DIS, so a wrong model costs entities, never data.
+enum class BrushModel : uint8_t {
+  X_PRO_ELITE = 0,
+  X_ULTRA_20 = 1,
+};
+
+// the spelling the yaml schema accepts
+const char *brush_model_key(BrushModel model);
+
 // Plain data, no virtuals: the table lives in flash and allocates nothing.
 struct OcleanProfile {
   const char *name;
@@ -70,6 +80,8 @@ struct OcleanProfile {
   // The X Ultra 20 reads 0 on 0x2A19 right after a wake; its battery comes from
   // STATUS and the settings only.
   bool battery_char_reliable;
+  // the model: whose entity set carries this profile's readings
+  BrushModel entity_model;
 };
 
 extern const OcleanProfile PROFILE_TYPE1;

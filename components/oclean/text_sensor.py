@@ -117,7 +117,7 @@ _DEFAULT_NAMES = [(key, name) for key, _s, _icon, _ec, name, _dc in TEXT_SENSORS
 
 def _inject_defaults(config):
     return inject_entity_defaults(
-        config, _DEFAULT_NAMES, hidden=HIDDEN_TEXT_SENSOR_KEYS
+        config, _DEFAULT_NAMES, hidden=HIDDEN_TEXT_SENSOR_KEYS, platform="text_sensor"
     )
 
 

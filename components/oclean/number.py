@@ -85,7 +85,7 @@ _DEFAULT_NAMES = [(CONF_HEAD_MAX_DAYS, DEFAULT_HEAD_MAX_DAYS_NAME)] + [
 
 
 def _inject_defaults(config):
-    return inject_entity_defaults(config, _DEFAULT_NAMES)
+    return inject_entity_defaults(config, _DEFAULT_NAMES, platform="number")
 
 
 def _custom_param_schema(unit, icon):

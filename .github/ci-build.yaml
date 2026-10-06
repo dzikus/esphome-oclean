@@ -68,8 +68,10 @@ oclean:
           args:
             ["(unsigned) x.duration_s", "(unsigned) x.valid_duration_s", "(unsigned) x.score"]
   # hub_test stays without a prefix so the multi-hub warning runs too.
+  # hub_second is the other model, so both entity sets compile.
   - id: hub_second
     ble_client_id: ble_second
+    model: x_ultra_20
     name_prefix: "Second"
 
 # Every entity platform auto-creates its full entity set, so a bare platform
@@ -78,10 +80,16 @@ oclean:
 sensor:
   - platform: oclean
     oclean_id: hub_test
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
 
 binary_sensor:
   - platform: oclean
     oclean_id: hub_test
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
 
 text_sensor:
   - platform: oclean
@@ -90,7 +98,6 @@ text_sensor:
 switch:
   - platform: oclean
     oclean_id: hub_test
-  # Switch and button are enough for hub_second; no need to double every entity.
   - platform: oclean
     oclean_id: hub_second
     device_id: dev_second

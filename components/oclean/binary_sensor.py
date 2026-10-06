@@ -12,26 +12,8 @@ from . import (
     CONF_OCLEAN_ID,
     HIDDEN_BINARY_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
-    hub_expose_dev,
+    hub_builds,
     inject_entity_defaults,
-)
-
-# Settings readbacks with no observable effect on the owned brushes, and the
-# X Ultra 20 flags that other models never fill: created only on hubs with
-# expose_dev_sensors.
-DEV_BINARY_SENSOR_KEYS = frozenset(
-    {
-        "volume_enabled",
-        "calendar_enabled",
-        "splash_prevent",
-        "fill_brush",
-        "voice_prompts",
-        "voice_zone_change",
-        "voice_pressure",
-        "festival_reminder",
-        "auto_update",
-        "network",
-    }
 )
 
 DEPENDENCIES = ["oclean"]
@@ -184,7 +166,10 @@ _DEFAULT_NAMES = [(key, name) for key, *_row, name in BINARY_SENSORS]
 
 def _inject_defaults(config):
     return inject_entity_defaults(
-        config, _DEFAULT_NAMES, hidden=HIDDEN_BINARY_SENSOR_KEYS
+        config,
+        _DEFAULT_NAMES,
+        hidden=HIDDEN_BINARY_SENSOR_KEYS,
+        platform="binary_sensor",
     )
 
 
@@ -204,11 +189,10 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     for key, setter, *_row in BINARY_SENSORS:
         if key not in config:
             continue
-        if key in DEV_BINARY_SENSOR_KEYS and not expose_dev:
+        if not hub_builds(config[CONF_OCLEAN_ID], "binary_sensor", key):
             continue
         bs = await binary_sensor.new_binary_sensor(config[key])
         cg.add(getattr(hub, setter)(bs))

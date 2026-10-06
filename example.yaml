@@ -63,6 +63,8 @@ ble_client:
 oclean:
   - id: brush_hub
     ble_client_id: ble_brush
+    # x_ultra_20 for the X Ultra 20
+    model: x_pro_elite
     update_interval: 4h
     time_id: ha_time
 

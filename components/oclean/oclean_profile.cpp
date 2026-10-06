@@ -49,6 +49,7 @@ const OcleanProfile PROFILE_TYPE1 = {
     /*sends_clear_running_data=*/.sends_clear_running_data = true,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
     /*battery_char_reliable=*/.battery_char_reliable = true,
+    /*entity_model=*/.entity_model = BrushModel::X_PRO_ELITE,
 };
 
 // 0202 clears the session ring on the models where its effect is known, so an
@@ -68,6 +69,7 @@ const OcleanProfile PROFILE_UNKNOWN = {
     /*sends_clear_running_data=*/.sends_clear_running_data = false,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
     /*battery_char_reliable=*/.battery_char_reliable = true,
+    /*entity_model=*/.entity_model = BrushModel::X_PRO_ELITE,
 };
 
 // === Z1 profile (model OCLEANY5) ===
@@ -89,6 +91,7 @@ const OcleanProfile PROFILE_TYPE_Z1 = {
     /*sends_clear_running_data=*/.sends_clear_running_data = true,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
     /*battery_char_reliable=*/.battery_char_reliable = true,
+    /*entity_model=*/.entity_model = BrushModel::X_PRO_ELITE,
 };
 
 // === X Ultra 20 (model OCLEANV20*, hardware revision protocol 0x000D) ===
@@ -109,6 +112,7 @@ const OcleanProfile PROFILE_TYPE_V20 = {
     /*sends_clear_running_data=*/.sends_clear_running_data = false,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
     /*battery_char_reliable=*/.battery_char_reliable = false,
+    /*entity_model=*/.entity_model = BrushModel::X_ULTRA_20,
 };
 
 // Order matters: first match wins, so the most specific prefix comes first
@@ -170,6 +174,12 @@ bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8
   if (profile.allows_writes)
     return true;
   return clock_write_permitted(read_only, profile) && len == SET_CLOCK_CMD_LEN && bytes[0] == 0x02 && bytes[1] == 0x01;
+}
+
+const char *brush_model_key(BrushModel model) {
+  if (model == BrushModel::X_ULTRA_20)
+    return "x_ultra_20";
+  return "x_pro_elite";
 }
 
 const ProfileCmd *settings_query(const OcleanProfile &profile) {

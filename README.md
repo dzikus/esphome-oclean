@@ -86,7 +86,9 @@ same URL because HACS keys a repository by (URL, category).
 
 The protocol profile is selected at runtime from the device model string (DIS
 characteristic `0x2A24`), so one build serves the whole family rather than
-being hardcoded to a single model.
+being hardcoded to a single model. The entity set cannot wait for that read,
+because ESPHome creates entities at build time, so it comes from the hub's
+`model:` option instead.
 
 | Line | Model id (DIS 0x2A24) | Profile | Status |
 |---|---|---|---|
@@ -120,31 +122,48 @@ silently dropped by the brush.
 
 ### What it exposes per brush
 
-Numbers below are with the default `expose_dev_sensors: false`. With
-`expose_dev_sensors: true` you also get dev entities (settings readbacks and
-toggles with no observable effect on the verified brushes, the
-session-capture button). Several always-on entities are created
-with `disabled_by_default: true`, so they stay hidden in HA until enabled per
-entity.
+The entity set follows the hub's `model:` option, so each brush gets only the
+entities it has data or an opcode for. Counts below are with the default
+`expose_dev_sensors: false`, which leaves out the dev entities: rows with no
+observable effect on that brush, and the session-capture button. Several
+entities are created with `disabled_by_default: true`, so they stay hidden in
+HA until enabled per entity.
 
-- 18 sensors always on: battery, last-session score / duration / valid
-  duration / coverage, 8 per-zone gesture values, brush-head used days /
-  sessions / used time, device theme, clock drift. 2 dev sensors: volume
-  index, X Ultra 20 device mode. (device theme, head used time and clock drift
-  are hidden by default.)
-- 4 binary sensors always on: charging, docked, BLE connected (hidden),
-  auto mode (hidden). 10 dev binary sensors: volume / calendar / splash
-  prevention / fill brush readbacks, and six X Ultra 20 flags (three voice
-  prompt switches, holiday reminder, auto update, network).
-- 9 text sensors always on: last session, last session mode, device clock,
-  hardware revision, software version, last seen, timezone, MAC address, model
-  (the last six hidden).
-- 3 switches always on: over-pressure alert, raise to wake, bluetooth (BLE
-  link master switch). 3 dev switches: area reminder, brush pause, brush mode.
+X Pro Elite (`model: x_pro_elite`, the default):
+
+- 18 sensors: battery, last-session score / duration / valid duration /
+  coverage, 8 per-zone gesture values, brush-head used days / sessions / used
+  time, device theme, clock drift (device theme, head used time and clock drift
+  hidden). 1 dev sensor: volume index.
+- 4 binary sensors: charging, docked, BLE connected (hidden), auto mode
+  (hidden). 4 dev binary sensors: volume / calendar / splash prevention / fill
+  brush readbacks.
+- 9 text sensors: last session, last session mode, device clock, hardware
+  revision, software version, last seen, timezone, MAC address, model (the last
+  six hidden).
+- 3 switches: over-pressure alert, raise to wake, bluetooth (BLE link master
+  switch). 3 dev switches: area reminder, brush pause, brush mode.
 - 9 numbers: head replacement days plus 8 custom-program step parameters.
 - 2 selects: brushing mode, display language.
-- 3 buttons always on: reset brush head, sync clock (needs `time_id`),
-  poll now (hidden). 1 dev button: capture sessions.
+- 3 buttons: reset brush head, sync clock (needs `time_id`), poll now (hidden).
+  1 dev button: capture sessions.
+
+X Ultra 20 (`model: x_ultra_20`):
+
+- 10 sensors: battery, last-session score / duration / valid duration /
+  coverage, brush-head used days / sessions / used time, clock drift, device
+  mode. No zone sensors: its 12-zone record is not mapped yet.
+- 10 binary sensors: charging, docked, BLE connected (hidden), auto mode
+  (hidden), voice prompts, voice on zone change, voice on over-pressure,
+  holiday reminder, auto update, network.
+- 9 text sensors, as above.
+- 4 switches: over-pressure alert, raise to wake, area reminder, bluetooth.
+- 1 number: head replacement days.
+- 1 select: display language.
+- 3 buttons as above, 1 dev button: capture sessions.
+
+On the X Ultra 20 the brush-backed controls show the brush's state, but every
+write except the clock is refused until it has been checked on the hardware.
 
 ---
 
@@ -207,6 +226,9 @@ button:
     oclean_id: brush_hub
 ```
 
+For an X Ultra 20 add `model: x_ultra_20` under `oclean:`; without it the hub
+builds the X Pro Elite entity set.
+
 That creates every default entity, named in English, with default icons and
 categories. Each platform auto-creates its entities; nothing has to be listed
 key by key. Every individual entity can still be customised; see **Override
@@ -233,6 +255,7 @@ Set on the `oclean:` entry, not on the platforms.
 | Option | Type | Default | Effect |
 |---|---|---|---|
 | `ble_client_id` | id | - | Required. Points to the `ble_client` entry with this brush's MAC. |
+| `model` | `x_pro_elite` or `x_ultra_20` | `x_pro_elite` | The brush on this hub, which picks the entity set at build time (see **What it exposes per brush**). The X / X Pro / Ultra / Pro 20 and the Z1 use `x_pro_elite`. The protocol is still chosen from the model id the brush reports, so a wrong value costs entities, never data; the log names the right value after the first poll. An entity listed in yaml that the model does not have fails validation. |
 | `update_interval` | time | `3600s` (min `60s`) | Off-dock cadence: gap between connect-poll-disconnect cycles while the brush runs on battery. |
 | `charging_interval` | time | `600s` (min `60s`) | Docked cadence: faster polls while the brush sits on the dock (charging or fully charged). Clamped down to `update_interval` if set larger; set both equal for fixed-interval polling. |
 | `hold_connection_while_docked` | bool | `true` | Keep the BLE link open while the brush is docked instead of disconnecting after each poll; re-queries on the live link every `charging_interval`. The link drops when the brush leaves the dock. Docked means charging, so this costs no brush battery. Set `false` for plain connect-poll-disconnect. |
@@ -240,7 +263,7 @@ Set on the `oclean:` entry, not on the platforms.
 | `tzindex` | int 1-33 | `16` | 1-based index into the brush's 33-entry GMT-offset table, written together with the clock. 16 = CEST (UTC+2), 15 = CET (UTC+1). |
 | `auto_sync_time` | bool | on when `time_id` is set, off otherwise | Resync the brush clock during a poll when it has drifted past `sync_drift_threshold`. Explicit `true` without `time_id` fails validation. |
 | `sync_drift_threshold` | time | `120s` | Drift that triggers an auto resync. `0s` resyncs whenever the clocks differ by at least one second. |
-| `expose_dev_sensors` | bool | `false` | Creates the dev-gated entities (see the per-platform tables) and logs the brush's GATT services and characteristics on each connect. |
+| `expose_dev_sensors` | bool | `false` | Creates the dev entities of the hub's model (see the per-platform tables) and logs the brush's GATT services and characteristics on each connect. |
 | `read_only` | bool | `false` | The brush only receives the profile's read queries. Every write is refused and logged: controls, clock sync, `0202`. |
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
 
@@ -258,7 +281,8 @@ race for the single scanner.
 ### Entities (sensor)
 
 All auto-created. "Hidden" means `disabled_by_default: true` in HA (enable per
-entity). "Dev" rows exist only on hubs with `expose_dev_sensors: true`.
+entity). "Dev" rows exist only on hubs with `expose_dev_sensors: true`. Rows
+naming a model exist only on hubs with that `model:`.
 
 | Key | Default name | Source | Notes |
 |---|---|---|---|
@@ -267,13 +291,13 @@ entity). "Dev" rows exist only on hubs with `expose_dev_sensors: true`.
 | `last_session_duration` | Duration | session record bytes 7-8 BE | seconds |
 | `last_session_valid_duration` | Valid duration | session record bytes 9-10 BE | seconds counted as effective |
 | `last_session_coverage` | Coverage | derived | valid / duration, percent |
-| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | session record bytes 23-30 | per-region values; 1-4 left, 5-8 right (upper-outer / upper-inner / lower-outer / lower-inner per side) |
+| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | session record bytes 23-30 | X Pro Elite only; per-region values; 1-4 left, 5-8 right (upper-outer / upper-inner / lower-outer / lower-inner per side) |
 | `head_used_days` | Brush head used days | settings buffer 27-28 BE | cumulative since head reset |
 | `head_used_times` | Brush head sessions | settings buffer 29-30 BE | cumulative since head reset |
 | `head_used_time` | Brush head used time | settings buffer 14-15 BE | hidden; unit unconfirmed |
-| `device_theme` | Device theme | settings buffer 0 | hidden; raw index |
-| `volume_index` | Volume index | settings buffer 9 | **dev**; hidden; raw index |
-| `device_mode` | Device mode | settings buffer 11 | **dev**; X Ultra 20 only; built-in mode 1-5 |
+| `device_theme` | Device theme | settings buffer 0 | X Pro Elite only; hidden; raw index |
+| `volume_index` | Volume index | settings buffer 9 | X Pro Elite only; **dev**; hidden; raw index |
+| `device_mode` | Device mode | settings buffer 11 | X Ultra 20 only; built-in mode 1-5 |
 
 The last decoded session survives reboots: the newest record is persisted in
 NVS per hub and re-published on boot.
@@ -286,16 +310,16 @@ NVS per hub and re-published on boot.
 | `docked` | Docked | STATUS byte 2 == 0x01 or 0x03 | on the dock, charging or fully charged |
 | `connected` | BLE connected | link state | hidden; off almost always by design (the link is up only seconds per poll); use Last seen for freshness |
 | `auto_mode` | Auto mode | settings buffer 4 | hidden; read-only (the brush rejects the write opcode) |
-| `volume_enabled` | Volume enabled | settings buffer 8 (inverted) | **dev** |
-| `calendar_enabled` | Calendar enabled | settings buffer 10 (inverted) | **dev** |
-| `splash_prevent` | Splash prevention | settings buffer 13 | **dev** |
-| `fill_brush` | Fill brush | settings buffer 3 | **dev**; read-only (write opcode rejected) |
-| `voice_prompts` | Voice prompts | settings buffer 7 | **dev**; X Ultra 20 only |
-| `voice_zone_change` | Voice on zone change | settings buffer 8 | **dev**; X Ultra 20 only |
-| `voice_pressure` | Voice on over-pressure | settings buffer 9 | **dev**; X Ultra 20 only |
-| `festival_reminder` | Holiday reminder | settings buffer 10 | **dev**; X Ultra 20 only |
-| `auto_update` | Auto update | settings buffer 3 | **dev**; X Ultra 20 only |
-| `network` | Network | settings buffer 1 | **dev**; X Ultra 20 only; on when the buffer byte is non-zero |
+| `volume_enabled` | Volume enabled | settings buffer 8 (inverted) | X Pro Elite only; **dev** |
+| `calendar_enabled` | Calendar enabled | settings buffer 10 (inverted) | X Pro Elite only; **dev** |
+| `splash_prevent` | Splash prevention | settings buffer 13 | X Pro Elite only; **dev** |
+| `fill_brush` | Fill brush | settings buffer 3 | X Pro Elite only; **dev**; read-only (write opcode rejected) |
+| `voice_prompts` | Voice prompts | settings buffer 7 | X Ultra 20 only |
+| `voice_zone_change` | Voice on zone change | settings buffer 8 | X Ultra 20 only |
+| `voice_pressure` | Voice on over-pressure | settings buffer 9 | X Ultra 20 only |
+| `festival_reminder` | Holiday reminder | settings buffer 10 | X Ultra 20 only |
+| `auto_update` | Auto update | settings buffer 3 | X Ultra 20 only |
+| `network` | Network | settings buffer 1 | X Ultra 20 only; on when the buffer byte is non-zero |
 
 ### Entities (text_sensor)
 
@@ -322,23 +346,23 @@ boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 | `over_pressure` | Over-pressure alert | `02 12` + 01/00 | readback at settings buffer 22 |
 | `raise_wake` | Raise to wake | `02 23` + 01/00 | readback at settings buffer 2 |
 | `bluetooth` | Bluetooth | local only | master switch for the BLE link; OFF drops pending writes and tears the link down; `RESTORE_DEFAULT_ON` so a reboot never leaves the brush silently unreachable |
-| `area_reminder` | Area reminder | `02 0D` + 01/00 | **dev**; no observable effect on the verified brushes |
-| `brush_pause` | Brush pause | `02 22` + 01/00 | **dev** |
-| `brush_mode` | Brush mode | `02 09` + 01/EC | **dev**; off byte is the 0xEC sentinel, not 0x00 |
+| `area_reminder` | Area reminder | `02 0D` + 01/00 | **dev** on the X Pro Elite, where it has no observable effect |
+| `brush_pause` | Brush pause | `02 22` + 01/00 | X Pro Elite only; **dev** |
+| `brush_mode` | Brush mode | `02 09` + 01/EC | X Pro Elite only; **dev**; off byte is the 0xEC sentinel, not 0x00 |
 
 ### Entities (number)
 
 | Key | Default name | Range | Notes |
 |---|---|---|---|
 | `head_max_days` | Head replacement days | 1-365 | writes `02 17` + 2B BE; box input (a slider would fire a write per step) |
-| `custom_step1_gear` .. `custom_step4_gear` | Custom step N gear | 1-41, default 8 | parameters of the runtime Custom program; stored on the node (flash-persisted), written to the brush only when Custom is selected |
-| `custom_step1_duration` .. `custom_step4_duration` | Custom step N duration | 5-120 s, step 5, default 30 | same; changing a parameter while Custom is active re-programs the brush (debounced) |
+| `custom_step1_gear` .. `custom_step4_gear` | Custom step N gear | 1-41, default 8 | X Pro Elite only; parameters of the runtime Custom program; stored on the node (flash-persisted), written to the brush only when Custom is selected |
+| `custom_step1_duration` .. `custom_step4_duration` | Custom step N duration | 5-120 s, step 5, default 30 | X Pro Elite only; changing a parameter while Custom is active re-programs the brush (debounced) |
 
 ### Entities (select)
 
 | Key | Default name | Options | Notes |
 |---|---|---|---|
-| `brush_scheme` | Brushing mode | 19 presets + named `custom_modes` + "Custom" | writes the full per-step program (`02 06` / `02 0B`); current option read back from settings buffer 11 |
+| `brush_scheme` | Brushing mode | 19 presets + named `custom_modes` + "Custom" | X Pro Elite only; writes the full per-step program (`02 06` / `02 0B`); current option read back from settings buffer 11 |
 | `device_language` | Display language | 17 languages | writes `02 16` + language id; readback from settings buffer 31 |
 
 Preset options are labelled "name (duration)", e.g. "Quick cleaning (1m20s)".
@@ -785,7 +809,7 @@ program length, without the brushed time.
 | 13-17 | 5 | pressure ratios |
 | 28 | 1 | score 0-100 (`0xFF` = none) |
 
-The zone bytes are not mapped, so the zone sensors stay unknown on this model.
+The zone bytes are not mapped, so `model: x_ultra_20` has no zone sensors.
 This layout has not yet been checked against a full record from a brush.
 
 ### Scheme write format

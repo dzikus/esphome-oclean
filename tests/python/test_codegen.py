@@ -134,5 +134,92 @@ class WarnOnSharedDefaultNames(unittest.TestCase):
         self.assertEqual(self._run(hubs, hubs[0]), [])
 
 
+# a row on every model, one only on the X Ultra 20, one only on the X Pro Elite
+MODEL_ROWS = [
+    ("charging", "Charging"),
+    ("voice_prompts", "Voice prompts"),
+    ("fill_brush", "Fill brush"),
+]
+
+
+class RawHubModel(RawConfigCase):
+    def test_unset_is_the_x_pro_elite(self):
+        self.set_hubs({"id": "hub_a"})
+        self.assertEqual(oc.raw_hub_model("hub_a"), "x_pro_elite")
+
+    def test_reads_the_explicit_value_in_any_case(self):
+        self.set_hubs({"id": "hub_a", "model": "X_Ultra_20"})
+        self.assertEqual(oc.raw_hub_model("hub_a"), "x_ultra_20")
+
+    def test_an_invalid_value_falls_back_to_the_default(self):
+        # The hub schema reports it; the platform blocks must not pile on.
+        self.set_hubs({"id": "hub_a", "model": "x_pro"})
+        self.assertEqual(oc.raw_hub_model("hub_a"), "x_pro_elite")
+
+
+class InjectPerModel(RawConfigCase):
+    def _inject(self, config):
+        return oc.inject_entity_defaults(config, MODEL_ROWS, platform="binary_sensor")
+
+    def test_x_ultra_20_builds_its_rows_and_not_the_elite_ones(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        out = self._inject({"oclean_id": "hub_a"})
+        self.assertIn("charging", out)
+        self.assertIn("voice_prompts", out)
+        self.assertNotIn("fill_brush", out)
+
+    def test_the_default_builds_the_elite_rows_and_not_the_ultra_ones(self):
+        self.set_hubs({"id": "hub_a"})
+        out = self._inject({"oclean_id": "hub_a"})
+        self.assertIn("charging", out)
+        self.assertIn("fill_brush", out)
+        self.assertNotIn("voice_prompts", out)
+
+    def test_an_explicit_row_the_model_lacks_is_rejected(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        for want in ({"name": "Fill"}, True, None):
+            with self.assertRaises(cv.Invalid):
+                self._inject({"oclean_id": "hub_a", "fill_brush": want})
+
+    def test_false_on_a_row_the_model_lacks_is_accepted(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        out = self._inject({"oclean_id": "hub_a", "fill_brush": False})
+        self.assertNotIn("fill_brush", out)
+
+    def test_without_a_platform_nothing_is_filtered(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        out = oc.inject_entity_defaults({"oclean_id": "hub_a"}, MODEL_ROWS)
+        self.assertIn("fill_brush", out)
+
+
+class HubBuilds(unittest.TestCase):
+    """The dev gate, resolved off the validated config in to_code."""
+
+    def setUp(self):
+        self.addCleanup(setattr, CORE, "config", CORE.config)
+
+    def set_hub(self, **conf):
+        CORE.config = {"oclean": [{"id": "hub_a", **conf}]}
+
+    def test_area_reminder_is_dev_on_the_x_pro_elite(self):
+        self.set_hub(model="x_pro_elite", expose_dev_sensors=False)
+        self.assertFalse(oc.hub_builds("hub_a", "switch", "area_reminder"))
+
+    def test_area_reminder_is_a_plain_control_on_the_x_ultra_20(self):
+        self.set_hub(model="x_ultra_20", expose_dev_sensors=False)
+        self.assertTrue(oc.hub_builds("hub_a", "switch", "area_reminder"))
+
+    def test_expose_dev_builds_the_dev_rows(self):
+        self.set_hub(model="x_pro_elite", expose_dev_sensors=True)
+        self.assertTrue(oc.hub_builds("hub_a", "switch", "area_reminder"))
+
+    def test_capture_is_dev_on_every_model(self):
+        for model in oc.MODELS:
+            self.set_hub(model=model, expose_dev_sensors=False)
+            self.assertFalse(
+                oc.hub_builds("hub_a", "button", "capture_sessions"), model
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

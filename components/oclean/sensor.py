@@ -18,13 +18,9 @@ from . import (
     HIDDEN_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
     UNIT_DAY,
-    hub_expose_dev,
+    hub_builds,
     inject_entity_defaults,
 )
-
-# Raw settings indices with no use on the owned brushes, and the X Ultra 20
-# built-in mode: created only on hubs with expose_dev_sensors.
-DEV_SENSOR_KEYS = frozenset({"volume_index", "device_mode"})
 
 DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
@@ -212,7 +208,9 @@ _DEFAULT_NAMES = [(key, name) for key, *_row, name in SENSORS]
 
 
 def _inject_defaults(config):
-    return inject_entity_defaults(config, _DEFAULT_NAMES, hidden=HIDDEN_SENSOR_KEYS)
+    return inject_entity_defaults(
+        config, _DEFAULT_NAMES, hidden=HIDDEN_SENSOR_KEYS, platform="sensor"
+    )
 
 
 CONFIG_SCHEMA = cv.All(
@@ -241,11 +239,10 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     for key, setter, *_row in SENSORS:
         if key not in config:
             continue
-        if key in DEV_SENSOR_KEYS and not expose_dev:
+        if not hub_builds(config[CONF_OCLEAN_ID], "sensor", key):
             continue
         sens = await sensor.new_sensor(config[key])
         if key.startswith("gesture_zone_"):
