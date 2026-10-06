@@ -456,6 +456,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   bool docked_last_{false};
   uint32_t last_poll_ms_{0};
   bool poll_pending_{true};
+  bool cycle_stamps_cadence_{false};
 
   // while holding_, state_ stays POLLING: the link is up and queries run on it,
   // so every state_==POLLING gate elsewhere stays correct

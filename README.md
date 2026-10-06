@@ -674,8 +674,10 @@ PlatformIO unit tests link against. Everything else needs the ESPHome runtime.
   back, the session watermark moves back by the same amount once the readback
   confirms it.
 - The link is dropped after a short hold (8 s normal poll, 30 s capture). A
-  60 s whole-poll watchdog tears down a stuck cycle; a cycle killed before the
-  GATT open retries at the next tick instead of waiting a full interval.
+  60 s watchdog tears down a stuck connected cycle. A cycle that has not reached
+  the brush keeps the client enabled and runs on the brush's next advertisement:
+  the X Ultra 20 advertises only for about 2.5 min after a button, motion or
+  charger wake.
 - With `hold_connection_while_docked` a poll that reads back a docked state
   keeps the link, re-queries every `charging_interval` (each round under its
   own watchdog), and leaves the hold when STATUS reports off-dock, the link

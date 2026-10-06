@@ -188,8 +188,12 @@ void OcleanHub::update() {
       ESP_LOGV(TAG, "[%s] poll skipped (BLE user-disabled)", this->parent_->address_str());
       return;
     case PollAction::SKIP_LINK_BUSY:
-      ESP_LOGW(TAG, "[%s] poll cycle still active (state=%s), skipping tick", this->parent_->address_str(),
-               this->state_name_(this->state_));
+      if (this->state_ == State::CONNECTING) {
+        ESP_LOGD(TAG, "[%s] still waiting for the brush to advertise", this->parent_->address_str());
+      } else {
+        ESP_LOGW(TAG, "[%s] poll cycle still active (state=%s), skipping tick", this->parent_->address_str(),
+                 this->state_name_(this->state_));
+      }
       return;
     case PollAction::DEFER_BOOT_STAGGER:
       // latch it. A millis() wrap reads as "still in the boot window" and would
@@ -210,6 +214,7 @@ void OcleanHub::update() {
 }
 
 void OcleanHub::arm_cycle_(bool stamp_cadence) {
+  this->cycle_stamps_cadence_ = stamp_cadence;
   if (stamp_cadence) {
     this->poll_pending_ = false;
     this->last_poll_ms_ = millis();
@@ -239,20 +244,21 @@ void OcleanHub::begin_connect_cycle_(bool stamp_cadence) {
 }
 
 void OcleanHub::start_watchdog_() {
-  // Force a disconnect if the whole cycle does not complete in time.
   this->set_timeout("poll_watchdog", WHOLE_POLL_TIMEOUT_MS, [this]() {
-    if (this->state_ != State::IDLE) {
-      if (this->state_ == State::CONNECTING) {
-        // The brush was never reached, so the cycle read nothing. Marking a
-        // poll pending lets the next tick retry right away instead of
-        // waiting out the full off-dock interval.
-        this->poll_pending_ = true;
-      }
-      ESP_LOGW(TAG, "[%s] poll watchdog fired, forcing disconnect", this->parent_->address_str());
-      // out of range or asleep otherwise reads in HA like "nothing changed"
-      this->status_set_warning("poll timed out");
-      this->disconnect_();
+    if (this->state_ == State::IDLE)
+      return;
+    // out of range or asleep otherwise reads in HA like "nothing changed"
+    if (this->state_ == State::CONNECTING) {
+      // The X Ultra 20 advertises only for about 2.5 min after a button, motion
+      // or charger wake, with no timer wake, so a timed attempt rarely meets it.
+      // The client stays enabled and the cycle runs on the next advertisement.
+      ESP_LOGW(TAG, "[%s] brush not reachable, waiting for its advertisement", this->parent_->address_str());
+      this->status_set_warning("brush not reachable");
+      return;
     }
+    ESP_LOGW(TAG, "[%s] poll watchdog fired, forcing disconnect", this->parent_->address_str());
+    this->status_set_warning("poll timed out");
+    this->disconnect_();
   });
 }
 
@@ -311,6 +317,12 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
         // Stamp the cycle so the adaptive gate does not fire an extra poll
         // right after this adopted cycle completes.
         this->arm_cycle_(true);
+      } else if (this->state_ == State::CONNECTING) {
+        // the wait for the advertisement can last hours: the connected phase
+        // gets its own watchdog and the cadence counts from here
+        if (this->cycle_stamps_cadence_)
+          this->last_poll_ms_ = millis();
+        this->start_watchdog_();
       }
       this->set_state_(State::DISCOVERING);
       break;
