@@ -1389,7 +1389,10 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
     // The settings response is a two-frame transfer. Feed both 0302 frames into
     // the reassembler and publish from the 34-byte buffer as fields arrive. Both
     // settings kinds share the transfer and the continuation region.
+    bool const had_start = this->settings_asm_.has_start();
     this->settings_asm_.feed(data, len);
+    // once per transfer: has_start stays set while the continuation frame arrives
+    bool const start_arrived = !had_start && this->settings_asm_.has_start();
     DeviceSettings ds{};
     parse_device_settings(this->settings_asm_.buffer(), &ds);
     if (this->settings_asm_.has_cont()) {
@@ -1443,9 +1446,9 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       }
 #endif
     }
-    if (this->settings_asm_.has_start() && this->profile_->settings_kind == SettingsKind::SETTINGS_V20_34B) {
+    if (start_arrived && this->profile_->settings_kind == SettingsKind::SETTINGS_V20_34B) {
       this->publish_v20_start_settings_(this->settings_asm_.buffer());
-    } else if (this->settings_asm_.has_start()) {
+    } else if (start_arrived) {
       // Start region: scheme pNum drives the select readback; the config toggles
       // and the raw indices correct their optimistic state.
 #ifdef USE_SELECT
@@ -1491,9 +1494,9 @@ void OcleanHub::publish_v20_start_settings_(const uint8_t *buf) {
   DeviceSettingsV20Start s{};
   parse_device_settings_v20_start(buf, &s);
   ESP_LOGI(TAG,
-           "[%s] settings: battery=%u%% mode=%u of %u scheme_type=%u brush_mode=%s raise_wake=%s auto=%s "
+           "[%s] settings: battery=%u%% mode=%u mode_num=%u scheme_type=%u brush_mode=%s raise_wake=%s auto=%s "
            "voice=%s voice_zone=%s voice_pressure=%s festival=%s auto_update=%s network=%u bus=%u",
-           this->parent_->address_str(), s.battery, s.mode, s.mode_count, s.scheme_type, ONOFF(s.brush_mode_on),
+           this->parent_->address_str(), s.battery, s.mode, s.mode_num, s.scheme_type, ONOFF(s.brush_mode_on),
            ONOFF(s.raise_wake), ONOFF(s.auto_mode), ONOFF(s.voice), ONOFF(s.voice_zone_change), ONOFF(s.voice_pressure),
            ONOFF(s.festival_reminder), ONOFF(s.auto_update), s.network_status, s.bus_brushing);
   if (s.battery <= 100)

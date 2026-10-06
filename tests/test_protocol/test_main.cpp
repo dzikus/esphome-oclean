@@ -1412,7 +1412,7 @@ void test_v20_settings_real_frames() {
   TEST_ASSERT_TRUE(start.raise_wake);
   TEST_ASSERT_TRUE(start.auto_update);
   TEST_ASSERT_FALSE(start.auto_mode);
-  TEST_ASSERT_EQUAL_UINT8(5, start.mode_count);
+  TEST_ASSERT_EQUAL_UINT8(5, start.mode_num);
   TEST_ASSERT_TRUE(start.voice);
   TEST_ASSERT_TRUE(start.voice_zone_change);
   TEST_ASSERT_TRUE(start.voice_pressure);

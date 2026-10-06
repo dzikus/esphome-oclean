@@ -219,7 +219,7 @@ void parse_device_settings_v20_start(const uint8_t *buf, DeviceSettingsV20Start 
   out->raise_wake = buf[2] != 0;
   out->auto_update = buf[3] != 0;
   out->auto_mode = buf[4] != 0;
-  out->mode_count = buf[5];
+  out->mode_num = buf[5];
   out->bus_brushing = buf[6];
   out->voice = buf[7] != 0;
   out->voice_zone_change = buf[8] != 0;

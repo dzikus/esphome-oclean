@@ -388,7 +388,7 @@ struct DeviceSettingsV20Start {
   bool raise_wake;          // buffer 2 != 0
   bool auto_update;         // buffer 3 != 0
   bool auto_mode;           // buffer 4 != 0
-  uint8_t mode_count;       // buffer 5
+  uint8_t mode_num;         // buffer 5, moves with buffer 11: not a count
   uint8_t bus_brushing;     // buffer 6
   bool voice;               // buffer 7 != 0
   bool voice_zone_change;   // buffer 8 != 0
