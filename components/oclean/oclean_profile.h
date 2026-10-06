@@ -67,6 +67,9 @@ struct OcleanProfile {
   bool sends_clear_running_data;
   // the mode byte indexes the scheme select's preset table
   bool cloud_scheme_ids;
+  // The X Ultra 20 reads 0 on 0x2A19 right after a wake; its battery comes from
+  // STATUS and the settings only.
+  bool battery_char_reliable;
 };
 
 extern const OcleanProfile PROFILE_TYPE1;

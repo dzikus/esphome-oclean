@@ -400,9 +400,6 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
           this->read_handle_(this->fw_rev_handle_, "dis-fw-rev");
           this->read_handle_(this->sw_rev_handle_, "dis-sw-rev");
         }
-        this->read_handle_(this->battery_handle_, "battery");
-        if (this->battery_handle_ == 0)
-          this->got_battery_ = true;
         if (!this->awaiting_model_)
           this->begin_queries_();
       });
@@ -605,11 +602,17 @@ void OcleanHub::begin_queries_() {
   this->parent_->set_connection_type(espbt::ConnectionType::V3_WITH_CACHE);
   this->round_starting_ = true;
   this->cccd_writes_pending_ = 0;
-  this->register_notify_handle_(this->battery_handle_, "battery");
+  // after the model read: only the profile knows whether 0x2A19 can be trusted
+  bool const battery_char = this->profile_->battery_char_reliable;
+  if (!battery_char || !this->read_handle_(this->battery_handle_, "battery"))
+    this->got_battery_ = true;
+  if (battery_char)
+    this->register_notify_handle_(this->battery_handle_, "battery");
   this->register_notify_handle_(this->rx_main_handle_, "rx-main");
   this->register_notify_handle_(this->rx_session_handle_, "rx-session");
   if (!this->profile_->skip_cccd_write) {
-    for (uint16_t const cccd : {this->battery_cccd_, this->rx_main_cccd_, this->rx_session_cccd_}) {
+    uint16_t const battery_cccd = battery_char ? this->battery_cccd_ : 0;
+    for (uint16_t const cccd : {battery_cccd, this->rx_main_cccd_, this->rx_session_cccd_}) {
       if (cccd != 0 && this->write_cccd_(cccd))
         this->cccd_writes_pending_++;
     }

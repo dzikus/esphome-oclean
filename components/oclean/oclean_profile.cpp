@@ -48,6 +48,7 @@ const OcleanProfile PROFILE_TYPE1 = {
     /*skip_cccd_write=*/.skip_cccd_write = true,
     /*sends_clear_running_data=*/.sends_clear_running_data = true,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
+    /*battery_char_reliable=*/.battery_char_reliable = true,
 };
 
 // 0202 clears the session ring on the models where its effect is known, so an
@@ -66,6 +67,7 @@ const OcleanProfile PROFILE_UNKNOWN = {
     /*skip_cccd_write=*/.skip_cccd_write = true,
     /*sends_clear_running_data=*/.sends_clear_running_data = false,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
+    /*battery_char_reliable=*/.battery_char_reliable = true,
 };
 
 // === Z1 profile (model OCLEANY5) ===
@@ -86,6 +88,7 @@ const OcleanProfile PROFILE_TYPE_Z1 = {
     /*skip_cccd_write=*/.skip_cccd_write = true,
     /*sends_clear_running_data=*/.sends_clear_running_data = true,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
+    /*battery_char_reliable=*/.battery_char_reliable = true,
 };
 
 // === X Ultra 20 (model OCLEANV20*, hardware revision protocol 0x000D) ===
@@ -105,6 +108,7 @@ const OcleanProfile PROFILE_TYPE_V20 = {
     /*skip_cccd_write=*/.skip_cccd_write = false,
     /*sends_clear_running_data=*/.sends_clear_running_data = false,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
+    /*battery_char_reliable=*/.battery_char_reliable = false,
 };
 
 // Order matters: first match wins, so the most specific prefix comes first

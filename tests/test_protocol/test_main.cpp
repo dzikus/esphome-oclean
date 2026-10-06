@@ -1324,6 +1324,7 @@ void test_profile_v20_contract() {
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.skip_cccd_write);
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.sends_clear_running_data);
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.cloud_scheme_ids);
+  TEST_ASSERT_FALSE(PROFILE_TYPE_V20.battery_char_reliable);
   TEST_ASSERT_EQUAL_PTR(PROFILE_TYPE1.query_cmds, PROFILE_TYPE_V20.query_cmds);
   TEST_ASSERT_EQUAL_UINT8(PROFILE_TYPE1.query_cmd_count, PROFILE_TYPE_V20.query_cmd_count);
 }
@@ -1334,6 +1335,9 @@ void test_validated_profiles_keep_writes_and_cccd_skip() {
   TEST_ASSERT_TRUE(PROFILE_TYPE1.skip_cccd_write);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.sends_clear_running_data);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.cloud_scheme_ids);
+  TEST_ASSERT_TRUE(PROFILE_TYPE1.battery_char_reliable);
+  TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.battery_char_reliable);
+  TEST_ASSERT_TRUE(PROFILE_UNKNOWN.battery_char_reliable);
   TEST_ASSERT_EQUAL_INT(SessionFormat::FIXED_42, PROFILE_TYPE1.session_format);
   TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.allows_writes);
   TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.skip_cccd_write);
