@@ -99,37 +99,42 @@ BINARY_SENSORS = [
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Auto mode",
     ),
+    # The firmware's single-step teaching program. Its write switches the brush
+    # into that mode or back to mode 5, never to the mode picked on screen, so it
+    # stays read-only.
     (
-        "voice_prompts",
-        "set_voice_prompts_binary_sensor",
+        "voice_teaching",
+        "set_voice_teaching_binary_sensor",
         None,
-        "mdi:account-voice",
+        "mdi:school-outline",
         ENTITY_CATEGORY_DIAGNOSTIC,
-        "Voice prompts",
+        "Voice teaching",
+    ),
+    # On means an SSID is stored; without one the brush never starts Wi-Fi.
+    (
+        "wifi_configured",
+        "set_wifi_configured_binary_sensor",
+        None,
+        "mdi:wifi-cog",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Wi-Fi provisioned",
     ),
     (
-        "voice_zone_change",
-        "set_voice_zone_change_binary_sensor",
+        "area_guidance",
+        "set_area_guidance_binary_sensor",
         None,
-        "mdi:swap-horizontal",
+        "mdi:map-marker-path",
         ENTITY_CATEGORY_DIAGNOSTIC,
-        "Voice on zone change",
+        "Zone guidance",
     ),
+    # A shop display mode in which the brush never sleeps on battery.
     (
-        "voice_pressure",
-        "set_voice_pressure_binary_sensor",
+        "demo_mode",
+        "set_demo_mode_binary_sensor",
         None,
-        "mdi:gauge",
+        "mdi:storefront-outline",
         ENTITY_CATEGORY_DIAGNOSTIC,
-        "Voice on over-pressure",
-    ),
-    (
-        "festival_reminder",
-        "set_festival_reminder_binary_sensor",
-        None,
-        "mdi:party-popper",
-        ENTITY_CATEGORY_DIAGNOSTIC,
-        "Holiday reminder",
+        "Retail display mode",
     ),
     (
         "auto_update",

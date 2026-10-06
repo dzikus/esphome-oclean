@@ -137,7 +137,7 @@ class WarnOnSharedDefaultNames(unittest.TestCase):
 # a row on every model, one only on the X Ultra 20, one only on the X Pro Elite
 MODEL_ROWS = [
     ("charging", "Charging"),
-    ("voice_prompts", "Voice prompts"),
+    ("wifi_configured", "Wi-Fi provisioned"),
     ("fill_brush", "Fill brush"),
 ]
 
@@ -165,7 +165,7 @@ class InjectPerModel(RawConfigCase):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
         out = self._inject({"oclean_id": "hub_a"})
         self.assertIn("charging", out)
-        self.assertIn("voice_prompts", out)
+        self.assertIn("wifi_configured", out)
         self.assertNotIn("fill_brush", out)
 
     def test_the_default_builds_the_elite_rows_and_not_the_ultra_ones(self):
@@ -173,7 +173,7 @@ class InjectPerModel(RawConfigCase):
         out = self._inject({"oclean_id": "hub_a"})
         self.assertIn("charging", out)
         self.assertIn("fill_brush", out)
-        self.assertNotIn("voice_prompts", out)
+        self.assertNotIn("wifi_configured", out)
 
     def test_an_explicit_row_the_model_lacks_is_rejected(self):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})

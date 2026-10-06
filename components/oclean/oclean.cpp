@@ -1491,6 +1491,8 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       esphome::oclean::OcleanHub::publish_(this->volume_index_sensor_, (float)ds.volume_index);
       esphome::oclean::OcleanHub::publish_(this->head_used_time_sensor_, (float)clamp_head_counter(ds.head_used_time));
     }
+  } else if (this->handle_status_reply_(data, len)) {
+    // published inside
   } else {
     // Any other frame on the main notify char: device-info replies, command
     // ACKs and anything not yet mapped. Debug-level raw dump keeps ACKs
@@ -1511,21 +1513,80 @@ void OcleanHub::publish_v20_start_settings_(const uint8_t *buf) {
            ONOFF(s.festival_reminder), ONOFF(s.auto_update), s.network_status, s.bus_brushing);
   if (s.battery <= 100)
     esphome::oclean::OcleanHub::publish_(this->battery_sensor_, (float)s.battery);
+  this->voice_prompts_[0] = s.voice;
+  this->voice_prompts_[1] = s.voice_zone_change;
+  this->voice_prompts_[2] = s.voice_pressure;
+  this->voice_prompts_known_ = true;
 #ifdef USE_SWITCH
   if (this->raise_wake_switch_ != nullptr)
     this->raise_wake_switch_->publish_state(s.raise_wake);
   if (this->brush_mode_switch_ != nullptr)
     this->brush_mode_switch_->publish_state(s.brush_mode_on);
+  if (this->auto_mode_switch_ != nullptr)
+    this->auto_mode_switch_->publish_state(s.auto_mode);
+  if (this->festival_reminder_switch_ != nullptr)
+    this->festival_reminder_switch_->publish_state(s.festival_reminder);
+  for (size_t i = 0; i < VOICE_PROMPT_COUNT; i++) {
+    if (this->voice_prompt_switches_[i] != nullptr)
+      this->voice_prompt_switches_[i]->publish_state(this->voice_prompts_[i]);
+  }
 #endif
   esphome::oclean::OcleanHub::publish_(this->auto_mode_binary_sensor_, s.auto_mode);
   esphome::oclean::OcleanHub::publish_(this->head_used_time_sensor_, (float)clamp_head_counter(s.head_used_time));
-  esphome::oclean::OcleanHub::publish_(this->voice_prompts_binary_sensor_, s.voice);
-  esphome::oclean::OcleanHub::publish_(this->voice_zone_change_binary_sensor_, s.voice_zone_change);
-  esphome::oclean::OcleanHub::publish_(this->voice_pressure_binary_sensor_, s.voice_pressure);
-  esphome::oclean::OcleanHub::publish_(this->festival_reminder_binary_sensor_, s.festival_reminder);
   esphome::oclean::OcleanHub::publish_(this->auto_update_binary_sensor_, s.auto_update);
   esphome::oclean::OcleanHub::publish_(this->network_binary_sensor_, s.network_status != 0);
+  esphome::oclean::OcleanHub::publish_(this->voice_teaching_binary_sensor_, s.bus_brushing != 0);
   esphome::oclean::OcleanHub::publish_(this->device_mode_sensor_, (float)s.mode);
+  esphome::oclean::OcleanHub::publish_(this->mode_number_sensor_, (float)s.mode_num);
+}
+
+bool OcleanHub::handle_status_reply_(const uint8_t *data, size_t len) {
+  uint8_t status = 0;
+  if (parse_status_reply(data, len, 0x03, 0x14, &status)) {
+    ESP_LOGI(TAG, "[%s] running state: %u (%s)", this->parent_->address_str(), status,
+             format_hex_pretty(data, len).c_str());
+    esphome::oclean::OcleanHub::publish_(this->running_state_sensor_, (float)status);
+    return true;
+  }
+  binary_sensor::BinarySensor *target = nullptr;
+  const char *what = nullptr;
+  bool on = false;
+  if (parse_status_reply(data, len, 0x03, 0x16, &status)) {
+    target = this->area_guidance_binary_sensor_;
+    what = "zone guidance";
+    on = status != 0;
+  } else if (parse_status_reply(data, len, 0x03, 0xA0, &status)) {
+    target = this->demo_mode_binary_sensor_;
+    what = "retail display mode";
+    on = status != 0;
+  } else if (parse_status_reply(data, len, 0x02, 0x34, &status)) {
+    // the app reads 1 as provisioned and stops its network check on anything else
+    target = this->wifi_configured_binary_sensor_;
+    what = "wi-fi provisioned";
+    on = status == 1;
+  } else {
+    return false;
+  }
+  ESP_LOGI(TAG, "[%s] %s: %s (%s)", this->parent_->address_str(), what, ONOFF(on),
+           format_hex_pretty(data, len).c_str());
+  esphome::oclean::OcleanHub::publish_(target, on);
+  return true;
+}
+
+bool OcleanHub::set_voice_prompt(uint8_t index, bool on) {
+  if (index >= VOICE_PROMPT_COUNT)
+    return false;
+  if (!this->voice_prompts_known_) {
+    ESP_LOGW(TAG, "[%s] voice prompts not read from the brush yet, write refused", this->parent_->address_str());
+    return false;
+  }
+  auto flags = this->voice_prompts_;
+  flags[index] = on;
+  if (!this->send_command(build_voice_prompts_command(flags), "voice-prompts"))
+    return false;
+  // a second toggle before the readback must build on this one, not undo it
+  this->voice_prompts_[index] = on;
+  return true;
 }
 
 void OcleanHub::maybe_finish_poll_() {

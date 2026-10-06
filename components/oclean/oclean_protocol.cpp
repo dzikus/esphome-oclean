@@ -706,6 +706,21 @@ std::vector<uint8_t> build_toggle_command(uint8_t b0, uint8_t b1, uint8_t on_val
   return {b0, b1, state ? on_value : off_value};
 }
 
+std::vector<uint8_t> build_voice_prompts_command(const std::array<bool, VOICE_PROMPT_COUNT> &flags) {
+  std::vector<uint8_t> cmd = {0x02, 0x31};
+  for (bool const on : flags)
+    cmd.push_back(static_cast<uint8_t>(on));
+  cmd.push_back(0x00);
+  return cmd;
+}
+
+bool parse_status_reply(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1, uint8_t *status) {
+  if (data == nullptr || status == nullptr || len < 3 || data[0] != b0 || data[1] != b1)
+    return false;
+  *status = data[2];
+  return true;
+}
+
 const char *timezone_index_to_string(uint8_t wire_index) {
   static const char *const TABLE[33] = {
       "GMT-12:00", "GMT-11:00", "GMT-10:00", "GMT-09:00", "GMT-08:00", "GMT-07:00", "GMT-06:00",

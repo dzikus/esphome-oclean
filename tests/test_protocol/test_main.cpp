@@ -1325,8 +1325,21 @@ void test_profile_v20_contract() {
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.sends_clear_running_data);
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.cloud_scheme_ids);
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.battery_char_reliable);
-  TEST_ASSERT_EQUAL_PTR(PROFILE_TYPE1.query_cmds, PROFILE_TYPE_V20.query_cmds);
-  TEST_ASSERT_EQUAL_UINT8(PROFILE_TYPE1.query_cmd_count, PROFILE_TYPE_V20.query_cmd_count);
+  // TYPE1's queries first, then the four reads only this model answers
+  TEST_ASSERT_EQUAL_UINT8(PROFILE_TYPE1.query_cmd_count + 4, PROFILE_TYPE_V20.query_cmd_count);
+  for (uint8_t i = 0; i < PROFILE_TYPE1.query_cmd_count; i++) {
+    TEST_ASSERT_EQUAL_UINT8(PROFILE_TYPE1.query_cmds[i].len, PROFILE_TYPE_V20.query_cmds[i].len);
+    TEST_ASSERT_EQUAL_MEMORY(PROFILE_TYPE1.query_cmds[i].bytes, PROFILE_TYPE_V20.query_cmds[i].bytes,
+                             PROFILE_TYPE1.query_cmds[i].len);
+    TEST_ASSERT_EQUAL_INT(PROFILE_TYPE1.query_cmds[i].target, PROFILE_TYPE_V20.query_cmds[i].target);
+  }
+  const uint8_t extra[4][2] = {{0x03, 0x14}, {0x03, 0x16}, {0x03, 0xA0}, {0x02, 0x34}};
+  for (uint8_t i = 0; i < 4; i++) {
+    const ProfileCmd &q = PROFILE_TYPE_V20.query_cmds[PROFILE_TYPE1.query_cmd_count + i];
+    TEST_ASSERT_EQUAL_UINT8(2, q.len);
+    TEST_ASSERT_EQUAL_MEMORY(extra[i], q.bytes, 2);
+    TEST_ASSERT_EQUAL_INT(WriteTarget::TX_MAIN, q.target);
+  }
 }
 
 // The keys are what the mismatch warning tells the user to type, so they must
@@ -1389,15 +1402,66 @@ void test_command_permitted_read_only_allows_only_profile_reads() {
   }
 }
 
-void test_command_permitted_v20_allows_reads_and_the_clock() {
+void test_command_permitted_v20_passes_only_listed_writes() {
   const OcleanProfile &p = PROFILE_TYPE_V20;
   TEST_ASSERT_TRUE(command_permitted(false, p, STATUS_CMD, sizeof(STATUS_CMD)));
   TEST_ASSERT_TRUE(command_permitted(false, p, DOWNLOAD_CMD, sizeof(DOWNLOAD_CMD)));
   TEST_ASSERT_TRUE(command_permitted(false, p, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD)));
   TEST_ASSERT_FALSE(command_permitted(false, p, SET_CLOCK_CMD, sizeof(SET_CLOCK_CMD) - 1));
+  TEST_ASSERT_TRUE(command_permitted(false, p, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
+  const uint8_t voice[] = {0x02, 0x31, 0x01, 0x00, 0x01, 0x00};
+  TEST_ASSERT_TRUE(command_permitted(false, p, voice, sizeof(voice)));
+  const uint8_t head_reset[] = {0x02, 0x0F};
+  TEST_ASSERT_TRUE(command_permitted(false, p, head_reset, sizeof(head_reset)));
+  // ring clear, firmware update, cloud and OTA hosts, factory reset, the two
+  // mode changers and the retail display mode stay out
+  const uint8_t service_url[] = {0x02, 0x33, 0x68};
+  const uint8_t ota_url[] = {0x03, 0xA1, 0x68};
+  const uint8_t factory_reset[] = {0x09, 0xED, 0xEF};
+  const uint8_t teaching[] = {0x02, 0x30, 0x01};
+  const uint8_t scheme[] = {0x02, 0x06, 0x01, 0x01, 0x00, 0x2F, 0xB4};
+  const uint8_t demo[] = {0x02, 0xA0, 0x01};
+  const uint8_t opcode_half[] = {0x02};
   TEST_ASSERT_FALSE(command_permitted(false, p, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
-  TEST_ASSERT_FALSE(command_permitted(false, p, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
   TEST_ASSERT_FALSE(command_permitted(false, p, FORCE_UPDATE_CMD, sizeof(FORCE_UPDATE_CMD)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, service_url, sizeof(service_url)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, ota_url, sizeof(ota_url)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, factory_reset, sizeof(factory_reset)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, teaching, sizeof(teaching)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, scheme, sizeof(scheme)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, demo, sizeof(demo)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, opcode_half, sizeof(opcode_half)));
+  TEST_ASSERT_FALSE(command_permitted(true, p, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
+}
+
+void test_command_permitted_v20_extra_reads_pass_read_only() {
+  const uint8_t wifi_check[] = {0x02, 0x34};
+  const uint8_t running[] = {0x03, 0x14};
+  TEST_ASSERT_TRUE(command_permitted(true, PROFILE_TYPE_V20, wifi_check, sizeof(wifi_check)));
+  TEST_ASSERT_TRUE(command_permitted(true, PROFILE_TYPE_V20, running, sizeof(running)));
+  TEST_ASSERT_FALSE(command_permitted(true, PROFILE_TYPE1, wifi_check, sizeof(wifi_check)));
+}
+
+void test_voice_prompts_command() {
+  const std::array<bool, VOICE_PROMPT_COUNT> flags = {true, false, true};
+  const std::vector<uint8_t> cmd = build_voice_prompts_command(flags);
+  const uint8_t expect[] = {0x02, 0x31, 0x01, 0x00, 0x01, 0x00};
+  TEST_ASSERT_EQUAL_size_t(sizeof(expect), cmd.size());
+  TEST_ASSERT_EQUAL_MEMORY(expect, cmd.data(), sizeof(expect));
+}
+
+void test_parse_status_reply() {
+  uint8_t status = 0xFF;
+  const uint8_t running[] = {0x03, 0x14, 0x01};
+  TEST_ASSERT_TRUE(parse_status_reply(running, sizeof(running), 0x03, 0x14, &status));
+  TEST_ASSERT_EQUAL_UINT8(1, status);
+  const uint8_t wifi[] = {0x02, 0x34, 0x00, 0x4E, 0x47};
+  TEST_ASSERT_TRUE(parse_status_reply(wifi, sizeof(wifi), 0x02, 0x34, &status));
+  TEST_ASSERT_EQUAL_UINT8(0, status);
+  TEST_ASSERT_FALSE(parse_status_reply(running, sizeof(running), 0x03, 0x16, &status));
+  TEST_ASSERT_FALSE(parse_status_reply(running, 2, 0x03, 0x14, &status));
+  TEST_ASSERT_FALSE(parse_status_reply(nullptr, 3, 0x03, 0x14, &status));
+  TEST_ASSERT_FALSE(parse_status_reply(running, sizeof(running), 0x03, 0x14, nullptr));
 }
 
 // captured 2026-10-05 from an X Ultra 20 (OCLEANV20B, firmware 0.0.2.1)
@@ -1988,7 +2052,10 @@ int main() {
   RUN_TEST(test_validated_profiles_keep_writes_and_cccd_skip);
   RUN_TEST(test_clock_write_permitted);
   RUN_TEST(test_command_permitted_read_only_allows_only_profile_reads);
-  RUN_TEST(test_command_permitted_v20_allows_reads_and_the_clock);
+  RUN_TEST(test_command_permitted_v20_passes_only_listed_writes);
+  RUN_TEST(test_command_permitted_v20_extra_reads_pass_read_only);
+  RUN_TEST(test_voice_prompts_command);
+  RUN_TEST(test_parse_status_reply);
   RUN_TEST(test_v20_settings_real_frames);
   RUN_TEST(test_v20_settings_after_clock_write);
   RUN_TEST(test_v20_inline_0307_real_frame);

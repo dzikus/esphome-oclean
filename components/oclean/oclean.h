@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <map>
 #include <string>
 #include <vector>
@@ -35,6 +36,7 @@ class OcleanSessionTrigger : public Trigger<const SessionRecord &> {};
 
 class OcleanCaptureButton;
 class OcleanCommandSwitch;
+class OcleanVoiceSwitch;
 class OcleanSchemeSelect;
 class OcleanLanguageSelect;
 class OcleanHeadDaysNumber;
@@ -64,7 +66,13 @@ class OcleanHub : public ble_client::BLEClientNode,
 
   void set_hub_index(int i) { this->hub_index_ = i; }
   void set_total_hubs(int n) { this->total_hubs_ = n; }
-  void set_model(BrushModel model) { this->model_ = model; }
+  void set_model(BrushModel model) {
+    this->model_ = model;
+    // DIS replaces it on the first poll; until then the write gate already
+    // matches the brush the yaml names
+    if (model == BrushModel::X_ULTRA_20)
+      this->profile_ = &PROFILE_TYPE_V20;
+  }
   void set_expose_dev_sensors(bool en) { this->expose_dev_sensors_ = en; }
   void set_read_only(bool en) { this->read_only_ = en; }
 
@@ -128,18 +136,16 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_splash_prevent_binary_sensor(binary_sensor::BinarySensor *s) { this->splash_prevent_binary_sensor_ = s; }
   void set_fill_brush_binary_sensor(binary_sensor::BinarySensor *s) { this->fill_brush_binary_sensor_ = s; }
   void set_auto_mode_binary_sensor(binary_sensor::BinarySensor *s) { this->auto_mode_binary_sensor_ = s; }
-  // X Ultra 20 start-region flags; other models never publish them
-  void set_voice_prompts_binary_sensor(binary_sensor::BinarySensor *s) { this->voice_prompts_binary_sensor_ = s; }
-  void set_voice_zone_change_binary_sensor(binary_sensor::BinarySensor *s) {
-    this->voice_zone_change_binary_sensor_ = s;
-  }
-  void set_voice_pressure_binary_sensor(binary_sensor::BinarySensor *s) { this->voice_pressure_binary_sensor_ = s; }
-  void set_festival_reminder_binary_sensor(binary_sensor::BinarySensor *s) {
-    this->festival_reminder_binary_sensor_ = s;
-  }
+  // X Ultra 20 only; other models never publish them
   void set_auto_update_binary_sensor(binary_sensor::BinarySensor *s) { this->auto_update_binary_sensor_ = s; }
   void set_network_binary_sensor(binary_sensor::BinarySensor *s) { this->network_binary_sensor_ = s; }
+  void set_voice_teaching_binary_sensor(binary_sensor::BinarySensor *s) { this->voice_teaching_binary_sensor_ = s; }
+  void set_wifi_configured_binary_sensor(binary_sensor::BinarySensor *s) { this->wifi_configured_binary_sensor_ = s; }
+  void set_area_guidance_binary_sensor(binary_sensor::BinarySensor *s) { this->area_guidance_binary_sensor_ = s; }
+  void set_demo_mode_binary_sensor(binary_sensor::BinarySensor *s) { this->demo_mode_binary_sensor_ = s; }
   void set_device_mode_sensor(sensor::Sensor *s) { this->device_mode_sensor_ = s; }
+  void set_mode_number_sensor(sensor::Sensor *s) { this->mode_number_sensor_ = s; }
+  void set_running_state_sensor(sensor::Sensor *s) { this->running_state_sensor_ = s; }
 
   // Settings-buffer scalar fields (raw indices and a usage counter).
   void set_device_theme_sensor(sensor::Sensor *s) { this->device_theme_sensor_ = s; }
@@ -156,6 +162,12 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_brush_pause_switch(OcleanCommandSwitch *s) { this->brush_pause_switch_ = s; }
   void set_raise_wake_switch(OcleanCommandSwitch *s) { this->raise_wake_switch_ = s; }
   void set_brush_mode_switch(OcleanCommandSwitch *s) { this->brush_mode_switch_ = s; }
+  void set_auto_mode_switch(OcleanCommandSwitch *s) { this->auto_mode_switch_ = s; }
+  void set_festival_reminder_switch(OcleanCommandSwitch *s) { this->festival_reminder_switch_ = s; }
+  void set_voice_prompt_switch(uint8_t index, OcleanVoiceSwitch *s) {
+    if (index < VOICE_PROMPT_COUNT)
+      this->voice_prompt_switches_[index] = s;
+  }
   void set_scheme_select(OcleanSchemeSelect *s) { this->scheme_select_ = s; }
   void set_language_select(OcleanLanguageSelect *s) { this->language_select_ = s; }
 
@@ -178,6 +190,10 @@ class OcleanHub : public ble_client::BLEClientNode,
   // Warns and writes nothing until the local clock is synced. A mutation, so it
   // runs on a button press only, never on boot or a poll.
   void sync_clock();
+
+  // The frame carries all three flags, so the other two come from the last
+  // readback; refused until one has arrived.
+  bool set_voice_prompt(uint8_t index, bool on);
 
  protected:
   // per-cycle flags plus the watchdog, for a link that is already up.
@@ -278,6 +294,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   void emit_session_event_(const SessionRecord &r, uint32_t ts);
   void handle_main_notify_(const uint8_t *data, size_t len);
   void publish_v20_start_settings_(const uint8_t *buf);
+  // the one-byte answers to the X Ultra 20's extra reads; false for other frames
+  bool handle_status_reply_(const uint8_t *data, size_t len);
   // notify on the session channel after the stream completed: enrichment push
   void handle_enrichment_notify_(const uint8_t *data, size_t len);
 
@@ -333,13 +351,20 @@ class OcleanHub : public ble_client::BLEClientNode,
   binary_sensor::BinarySensor *splash_prevent_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *fill_brush_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *auto_mode_binary_sensor_{nullptr};
-  binary_sensor::BinarySensor *voice_prompts_binary_sensor_{nullptr};
-  binary_sensor::BinarySensor *voice_zone_change_binary_sensor_{nullptr};
-  binary_sensor::BinarySensor *voice_pressure_binary_sensor_{nullptr};
-  binary_sensor::BinarySensor *festival_reminder_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *auto_update_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *network_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *voice_teaching_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *wifi_configured_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *area_guidance_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *demo_mode_binary_sensor_{nullptr};
   sensor::Sensor *device_mode_sensor_{nullptr};
+  sensor::Sensor *mode_number_sensor_{nullptr};
+  sensor::Sensor *running_state_sensor_{nullptr};
+  OcleanCommandSwitch *auto_mode_switch_{nullptr};
+  OcleanCommandSwitch *festival_reminder_switch_{nullptr};
+  OcleanVoiceSwitch *voice_prompt_switches_[VOICE_PROMPT_COUNT]{};
+  std::array<bool, VOICE_PROMPT_COUNT> voice_prompts_{};
+  bool voice_prompts_known_{false};
   sensor::Sensor *device_theme_sensor_{nullptr};
   sensor::Sensor *volume_index_sensor_{nullptr};
   sensor::Sensor *head_used_time_sensor_{nullptr};

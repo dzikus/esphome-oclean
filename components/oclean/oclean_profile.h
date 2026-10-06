@@ -72,6 +72,9 @@ struct OcleanProfile {
   bool allows_writes;
   // 0201 passes even when allows_writes is false
   bool allows_clock_write;
+  // with allows_writes false, the two-byte opcodes that still pass
+  const uint8_t (*write_opcodes)[2];
+  uint8_t write_opcode_count;
   bool skip_cccd_write;
   // 0202 after the queries
   bool sends_clear_running_data;

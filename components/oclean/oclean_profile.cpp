@@ -21,6 +21,55 @@ static const ProfileCmd TYPE1_QUERY_CMDS[] = {
      .name = "SESSION_DOWNLOAD"},
 };
 
+// === X Ultra 20 query sequence ===
+// TYPE1's three plus the motor state, the zone-guidance state, the retail
+// display mode and the Wi-Fi provisioning check. All answer on the main notify
+// characteristic with a status byte after the opcode.
+static const uint8_t V20_RUNNING_BYTES[] = {0x03, 0x14};
+static const uint8_t V20_AREA_GUIDANCE_BYTES[] = {0x03, 0x16};
+static const uint8_t V20_DEMO_MODE_BYTES[] = {0x03, 0xA0};
+static const uint8_t V20_WIFI_CONFIG_BYTES[] = {0x02, 0x34};
+
+static const ProfileCmd V20_QUERY_CMDS[] = {
+    {.bytes = TYPE1_STATUS_BYTES, .len = sizeof(TYPE1_STATUS_BYTES), .target = WriteTarget::TX_MAIN, .name = "STATUS"},
+    {.bytes = TYPE1_SETTINGS_BYTES,
+     .len = sizeof(TYPE1_SETTINGS_BYTES),
+     .target = WriteTarget::TX_MAIN,
+     .name = "SETTINGS"},
+    {.bytes = TYPE1_DOWNLOAD_BYTES,
+     .len = sizeof(TYPE1_DOWNLOAD_BYTES),
+     .target = WriteTarget::TX_SESSION,
+     .name = "SESSION_DOWNLOAD"},
+    {.bytes = V20_RUNNING_BYTES, .len = sizeof(V20_RUNNING_BYTES), .target = WriteTarget::TX_MAIN, .name = "RUNNING"},
+    {.bytes = V20_AREA_GUIDANCE_BYTES,
+     .len = sizeof(V20_AREA_GUIDANCE_BYTES),
+     .target = WriteTarget::TX_MAIN,
+     .name = "AREA_GUIDANCE"},
+    {.bytes = V20_DEMO_MODE_BYTES,
+     .len = sizeof(V20_DEMO_MODE_BYTES),
+     .target = WriteTarget::TX_MAIN,
+     .name = "DEMO_MODE"},
+    {.bytes = V20_WIFI_CONFIG_BYTES,
+     .len = sizeof(V20_WIFI_CONFIG_BYTES),
+     .target = WriteTarget::TX_MAIN,
+     .name = "WIFI_CONFIG"},
+};
+
+// Each acknowledged by the brush and read back from the settings buffer before
+// it went on the list. 0206 and 0230 are not here: both move the brush off the
+// mode picked on its screen, and nothing over BLE moves it back.
+static const uint8_t V20_WRITE_OPCODES[][2] = {
+    {0x02, 0x0D},  // area reminder
+    {0x02, 0x12},  // over-pressure alert
+    {0x02, 0x23},  // raise to wake
+    {0x02, 0x25},  // auto mode
+    {0x02, 0x28},  // holiday reminder
+    {0x02, 0x31},  // voice prompts, all three flags in one frame
+    {0x02, 0x16},  // display language
+    {0x02, 0x17},  // head replacement days
+    {0x02, 0x0F},  // head counter reset
+};
+
 // === UNKNOWN query sequence ===
 // Status is the only model-agnostic query: settings framing and record layout
 // are model-specific and would mis-decode on an unrecognised device. Battery
@@ -45,6 +94,8 @@ const OcleanProfile PROFILE_TYPE1 = {
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_TYPE1_34B,
     /*allows_writes=*/.allows_writes = true,
     /*allows_clock_write=*/.allows_clock_write = true,
+    /*write_opcodes=*/.write_opcodes = nullptr,
+    /*write_opcode_count=*/.write_opcode_count = 0,
     /*skip_cccd_write=*/.skip_cccd_write = true,
     /*sends_clear_running_data=*/.sends_clear_running_data = true,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
@@ -65,6 +116,8 @@ const OcleanProfile PROFILE_UNKNOWN = {
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_NONE,
     /*allows_writes=*/.allows_writes = true,
     /*allows_clock_write=*/.allows_clock_write = true,
+    /*write_opcodes=*/.write_opcodes = nullptr,
+    /*write_opcode_count=*/.write_opcode_count = 0,
     /*skip_cccd_write=*/.skip_cccd_write = true,
     /*sends_clear_running_data=*/.sends_clear_running_data = false,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
@@ -87,6 +140,8 @@ const OcleanProfile PROFILE_TYPE_Z1 = {
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_TYPE1_34B,
     /*allows_writes=*/.allows_writes = true,
     /*allows_clock_write=*/.allows_clock_write = true,
+    /*write_opcodes=*/.write_opcodes = nullptr,
+    /*write_opcode_count=*/.write_opcode_count = 0,
     /*skip_cccd_write=*/.skip_cccd_write = true,
     /*sends_clear_running_data=*/.sends_clear_running_data = true,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
@@ -95,19 +150,21 @@ const OcleanProfile PROFILE_TYPE_Z1 = {
 };
 
 // === X Ultra 20 (model OCLEANV20*, hardware revision protocol 0x000D) ===
-// TYPE1 queries and routing; it only notifies after a CCCD write. Writes other
-// than the clock wait for per-command validation on hardware.
+// TYPE1 routing; it only notifies after a CCCD write. Writes pass one opcode at
+// a time, as each is confirmed on hardware.
 const OcleanProfile PROFILE_TYPE_V20 = {
     /*name=*/.name = "TYPE_V20",
     /*confidence=*/.confidence = 1,
-    /*query_cmds=*/.query_cmds = TYPE1_QUERY_CMDS,
-    /*query_cmd_count=*/.query_cmd_count = sizeof(TYPE1_QUERY_CMDS) / sizeof(TYPE1_QUERY_CMDS[0]),
+    /*query_cmds=*/.query_cmds = V20_QUERY_CMDS,
+    /*query_cmd_count=*/.query_cmd_count = sizeof(V20_QUERY_CMDS) / sizeof(V20_QUERY_CMDS[0]),
     /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
     /*decode_record=*/.decode_record = nullptr,
     /*session_format=*/.session_format = SessionFormat::VARIABLE,
     /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_V20_34B,
     /*allows_writes=*/.allows_writes = false,
     /*allows_clock_write=*/.allows_clock_write = true,
+    /*write_opcodes=*/.write_opcodes = V20_WRITE_OPCODES,
+    /*write_opcode_count=*/.write_opcode_count = sizeof(V20_WRITE_OPCODES) / sizeof(V20_WRITE_OPCODES[0]),
     /*skip_cccd_write=*/.skip_cccd_write = false,
     /*sends_clear_running_data=*/.sends_clear_running_data = false,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
@@ -173,7 +230,15 @@ bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8
     return false;
   if (profile.allows_writes)
     return true;
-  return clock_write_permitted(read_only, profile) && len == SET_CLOCK_CMD_LEN && bytes[0] == 0x02 && bytes[1] == 0x01;
+  if (clock_write_permitted(read_only, profile) && len == SET_CLOCK_CMD_LEN && bytes[0] == 0x02 && bytes[1] == 0x01)
+    return true;
+  if (len < 2)
+    return false;
+  for (uint8_t i = 0; i < profile.write_opcode_count; i++) {
+    if (bytes[0] == profile.write_opcodes[i][0] && bytes[1] == profile.write_opcodes[i][1])
+      return true;
+  }
+  return false;
 }
 
 const char *brush_model_key(BrushModel model) {

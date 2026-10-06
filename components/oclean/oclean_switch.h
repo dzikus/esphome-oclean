@@ -42,6 +42,21 @@ class OcleanCommandSwitch : public switch_::Switch, public Parented<OcleanHub> {
   const char *label_{"switch"};
 };
 
+// One of the X Ultra 20's three voice-prompt flags; the hub builds the frame
+// that carries all three.
+class OcleanVoiceSwitch : public switch_::Switch, public Parented<OcleanHub> {
+ public:
+  void set_index(uint8_t index) { this->index_ = index; }
+
+ protected:
+  void write_state(bool state) override {
+    if (this->parent_->set_voice_prompt(this->index_, state))
+      this->publish_state(state);
+  }
+
+  uint8_t index_{0};
+};
+
 // Local only, nothing reaches the brush: off frees it for the official app.
 // The restored state has to be applied from a deferred call because
 // BLEClient::setup() runs later (AFTER_BLUETOOTH) and re-enables the client.

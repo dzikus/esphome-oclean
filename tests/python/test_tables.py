@@ -91,8 +91,20 @@ class ModelEntitySets(unittest.TestCase):
         # the same entities again.
         elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
         ultra = oc.MODEL_ENTITY_SETS[oc.MODEL_X_ULTRA_20]["unavailable"]
-        self.assertIn("voice_prompts", elite["binary_sensor"])
+        self.assertIn("voice_prompts", elite["switch"])
         self.assertIn("gesture_zone_1", ultra["sensor"])
+
+    def test_auto_mode_is_a_switch_on_one_model_and_a_sensor_on_the_other(self):
+        elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
+        ultra = oc.MODEL_ENTITY_SETS[oc.MODEL_X_ULTRA_20]["unavailable"]
+        self.assertIn("auto_mode", elite["switch"])
+        self.assertIn("auto_mode", ultra["binary_sensor"])
+
+
+class VoiceSwitches(unittest.TestCase):
+    def test_indexes_cover_the_three_flags_once(self):
+        indexes = sorted(index for _key, index, *_row in ocsw.VOICE_SWITCHES)
+        self.assertEqual(indexes, [0, 1, 2])
 
 
 class SwitchSetters(unittest.TestCase):

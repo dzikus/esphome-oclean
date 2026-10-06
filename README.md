@@ -150,20 +150,23 @@ X Pro Elite (`model: x_pro_elite`, the default):
 
 X Ultra 20 (`model: x_ultra_20`):
 
-- 10 sensors: battery, last-session score / duration / valid duration /
+- 12 sensors: battery, last-session score / duration / valid duration /
   coverage, brush-head used days / sessions / used time, clock drift, device
-  mode. No zone sensors: its 12-zone record is not mapped yet.
-- 10 binary sensors: charging, docked, BLE connected (hidden), auto mode
-  (hidden), voice prompts, voice on zone change, voice on over-pressure,
-  holiday reminder, auto update, network.
+  mode, mode number and running state (the last two hidden). No zone sensors:
+  its 12-zone record is not mapped yet.
+- 9 binary sensors: charging, docked, BLE connected (hidden), voice teaching,
+  Wi-Fi provisioned, zone guidance, retail display mode, auto update, network.
 - 9 text sensors, as above.
-- 4 switches: over-pressure alert, raise to wake, area reminder, bluetooth.
+- 9 switches: over-pressure alert, raise to wake, area reminder, auto mode,
+  holiday reminder, voice prompts, voice on zone change, voice on
+  over-pressure, bluetooth.
 - 1 number: head replacement days.
 - 1 select: display language.
 - 3 buttons as above, 1 dev button: capture sessions.
 
-On the X Ultra 20 the brush-backed controls show the brush's state, but every
-write except the clock is refused until it has been checked on the hardware.
+The brushing mode stays read-only on the X Ultra 20. Its two mode writes
+(`02 06`, a program from the app, and `02 30`, the teaching program) move the
+brush off the mode picked on its screen, and nothing over BLE moves it back.
 
 ---
 
@@ -297,7 +300,9 @@ naming a model exist only on hubs with that `model:`.
 | `head_used_time` | Brush head used time | settings buffer 14-15 BE | hidden; unit unconfirmed |
 | `device_theme` | Device theme | settings buffer 0 | X Pro Elite only; hidden; raw index |
 | `volume_index` | Volume index | settings buffer 9 | X Pro Elite only; **dev**; hidden; raw index |
-| `device_mode` | Device mode | settings buffer 11 | X Ultra 20 only; built-in mode 1-5 |
+| `device_mode` | Device mode | settings buffer 11 | X Ultra 20 only; 1-5 = built-in mode picked on screen, 0 = a program from the app |
+| `mode_number` | Mode number | settings buffer 5 | X Ultra 20 only; hidden; raw, moved with the device mode so far |
+| `running_state` | Running state | `03 14` reply | X Ultra 20 only; hidden; raw value, 3 while charged on the dock |
 
 The last decoded session survives reboots: the newest record is persisted in
 NVS per hub and re-published on boot.
@@ -309,15 +314,15 @@ NVS per hub and re-published on boot.
 | `charging` | Charging | STATUS byte 2 == 0x01 | actively charging on the dock |
 | `docked` | Docked | STATUS byte 2 == 0x01 or 0x03 | on the dock, charging or fully charged |
 | `connected` | BLE connected | link state | hidden; off almost always by design (the link is up only seconds per poll); use Last seen for freshness |
-| `auto_mode` | Auto mode | settings buffer 4 | hidden; read-only (the brush rejects the write opcode) |
+| `auto_mode` | Auto mode | settings buffer 4 | X Pro Elite only (a switch on the X Ultra 20); hidden; read-only (the brush rejects the write opcode) |
 | `volume_enabled` | Volume enabled | settings buffer 8 (inverted) | X Pro Elite only; **dev** |
 | `calendar_enabled` | Calendar enabled | settings buffer 10 (inverted) | X Pro Elite only; **dev** |
 | `splash_prevent` | Splash prevention | settings buffer 13 | X Pro Elite only; **dev** |
 | `fill_brush` | Fill brush | settings buffer 3 | X Pro Elite only; **dev**; read-only (write opcode rejected) |
-| `voice_prompts` | Voice prompts | settings buffer 7 | X Ultra 20 only |
-| `voice_zone_change` | Voice on zone change | settings buffer 8 | X Ultra 20 only |
-| `voice_pressure` | Voice on over-pressure | settings buffer 9 | X Ultra 20 only |
-| `festival_reminder` | Holiday reminder | settings buffer 10 | X Ultra 20 only |
+| `voice_teaching` | Voice teaching | settings buffer 6 | X Ultra 20 only; the firmware's single-step teaching program; read-only because its write changes the brushing mode |
+| `wifi_configured` | Wi-Fi provisioned | `02 34` reply | X Ultra 20 only; off means no SSID is stored, and without one the brush never starts Wi-Fi |
+| `area_guidance` | Zone guidance | `03 16` reply | X Ultra 20 only |
+| `demo_mode` | Retail display mode | `03 A0` reply | X Ultra 20 only; in this shop mode the brush never sleeps on battery |
 | `auto_update` | Auto update | settings buffer 3 | X Ultra 20 only |
 | `network` | Network | settings buffer 1 | X Ultra 20 only; on when the buffer byte is non-zero |
 
@@ -349,6 +354,11 @@ boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 | `area_reminder` | Area reminder | `02 0D` + 01/00 | **dev** on the X Pro Elite, where it has no observable effect |
 | `brush_pause` | Brush pause | `02 22` + 01/00 | X Pro Elite only; **dev** |
 | `brush_mode` | Brush mode | `02 09` + 01/EC | X Pro Elite only; **dev**; off byte is the 0xEC sentinel, not 0x00 |
+| `auto_mode` | Auto mode | `02 25` + 01/00 | X Ultra 20 only; readback at settings buffer 4 |
+| `festival_reminder` | Holiday reminder | `02 28` + 01/00 | X Ultra 20 only; readback at settings buffer 10 |
+| `voice_prompts` | Voice prompts | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 7 |
+| `voice_zone_change` | Voice on zone change | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 8 |
+| `voice_pressure` | Voice on over-pressure | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 9; the frame carries all three voice flags, so each switch resends the other two as last read |
 
 ### Entities (number)
 
@@ -742,6 +752,10 @@ characteristic; rejected opcodes return a one-byte `02` stub.
 | `02 06` / `02 0B` | brushing-scheme program (split frames) |
 | `02 16` + 1B | display language id |
 | `02 0D` / `02 12` / `02 22` / `02 23` / `02 09` + 1B | config toggles (area reminder, over-pressure, brush pause, raise wake, brush mode; brush-mode off byte is `EC`) |
+| `02 25` / `02 28` + 1B | X Ultra 20: auto mode, holiday reminder |
+| `02 31` + 4B | X Ultra 20: voice prompts, `[main][zone change][over-pressure][00]` in one frame |
+| `03 14` / `03 16` / `03 A0` | X Ultra 20 reads: running state, zone guidance, retail display mode; reply `<op> <status> 4F 4B` |
+| `02 34` | X Ultra 20 read: Wi-Fi provisioned (status 1), same reply shape |
 
 ### Settings buffer (34 bytes)
 

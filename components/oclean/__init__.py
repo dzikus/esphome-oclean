@@ -70,12 +70,12 @@ _X_PRO_ELITE_FLAG_KEYS = frozenset(
 )
 _X_ULTRA_20_FLAG_KEYS = frozenset(
     {
-        "voice_prompts",
-        "voice_zone_change",
-        "voice_pressure",
-        "festival_reminder",
         "auto_update",
         "network",
+        "voice_teaching",
+        "wifi_configured",
+        "area_guidance",
+        "demo_mode",
     }
 )
 
@@ -83,10 +83,21 @@ _X_ULTRA_20_FLAG_KEYS = frozenset(
 # for, never built. "dev": rows with no observable effect on that brush, built
 # only with expose_dev_sensors. Every other row is built on every model.
 MODEL_ENTITY_SETS = {
+    # The brush rejects the auto-mode write, so auto mode is a binary sensor here
+    # and a switch on the X Ultra 20.
     MODEL_X_PRO_ELITE: {
         "unavailable": {
-            "sensor": frozenset({"device_mode"}),
+            "sensor": frozenset({"device_mode", "mode_number", "running_state"}),
             "binary_sensor": _X_ULTRA_20_FLAG_KEYS,
+            "switch": frozenset(
+                {
+                    "auto_mode",
+                    "festival_reminder",
+                    "voice_prompts",
+                    "voice_zone_change",
+                    "voice_pressure",
+                }
+            ),
         },
         "dev": {
             "sensor": frozenset({"volume_index"}),
@@ -101,7 +112,7 @@ MODEL_ENTITY_SETS = {
     MODEL_X_ULTRA_20: {
         "unavailable": {
             "sensor": frozenset({"device_theme", "volume_index"}) | _ZONE_KEYS,
-            "binary_sensor": _X_PRO_ELITE_FLAG_KEYS,
+            "binary_sensor": _X_PRO_ELITE_FLAG_KEYS | {"auto_mode"},
             "switch": frozenset({"brush_pause", "brush_mode"}),
             "number": _CUSTOM_STEP_KEYS,
             "select": frozenset({"brush_scheme"}),
@@ -137,6 +148,8 @@ HIDDEN_SENSOR_KEYS = frozenset(
         "volume_index",
         "head_used_time",
         "clock_drift",
+        "mode_number",
+        "running_state",
     }
 )
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -431,6 +432,16 @@ uint8_t encode_scheme_gear(uint8_t gear);
 // Two-byte opcode plus a value byte. Usually on 0x01 / off 0x00, but the off
 // value is a per-toggle sentinel: brush-mode off is 0xEC.
 std::vector<uint8_t> build_toggle_command(uint8_t b0, uint8_t b1, uint8_t on_value, uint8_t off_value, bool state);
+
+// X Ultra 20 voice prompts: one frame carries all three flags (main, zone
+// change, over-pressure) plus a zero pad byte, so a single toggle has to resend
+// the other two.
+static constexpr size_t VOICE_PROMPT_COUNT = 3;
+std::vector<uint8_t> build_voice_prompts_command(const std::array<bool, VOICE_PROMPT_COUNT> &flags);
+
+// Single-byte status answer to a read: opcode, then the status. False when the
+// frame is another opcode or too short.
+bool parse_status_reply(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1, uint8_t *status);
 
 // === Timezone index decode ===
 // 1-based index into the device's 33-entry GMT table; "unknown" out of range.

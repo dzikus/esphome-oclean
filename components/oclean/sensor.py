@@ -144,6 +144,31 @@ SENSORS = [
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Device mode",
     ),
+    # moved together with device mode on the one change seen so far
+    (
+        "mode_number",
+        "set_mode_number_sensor",
+        UNIT_EMPTY,
+        0,
+        None,
+        None,
+        "mdi:numeric",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Mode number",
+    ),
+    # 0314 answer, raw: the app hands it on as an integer, and the brush said 3
+    # while charged on the dock, so it is not a running flag
+    (
+        "running_state",
+        "set_running_state_sensor",
+        UNIT_EMPTY,
+        0,
+        None,
+        None,
+        "mdi:state-machine",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Running state",
+    ),
     # unitless on purpose: the unit is unconfirmed, and total-increasing still
     # gives long-term statistics with the head reset absorbed as a counter reset
     (

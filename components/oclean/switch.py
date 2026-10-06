@@ -43,6 +43,9 @@ CODEOWNERS = ["@dzikus"]
 OcleanCommandSwitch = oclean_ns.class_(
     "OcleanCommandSwitch", switch.Switch, cg.Parented.template(OcleanHub)
 )
+OcleanVoiceSwitch = oclean_ns.class_(
+    "OcleanVoiceSwitch", switch.Switch, cg.Parented.template(OcleanHub)
+)
 
 # Master BLE enable switch: local hub behavior, no opcode written to the brush.
 # Component-derived so its setup() applies the restored state after boot.
@@ -61,6 +64,8 @@ HUB_SETTERS = {
     "brush_pause": "set_brush_pause_switch",
     "raise_wake": "set_raise_wake_switch",
     "brush_mode": "set_brush_mode_switch",
+    "auto_mode": "set_auto_mode_switch",
+    "festival_reminder": "set_festival_reminder_switch",
 }
 
 # Default on/off bytes for a config toggle: on 0x01, off 0x00.
@@ -116,12 +121,39 @@ SWITCHES = [
         "brush-mode",
         0xEC,
     ),
+    (
+        "auto_mode",
+        0x02,
+        0x25,
+        "mdi:autorenew",
+        "Auto mode",
+        "auto-mode",
+        OFF_DEFAULT,
+    ),
+    (
+        "festival_reminder",
+        0x02,
+        0x28,
+        "mdi:party-popper",
+        "Holiday reminder",
+        "holiday-reminder",
+        OFF_DEFAULT,
+    ),
+]
+
+# (yaml_key, flag index in the voice-prompt frame, icon, default_name)
+VOICE_SWITCHES = [
+    ("voice_prompts", 0, "mdi:account-voice", "Voice prompts"),
+    ("voice_zone_change", 1, "mdi:swap-horizontal", "Voice on zone change"),
+    ("voice_pressure", 2, "mdi:gauge", "Voice on over-pressure"),
 ]
 
 
-_DEFAULT_NAMES = [
-    (key, name) for key, _b0, _b1, _icon, name, _label, _off in SWITCHES
-] + [(CONF_BLUETOOTH, DEFAULT_BLUETOOTH_NAME)]
+_DEFAULT_NAMES = (
+    [(key, name) for key, _b0, _b1, _icon, name, _label, _off in SWITCHES]
+    + [(key, name) for key, _index, _icon, name in VOICE_SWITCHES]
+    + [(CONF_BLUETOOTH, DEFAULT_BLUETOOTH_NAME)]
+)
 
 
 def _inject_defaults(config):
@@ -143,6 +175,15 @@ CONFIG_SCHEMA = cv.All(
                     default_restore_mode="DISABLED",
                 )
                 for key, _b0, _b1, icon, _default_name, _label, _off in SWITCHES
+            },
+            **{
+                cv.Optional(key): switch.switch_schema(
+                    OcleanVoiceSwitch,
+                    icon=icon,
+                    entity_category=ENTITY_CATEGORY_CONFIG,
+                    default_restore_mode="DISABLED",
+                )
+                for key, _index, icon, _default_name in VOICE_SWITCHES
             },
             # Master BLE enable. RESTORE_DEFAULT_ON so a reboot never silently
             # leaves the brush unreachable when HA has no persisted OFF.
@@ -191,6 +232,14 @@ async def to_code(config):
         # Every command switch has a readback setter; index directly so a future
         # switch added without one fails loud instead of silently missing readback.
         cg.add(getattr(hub, HUB_SETTERS[key])(sw))
+
+    for key, index, _icon, _default_name in VOICE_SWITCHES:
+        if key not in config:
+            continue
+        sw = await switch.new_switch(config[key])
+        await cg.register_parented(sw, hub)
+        cg.add(sw.set_index(index))
+        cg.add(hub.set_voice_prompt_switch(index, sw))
 
     bt = config.get(CONF_BLUETOOTH)
     if bt is not None:
