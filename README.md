@@ -92,7 +92,7 @@ because ESPHome creates entities at build time, so it comes from the hub's
 
 | Line | Model id (DIS 0x2A24) | Profile | Status |
 |---|---|---|---|
-| X / X Pro / Pro Elite / Ultra / Pro 20 | `OCLEANY3`, `OCLEANY3M*`, `OCLEANY3P*`, `OCLEANV1`, `OCLEANX20` | TYPE1 | X Pro Elite (`OCLEANY3P` / `OCLEANY3PD`) verified on hardware; others untested |
+| X / X Pro / Pro Elite / Ultra / Pro 20 | `OCLEANY3`, `OCLEANY3M*`, `OCLEANY3P*`, `OCLEANV1`, `OCLEANX20` | TYPE1 | X Pro Elite verified on hardware with `OCLEANY3P` firmware 1.0.0.30 and `OCLEANY3PD` firmware 1.0.0.31; other models and firmware versions untested |
 | X Ultra 20 | `OCLEANV20*` | TYPE_V20 | status, settings and the clock write (`0201`) verified on hardware; session record decoded from its documented layout, not yet confirmed on a full record; other writes refused |
 | Z1 | `OCLEANY5` | TYPE_Z1 | untested (needs a capture to freeze the record layout) |
 | other / new firmware | unmatched | UNKNOWN fallback | battery + status only |
