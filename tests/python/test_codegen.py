@@ -15,6 +15,7 @@ import esphome.config_validation as cv
 import esphome.final_validate as fv
 import oclean as oc
 import oclean.number as ocnum
+import oclean.select as ocsel
 from esphome.core import CORE
 
 ROWS = [("battery", "Battery"), ("score", "Score")]
@@ -230,6 +231,56 @@ class HeadMaxKey(RawConfigCase):
         self.assertIn("head_max_minutes", keys)
         self.assertNotIn("head_max_days", keys)
         self.assertEqual((ocnum.HEAD_MAX_MIN, ocnum.HEAD_MAX_MAX), (1, 0xFFFF))
+
+
+def _scheme_config(gear, name="Hard"):
+    return {
+        "oclean_id": "hub_a",
+        "brush_scheme": {
+            "custom_modes": [
+                {"name": name, "program": [{"gear": gear, "duration": 30}]},
+            ]
+        },
+    }
+
+
+class SchemeModesPerModel(RawConfigCase):
+    def test_x_ultra_20_takes_gears_up_to_54(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        ocsel._validate_modes_for_model(_scheme_config(54))
+        with self.assertRaises(cv.Invalid):
+            ocsel._validate_modes_for_model(_scheme_config(55))
+
+    def test_x_pro_elite_stops_at_41(self):
+        self.set_hubs({"id": "hub_a"})
+        ocsel._validate_modes_for_model(_scheme_config(41))
+        with self.assertRaises(cv.Invalid) as caught:
+            ocsel._validate_modes_for_model(_scheme_config(50))
+        self.assertIn("41", str(caught.exception))
+
+    def test_a_label_may_not_shadow_a_fixed_option_of_its_model(self):
+        # "Travel" is an X Pro Elite preset of 2 min; on the X Ultra 20 it is free
+        travel = {
+            "oclean_id": "hub_a",
+            "brush_scheme": {
+                "custom_modes": [
+                    {
+                        "name": "Travel",
+                        "program": [
+                            {"gear": 17, "duration": 30},
+                            {"gear": 17, "duration": 30},
+                            {"gear": 35, "duration": 30},
+                            {"gear": 35, "duration": 30},
+                        ],
+                    }
+                ]
+            },
+        }
+        self.set_hubs({"id": "hub_a"})
+        with self.assertRaises(cv.Invalid):
+            ocsel._validate_modes_for_model(travel)
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        ocsel._validate_modes_for_model(travel)
 
 
 SWITCH_ROWS = [

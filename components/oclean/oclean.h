@@ -169,6 +169,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_brush_mode_switch(OcleanCommandSwitch *s) { this->brush_mode_switch_ = s; }
   void set_auto_mode_switch(OcleanCommandSwitch *s) { this->auto_mode_switch_ = s; }
   void set_festival_reminder_switch(OcleanCommandSwitch *s) { this->festival_reminder_switch_ = s; }
+  void set_voice_teaching_switch(OcleanCommandSwitch *s) { this->voice_teaching_switch_ = s; }
+  void set_demo_mode_switch(OcleanCommandSwitch *s) { this->demo_mode_switch_ = s; }
   void set_voice_prompt_switch(uint8_t index, OcleanVoiceSwitch *s) {
     if (index < VOICE_PROMPT_COUNT)
       this->voice_prompt_switches_[index] = s;
@@ -291,6 +293,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   void handle_variable_session_notify_(const uint8_t *data, size_t len);
   void ingest_session_records_(const std::vector<SessionRecord> &records, const uint8_t *newest_raw,
                                size_t newest_raw_len);
+  // an inline record of a profile whose inline heads a stored session
+  void ingest_inline_session_(const SessionRecord &inl);
   // What a record carries. Fields it lacks go unknown rather than keep an older
   // session's values under a newer timestamp.
   enum class SessionDetail : uint8_t {
@@ -308,6 +312,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   // an ER reply to one of this round's writes queues it once more for the next
   // round; false for any other frame
   bool handle_write_refusal_(const uint8_t *data, size_t len);
+  // the brush's OK to a 0202, which marks an inline-record clear as done; false
+  // for any other frame
+  bool handle_inline_clear_ack_(const uint8_t *data, size_t len);
   // the record packets a count=0 header is followed by while a session runs;
   // true when the packet was one of them
   bool skip_after_inline_(const uint8_t *data, size_t len);
@@ -382,6 +389,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   sensor::Sensor *running_state_sensor_{nullptr};
   OcleanCommandSwitch *auto_mode_switch_{nullptr};
   OcleanCommandSwitch *festival_reminder_switch_{nullptr};
+  OcleanCommandSwitch *voice_teaching_switch_{nullptr};
+  OcleanCommandSwitch *demo_mode_switch_{nullptr};
   OcleanVoiceSwitch *voice_prompt_switches_[VOICE_PROMPT_COUNT]{};
   std::array<bool, VOICE_PROMPT_COUNT> voice_prompts_{};
   bool voice_prompts_known_{false};
@@ -459,7 +468,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   static constexpr uint16_t PERSISTED_SESSION_MAGIC = 0x0C1E;
   static constexpr uint8_t PERSISTED_SESSION_VERSION = 2;
   static constexpr uint8_t PERSISTED_SESSION_VERSION_V1 = 1;
-  // partial marks an inline fragment, which carries no zones or score
+  // partial is the SessionDetail of an inline fragment, 0 for a full record
   struct PersistedSession {
     uint16_t magic;
     uint8_t version;
@@ -472,6 +481,10 @@ class OcleanHub : public ble_client::BLEClientNode,
   esphome::ESPPreferenceObject session_last_pref_;
   // gates the inline fragment: a full record must never downgrade to a partial
   uint32_t newest_record_epoch_{0};
+  // Epoch of the inline record a 0202 went out for, and of the one the brush
+  // acked. RAM only: after a reboot the clear is sent once more.
+  uint32_t inline_clear_sent_epoch_{0};
+  uint32_t inline_cleared_epoch_{0};
   SessionRecord shown_session_{};
   bool shown_session_valid_{false};
   // oldest-first, drained one per loop iteration

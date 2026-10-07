@@ -105,6 +105,9 @@ switch:
 number:
   - platform: oclean
     oclean_id: hub_test
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
 
 select:
   - platform: oclean
@@ -121,6 +124,16 @@ select:
             - gear: 8
               duration: 30
             - gear: 8
+              duration: 30
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
+    # The X Ultra 20 options: its fixed modes plus a gear past the X Pro Elite's.
+    brush_scheme:
+      custom_modes:
+        - name: CI high gear
+          program:
+            - gear: 54
               duration: 30
 
 button:

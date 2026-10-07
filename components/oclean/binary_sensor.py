@@ -23,9 +23,10 @@ CODEOWNERS = ["@dzikus"]
 # charging is published from the STATUS (0303) response byte 2: 0x01 means on the
 # dock / charging, 0x02 means off the dock. Every row the hub's model has is
 # auto-created so the entities appear without listing them in the yaml.
-# volume_enabled, calendar_enabled, splash_prevent, fill_brush and auto_mode hold
-# no setting on any supported model (MODEL_ENTITY_SETS); their rows stay so a yaml
-# that names one gets an error that says so.
+# volume_enabled, calendar_enabled, splash_prevent, fill_brush, auto_mode and
+# network hold no setting on any supported model, and voice_teaching and
+# demo_mode are switches on the one model that has them (MODEL_ENTITY_SETS).
+# Their rows stay so a yaml that names one gets an error that says so.
 BINARY_SENSORS = [
     (
         "charging",
@@ -98,9 +99,6 @@ BINARY_SENSORS = [
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Auto mode",
     ),
-    # The firmware's single-step teaching program. Its write switches the brush
-    # into that mode or back to mode 5, never to the mode picked on screen, so it
-    # stays read-only.
     (
         "voice_teaching",
         "set_voice_teaching_binary_sensor",
@@ -126,7 +124,6 @@ BINARY_SENSORS = [
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Zone guidance",
     ),
-    # A shop display mode in which the brush never sleeps on battery.
     (
         "demo_mode",
         "set_demo_mode_binary_sensor",

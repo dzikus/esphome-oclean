@@ -52,7 +52,7 @@ OcleanPollNowButton = oclean_ns.class_(
 CONF_CAPTURE_SESSIONS = "capture_sessions"
 DEFAULT_CAPTURE_NAME = "Capture sessions"
 
-# Always exposed. Resets the brush-head usage counter (irreversible).
+# X Pro Elite only. Resets the brush-head usage counter (irreversible).
 CONF_RESET_HEAD = "reset_head"
 DEFAULT_RESET_HEAD_NAME = "Reset brush head"
 

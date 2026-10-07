@@ -184,20 +184,29 @@ inline int64_t clamp_clock_drift(int64_t drift) {
 static constexpr size_t SESSION_V20_HEADER_LEN = 9;
 static constexpr uint16_t SESSION_V20_MAX_RECORDS = 33;
 static constexpr size_t SESSION_V20_RECORD_MAX = 182;
-// through the score byte
-static constexpr size_t SESSION_V20_RECORD_MIN = 29;
+// The record length is min(182, brushed_s / 2 + 51), and the firmware keeps no
+// session under 15 s: 58 bytes is the shortest one.
+static constexpr size_t SESSION_V20_RECORD_MIN = 58;
+static constexpr size_t SESSION_V20_LENGTH_BASE = 51;
 static constexpr size_t SESSION_V20_MAX_BYTES = size_t(SESSION_V20_MAX_RECORDS) * SESSION_V20_RECORD_MAX;
+static constexpr size_t SESSION_V20_TZ_OFFSET = 19;
 static constexpr size_t SESSION_V20_SCORE_OFFSET = 28;
 // length, start time, mode, program length: what a count=0 reply carries
 static constexpr size_t SESSION_V20_INLINE_LEN = 11;
 
 // [0-1] length, [2-7] start time, [8] mode, [9-10] program length s, [11-12]
-// brushed s, [28] score. The zone bytes are not mapped, so every zone comes back
-// SESSION_ZONE_ABSENT.
+// brushed s, [19] time zone, [28] score. The zone bytes are not mapped, so every
+// zone comes back SESSION_ZONE_ABSENT.
 bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *out);
 
-// count=0 reply: the head of the newest record follows the header. No brushed
-// time, zones or score in it.
+// Brushed seconds read off the record length, low by at most 1 s. A record cut
+// at the maximum length only bounds it, so that is 0 (unknown) unless the
+// program is too short to run past the cut.
+uint16_t v20_brushed_seconds(size_t record_len, uint16_t program_s);
+
+// count=0 reply: 11 bytes of the store from offset 0 follow the header, the
+// oldest record since the store was last cleared. valid_duration_s comes from
+// the record length (0 when unknown); no zones or score.
 bool decode_inline_0307_v20(const uint8_t *data, size_t len, SessionRecord *out);
 
 class VarSessionAssembler {
@@ -466,6 +475,12 @@ std::vector<uint8_t> build_toggle_command(uint8_t b0, uint8_t b1, uint8_t on_val
 static constexpr size_t VOICE_PROMPT_COUNT = 3;
 std::vector<uint8_t> build_voice_prompts_command(const std::array<bool, VOICE_PROMPT_COUNT> &flags);
 
+// The brush stores the fast-brushing and over-pressure flags only from a frame
+// with the main flag on; with it off they are acked and dropped.
+inline bool voice_prompt_write_takes(size_t index, bool main_on) {
+  return index == 0 || main_on;
+}
+
 // Single-byte status answer to a read: opcode, then the status. False when the
 // frame is another opcode or too short.
 bool parse_status_reply(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1, uint8_t *status);
@@ -473,6 +488,9 @@ bool parse_status_reply(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1,
 // <opcode> 45 52 ("ER"): a write turned down while a session runs, e.g. 0206,
 // 0212 and 020C on the X Pro Elite
 bool is_write_refusal(const uint8_t *data, size_t len);
+
+// <b0> <b1> 4F 4B ("OK") with no echo byte, the ack of e.g. 0202
+bool is_bare_ack(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1);
 
 // === Timezone index decode ===
 // 1-based index into the device's 33-entry GMT table; "unknown" out of range.
@@ -571,7 +589,7 @@ PollDecision plan_poll_tick(const PollTickState &s);
 float session_coverage_percent(uint16_t valid_duration_s, uint16_t duration_s);
 
 // The fields an inline head and its full record share. Valid duration is left
-// out: the X Ultra 20 head does not carry it.
+// out: the X Ultra 20 head only derives it from the record length.
 bool same_session(const SessionRecord &a, const SessionRecord &b);
 
 // A count=0 reply carries the head of a read record, without zones or score.
@@ -610,6 +628,13 @@ SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
 // 0202 confirms the batch: the brush zeroes its unread count and never serves
 // those records again. A record held back as implausible would be lost with it.
 bool should_confirm_sessions(bool profile_confirms, const SessionIngestPlan &plan);
+
+// X Ultra 20 store clear after an inline record. Only on the dock, as this
+// round's STATUS reads it: a brush in use ignores it. Once the brush acked the
+// clear for a record, the same head keeps showing until the next session
+// overwrites it, so it is not cleared again.
+bool should_clear_inline(bool profile_clears, bool round_status_seen, bool docked, const SessionIngestPlan &plan,
+                         uint32_t inline_epoch, uint32_t cleared_epoch);
 
 // The stored record keeps the time base it was written in, while the watermark
 // follows every clock shift, so after a set the watermark is the lower one.

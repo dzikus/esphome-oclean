@@ -92,8 +92,9 @@ because ESPHome creates entities at build time, so it comes from the hub's
 
 | Line | Model id (DIS 0x2A24) | Profile | Status |
 |---|---|---|---|
-| X / X Pro / Pro Elite / Ultra / Pro 20 | `OCLEANY3`, `OCLEANY3M*`, `OCLEANY3P*`, `OCLEANV1`, `OCLEANX20` | TYPE1 | X Pro Elite verified on hardware with `OCLEANY3P` firmware 1.0.0.30 and `OCLEANY3PD` firmware 1.0.0.31; other models and firmware versions untested |
-| X Ultra 20 | `OCLEANV20*` | TYPE_V20 | status, settings and the clock write (`0201`) verified on hardware; session record decoded from its documented layout, not yet confirmed on a full record; other writes refused |
+| X / X Pro / Pro Elite | `OCLEANY3`, `OCLEANY3M*`, `OCLEANY3P*` | TYPE1 | X Pro Elite verified on hardware with `OCLEANY3P` firmware 1.0.0.30 and `OCLEANY3PD` firmware 1.0.0.31; other models and firmware versions untested |
+| X Ultra 20 | `OCLEANV20*` | TYPE_V20 | status, settings, the clock and the setting writes verified on hardware (firmware 0.0.2.1). The brush never streams its sessions: each poll reads the oldest stored one, without score or zones (see **Session stream and record**). The program, voice-teaching and retail-mode writes follow the firmware image and are not yet tried on the brush |
+| X Pro 20, X Ultra (first generation) | `OCLEANX20`, `OCLEANV1*` | TYPE_V20_FAMILY | untested; captures from both show the X Ultra 20 reply shapes. Use `model: x_ultra_20`. The store is never cleared, so only its oldest session shows up |
 | Z1 | `OCLEANY5` | TYPE_Z1 | untested (needs a capture to freeze the record layout) |
 | other / new firmware | unmatched | UNKNOWN fallback | battery + status only |
 
@@ -148,25 +149,30 @@ X Pro Elite (`model: x_pro_elite`, the default):
 
 X Ultra 20 (`model: x_ultra_20`):
 
-- 13 sensors: battery, battery voltage, last-session score / duration / valid
-  duration / coverage, brush-head used days / sessions / used time, clock
-  drift, device mode, mode number and running state (head used time, clock
-  drift, mode number and running state hidden). No zone sensors: its 12-zone
-  record is not mapped yet.
-- 9 binary sensors: charging, docked, BLE connected (hidden), voice teaching,
-  Wi-Fi provisioned, zone guidance, retail display mode, auto update, network.
+- 10 sensors: battery, battery voltage, last-session score / duration / valid
+  duration / coverage, device mode, mode number, running state, clock drift
+  (mode number, running state and clock drift hidden). No zone sensors: its
+  12-zone record is not mapped yet. No brush-head counters: firmware 0.0.1.6
+  never counts head use.
+- 6 binary sensors: charging, docked, BLE connected (hidden), Wi-Fi
+  provisioned, zone guidance, auto update.
 - 9 text sensors, as above.
-- 9 switches: over-pressure alert, raise to wake, voice on zone change (the
-  `area_reminder` key), auto mode, holiday reminder, voice prompts, voice on
-  fast brushing, voice on over-pressure, bluetooth.
-- 1 number: brush head time limit.
-- 1 select: language (the `device_language` key), which also sets the voice
-  prompt language.
-- 3 buttons as above, 1 dev button: capture sessions.
+- 11 switches: over-pressure alert, raise to wake, voice on zone change (the
+  `area_reminder` key), auto mode, holiday reminder, voice teaching, retail
+  display mode, voice prompts, voice on fast brushing, voice on over-pressure,
+  bluetooth.
+- 8 numbers: custom-program step parameters.
+- 2 selects: brushing mode, language (the `device_language` key, which also
+  sets the voice prompt language).
+- 2 buttons: sync clock (needs `time_id`), poll now (hidden). 1 dev button:
+  capture sessions.
 
-The brushing mode stays read-only on the X Ultra 20. Its two mode writes
-(`02 06`, a program from the app, and `02 30`, the teaching program) move the
-brush off the mode picked on its screen, and nothing over BLE moves it back.
+On the X Ultra 20 the brushing-mode select shows the mode picked on the screen
+("Screen mode 1" .. "Screen mode 5") or "Voice teaching", and writes only
+programs: "Custom" and the named `custom_modes`. A program write turns auto mode
+off and moves the brush to its program slot; nothing over BLE moves it back to a
+screen mode, which is picked on the brush again. The voice-teaching switch has
+the same catch: on selects the teaching program, off selects screen mode 5.
 
 ---
 
@@ -258,7 +264,7 @@ Set on the `oclean:` entry, not on the platforms.
 | Option | Type | Default | Effect |
 |---|---|---|---|
 | `ble_client_id` | id | - | Required. Points to the `ble_client` entry with this brush's MAC. |
-| `model` | `x_pro_elite` or `x_ultra_20` | `x_pro_elite` | The brush on this hub, which picks the entity set at build time (see **What it exposes per brush**). The X / X Pro / Ultra / Pro 20 and the Z1 use `x_pro_elite`. The protocol is still chosen from the model id the brush reports, so a wrong value costs entities, never data; the log names the right value after the first poll. An entity listed in yaml that the model does not have fails validation. |
+| `model` | `x_pro_elite` or `x_ultra_20` | `x_pro_elite` | The brush on this hub, which picks the entity set at build time (see **What it exposes per brush**). The X / X Pro and the Z1 use `x_pro_elite`; the X Pro 20 and the first X Ultra use `x_ultra_20`. The protocol is still chosen from the model id the brush reports, so a wrong value costs entities, never data; the log names the right value after the first poll. An entity listed in yaml that the model does not have fails validation. |
 | `update_interval` | time | `3600s` (min `60s`) | Off-dock cadence: gap between connect-poll-disconnect cycles while the brush runs on battery. |
 | `charging_interval` | time | `600s` (min `60s`) | Docked cadence: faster polls while the brush sits on the dock (charging or fully charged). Clamped down to `update_interval` if set larger; set both equal for fixed-interval polling. |
 | `hold_connection_while_docked` | bool | `true` | Keep the BLE link open while the brush is docked instead of disconnecting after each poll; re-queries on the live link every `charging_interval`. The link drops when the brush leaves the dock. Docked means charging, so this costs no brush battery. Set `false` for plain connect-poll-disconnect. |
@@ -297,11 +303,11 @@ naming a model exist only on hubs with that `model:`.
 | `last_session_coverage` | Coverage | derived | valid / duration, percent |
 | `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | session record bytes 23-30 | X Pro Elite only; per-region values; 1-4 left, 5-8 right (upper-outer / upper-inner / lower-outer / lower-inner per side) |
 | `quadrant_upper_left`, `quadrant_lower_left`, `quadrant_upper_right`, `quadrant_lower_right` | Quadrant upper left .. Quadrant lower right | session record bytes 19-22 | X Pro Elite only; hidden; percent of the session per quadrant, summing to 100; each is about the sum of its two zones, rounded on the brush |
-| `head_used_days` | Brush head used days | settings buffer 27-28 BE | days with brushing since head reset |
-| `head_used_times` | Brush head sessions | settings buffer 29-30 BE | valid sessions since head reset |
-| `head_used_time` | Brush head used time | settings buffer 14-15 BE | hidden; minutes of valid brushing since head reset |
+| `head_used_days` | Brush head used days | settings buffer 27-28 BE | X Pro Elite only; days with brushing since head reset |
+| `head_used_times` | Brush head sessions | settings buffer 29-30 BE | X Pro Elite only; valid sessions since head reset |
+| `head_used_time` | Brush head used time | settings buffer 14-15 BE | X Pro Elite only; hidden; minutes of valid brushing since head reset |
 | `device_theme` | Device theme | settings buffer 0 | X Pro Elite only; hidden; raw index |
-| `device_mode` | Device mode | settings buffer 11 | X Ultra 20 only; 1-5 = built-in mode picked on screen, 0 = a program from the app |
+| `device_mode` | Device mode | settings buffer 11 | X Ultra 20 only; 1-5 = mode picked on the screen, 6 = voice teaching, otherwise the id of a program written over BLE (0 from the app) |
 | `mode_number` | Mode number | settings buffer 5 | X Ultra 20 only; hidden; raw, moved with the device mode so far |
 | `running_state` | Running state | `03 14` reply | X Ultra 20 only; hidden; raw value, 3 while charged on the dock |
 
@@ -315,18 +321,17 @@ NVS per hub and re-published on boot.
 | `charging` | Charging | STATUS byte 2 == 0x01 | actively charging on the dock |
 | `docked` | Docked | STATUS byte 2 == 0x01 or 0x03 | on the dock, charging or fully charged |
 | `connected` | BLE connected | link state | hidden; off almost always by design (the link is up only seconds per poll); use Last seen for freshness |
-| `voice_teaching` | Voice teaching | settings buffer 6 | X Ultra 20 only; the firmware's single-step teaching program; read-only because its write changes the brushing mode |
 | `wifi_configured` | Wi-Fi provisioned | `02 34` reply | X Ultra 20 only; off means no SSID is stored, and without one the brush never starts Wi-Fi |
 | `area_guidance` | Zone guidance | `03 16` reply | X Ultra 20 only |
-| `demo_mode` | Retail display mode | `03 A0` reply | X Ultra 20 only; in this shop mode the brush never sleeps on battery |
 | `auto_update` | Auto update | settings buffer 3 | X Ultra 20 only |
-| `network` | Network | settings buffer 1 | X Ultra 20 only; on when the buffer byte is non-zero |
 
 The X Pro Elite firmware keeps no setting in settings bytes 3, 4, 8-10 and 13:
 constant zero, copies of bytes 0 and 1, a flag nothing writes, and a pause flag
 cleared at the start of every session. The keys that read them (`fill_brush`,
 `auto_mode`, `volume_enabled`, `calendar_enabled`, `splash_prevent` and the
-`volume_index` sensor) are built on no model, and a yaml that lists one fails
+`volume_index` sensor) are built on no model, nor is `network`: nothing in the
+X Ultra 20 firmware writes its byte. `voice_teaching` and `demo_mode` are
+switches on the X Ultra 20. A yaml that lists one of these binary sensors fails
 validation.
 
 ### Entities (text_sensor)
@@ -357,25 +362,27 @@ boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 | `area_reminder` | Area reminder | `02 0D` + 01/00 | **dev** on the X Pro Elite, where it has no observable effect. On the X Ultra 20 it is named Voice on zone change: it picks the cue at each 30 s zone change, a short motor stutter when off and a spoken prompt when on (only with voice prompts on); readback at settings buffer 23 |
 | `brush_pause` | Brush pause | `02 22` + 01/00 | X Pro Elite only; **dev** |
 | `brush_mode` | Brush mode | `02 09` + 01/EC | X Pro Elite only; **dev**; off byte is the 0xEC sentinel, not 0x00 |
-| `auto_mode` | Auto mode | `02 25` + 01/00 | X Ultra 20 only; readback at settings buffer 4 |
+| `auto_mode` | Auto mode | `02 25` + 01/00 | X Ultra 20 only; readback at settings buffer 4. On also moves the brush to mode 1 (03:01-12:00) or 2 (the rest of the day) whenever it is idle on the main screen; off does not bring the earlier mode back |
 | `festival_reminder` | Holiday reminder | `02 28` + 01/00 | X Ultra 20 only; readback at settings buffer 10 |
+| `voice_teaching` | Voice teaching | `02 30` + 01/00 | X Ultra 20 only; readback at settings buffer 6. On selects the firmware's single-step teaching program (gear 16, 180 s), off selects screen mode 5; neither returns to the mode picked on the screen |
+| `demo_mode` | Retail display mode | `02 A0` + 01/00 | X Ultra 20 only; readback from the `03 A0` reply. A shop mode in which the brush never sleeps on battery; turning it on during a session ends the session |
 | `voice_prompts` | Voice prompts | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 7 |
-| `voice_fast_brushing` | Voice on fast brushing | `02 31` + 4B | X Ultra 20 only; the prompt that warns of brushing too fast; readback at settings buffer 8 |
-| `voice_pressure` | Voice on over-pressure | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 9; the frame carries all three voice flags, so each switch resends the other two as last read |
+| `voice_fast_brushing` | Voice on fast brushing | `02 31` + 4B | X Ultra 20 only; the prompt that warns of brushing too fast; readback at settings buffer 8. Takes only while Voice prompts is on, so the hub refuses it otherwise |
+| `voice_pressure` | Voice on over-pressure | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 9; same rule as the fast-brushing prompt. The frame carries all three voice flags, so each switch resends the other two as last read |
 
 ### Entities (number)
 
 | Key | Default name | Range | Notes |
 |---|---|---|---|
-| `head_max_minutes` | Brush head time limit | 1-65535 min | minutes of valid brushing on one head before the brush shows its replacement reminder, once; 240 out of the box, about 120 two-minute sessions. Writes `02 17` + 2B BE, readback at settings buffer 25-26; box input (a slider would fire a write per step). Replaces `head_max_days`, which fails validation with a pointer here |
-| `custom_step1_gear` .. `custom_step4_gear` | Custom step N gear | 1-41, default 8 | X Pro Elite only; parameters of the runtime Custom program; stored on the node (flash-persisted), written to the brush only when Custom is selected |
-| `custom_step1_duration` .. `custom_step4_duration` | Custom step N duration | 5-120 s, step 5, default 30 | X Pro Elite only; changing a parameter while Custom is active re-programs the brush (debounced) |
+| `head_max_minutes` | Brush head time limit | 1-65535 min | X Pro Elite only; minutes of valid brushing on one head before the brush shows its replacement reminder, once; 240 out of the box, about 120 two-minute sessions. Writes `02 17` + 2B BE, readback at settings buffer 25-26; box input (a slider would fire a write per step). Replaces `head_max_days`, which fails validation with a pointer here |
+| `custom_step1_gear` .. `custom_step4_gear` | Custom step N gear | 1-41 (1-54 on the X Ultra 20), default 8 | parameters of the runtime Custom program; stored on the node (flash-persisted), written to the brush only when Custom is selected |
+| `custom_step1_duration` .. `custom_step4_duration` | Custom step N duration | 5-120 s, step 5, default 30 | changing a parameter while Custom is active re-programs the brush (debounced) |
 
 ### Entities (select)
 
 | Key | Default name | Options | Notes |
 |---|---|---|---|
-| `brush_scheme` | Brushing mode | 19 presets + named `custom_modes` + "Custom" | X Pro Elite only; writes the full per-step program (`02 06` / `02 0B`); current option read back from settings buffer 11 |
+| `brush_scheme` | Brushing mode | X Pro Elite: 19 presets + named `custom_modes` + "Custom"; X Ultra 20: "Screen mode 1" .. "Screen mode 5" and "Voice teaching" + named `custom_modes` + "Custom" | writes the full per-step program (`02 06` / `02 0B`); current option read back from settings buffer 11. The X Ultra 20's screen modes and voice teaching only show the brush's state: picking one is refused |
 | `device_language` | Display language | 17 languages | writes `02 16` + language id; readback from settings buffer 31. An id past the brush firmware's last language would show English, so it is refused and logged: `OCLEANY3P` stops at 14 (Korean), `OCLEANY3PD` at 13 (Arabic). On the X Ultra 20 it is named Language: the same write also switches the voice prompts |
 
 Preset options are labelled "name (duration)", e.g. "Quick cleaning (1m20s)".
@@ -401,7 +408,8 @@ select:
             - { gear: 8, duration: 20 }
 ```
 
-Up to 20 modes, 1-4 steps each, gear 1-41, duration 5-120 s. Modes get ids
+Up to 20 modes, 1-4 steps each, gear 1-41 (1-54 on the X Ultra 20), duration
+5-120 s. Modes get ids
 121+ in list order (reordering shifts the ids, which only affects how old
 session records decode). The runtime "Custom" option (id 120) builds its
 program from the custom-step number entities at selection time. Step
@@ -412,7 +420,7 @@ program wants four steps to keep the four-quadrant guidance.
 
 | Key | Default name | Effect | Notes |
 |---|---|---|---|
-| `reset_head` | Reset brush head | writes `02 0F` | irreversible: zeroes the brush-head usage counters |
+| `reset_head` | Reset brush head | writes `02 0F` | X Pro Elite only; irreversible: zeroes the brush-head usage counters |
 | `sync_time` | Sync clock | writes `02 01` + 8 bytes | created only when the hub has `time_id`; writes on press only |
 | `poll_now` | Poll now | immediate poll cycle | hidden by default; read-only on the brush |
 | `capture_sessions` | Capture sessions | session download + 30 s hold | **dev**; keeps the link open so the raw record stream lands in the log |
@@ -758,7 +766,7 @@ characteristic; rejected opcodes return a one-byte `02` stub.
 |---|---|
 | `03 03` | STATUS: 8-byte reply (6 on the X Ultra 20), battery at byte 5, cell voltage in mV at bytes 3-4 BE, dock/charge state at byte 2 (`01` charging, `02` off dock, `03` docked and full) |
 | `03 02 01` | SETTINGS: replied as a two-frame transfer reassembled into a 34-byte buffer |
-| `02 02` | confirm the downloaded sessions: the brush zeroes its unread count. Sent once a whole stream is ingested; never by a `read_only` hub, the TYPE_V20 profile or an unrecognised model |
+| `02 02` | confirm the downloaded sessions: the brush zeroes its unread count. Sent once a whole stream is ingested; on the X Ultra 20 it clears the store after the inline record, only while docked. Never sent by a `read_only` hub, the X Pro 20 / first X Ultra profile or an unrecognised model |
 | `03 07` | session download (reply streams on the session notify characteristic) |
 | `02 01` + 8B | set clock: `[year-2000][month][day][hour][min][sec][weekday][tzindex]`, plain decimal bytes, local time, weekday 0 = Sunday |
 | `02 0F` | reset brush-head counter |
@@ -767,6 +775,7 @@ characteristic; rejected opcodes return a one-byte `02` stub.
 | `02 16` + 1B | display language id (X Ultra 20: also the voice prompt language) |
 | `02 0D` / `02 12` / `02 22` / `02 23` / `02 09` + 1B | config toggles (area reminder, over-pressure, brush pause, raise wake, brush mode; brush-mode off byte is `EC`) |
 | `02 25` / `02 28` + 1B | X Ultra 20: auto mode, holiday reminder |
+| `02 30` / `02 A0` + 1B | X Ultra 20: voice teaching (ack `02 30 4F 4B`), retail display mode (ack `02 A0 <value> 4F 4B`) |
 | `02 31` + 4B | X Ultra 20: voice prompts, `[main][fast brushing][over-pressure][00]` in one frame; the zone-change prompt is `02 0D` |
 | `03 14` / `03 16` / `03 A0` | X Ultra 20 reads: running state, zone guidance, retail display mode; reply `<op> <status> 4F 4B` |
 | `02 34` | X Ultra 20 read: Wi-Fi provisioned (status 1), same reply shape; not sent by a `read_only` hub |
@@ -826,9 +835,19 @@ overwriting the score and zones of an already-published one.
 
 The X Ultra 20 (TYPE_V20) frames the same reply differently:
 `03 07 2A 42 23 [count u16 BE] [stream length u16 BE]`, then length-prefixed
-records of 29 to 182 bytes (`VarSessionAssembler`, at most 33 records). With
-count 0 the head of the newest record follows: length, start time, mode and
-program length, without the brushed time.
+records of 58 to 182 bytes (`VarSessionAssembler`, at most 33 records). Firmware
+0.0.1.6 never streams them: the reply is always count 0 followed by 11 bytes of
+the store from its start (length, start time, mode, program length), the
+oldest session since the store was last cleared. The record length is
+min(182, brushed / 2 + 51), so the brushed time comes back from it to within
+1 s below 182 bytes; a record cut at 182 only says 262 s or more. The hub
+treats that record as a session: one event, and the entities when it is newer
+than what they show, with no score or zones. While the brush is docked, as this
+round's STATUS reads it, the hub then clears the store with `02 02` (once per
+record, until the brush acks it), so the next session is written at the start
+of the store and heads the next reply. Two sessions between docked polls show
+only the first. A brush with Wi-Fi set up uploads its records to the cloud and
+drops them from the store instead.
 
 | Offset | Size | Field |
 |---|---|---|
@@ -837,6 +856,7 @@ program length, without the brushed time.
 | 8 | 1 | mode (the brush's own modes, not the cloud scheme ids) |
 | 9-10 | 2 BE | program length (s) |
 | 11-12 | 2 BE | brushed time (s) |
+| 19 | 1 | time zone index of the brush clock when the session was recorded |
 | 28 | 1 | score 0-100 (`0xFF` = none) |
 
 The zone bytes are not mapped, so `model: x_ultra_20` has no zone sensors.
@@ -857,6 +877,11 @@ Programs of up to 4 steps always fit a single frame; the split path is built
 and unit-tested but has not been exercised on hardware. The firmware accepts
 and persists arbitrary programs under non-preset ids (verified on hardware
 with a custom id).
+
+The X Ultra 20 firmware takes the same frame, ignores the hint byte, runs gears
+1-54 and reports the program id in settings buffer 11. It turns auto mode off
+on every program write, even one it refuses with `02 06 45 52` during a
+session.
 
 ### Adding a new entity
 

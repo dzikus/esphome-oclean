@@ -66,6 +66,8 @@ HUB_SETTERS = {
     "brush_mode": "set_brush_mode_switch",
     "auto_mode": "set_auto_mode_switch",
     "festival_reminder": "set_festival_reminder_switch",
+    "voice_teaching": "set_voice_teaching_switch",
+    "demo_mode": "set_demo_mode_switch",
 }
 
 # Default on/off bytes for a config toggle: on 0x01, off 0x00.
@@ -137,6 +139,28 @@ SWITCHES = [
         "mdi:party-popper",
         "Holiday reminder",
         "holiday-reminder",
+        OFF_DEFAULT,
+    ),
+    # On selects the firmware's single-step teaching program (gear 16, 180 s),
+    # off selects mode 5; neither returns to the mode picked on the screen.
+    (
+        "voice_teaching",
+        0x02,
+        0x30,
+        "mdi:school-outline",
+        "Voice teaching",
+        "voice-teaching",
+        OFF_DEFAULT,
+    ),
+    # A shop display mode in which the brush never sleeps on battery; turning it
+    # on during a session ends the session.
+    (
+        "demo_mode",
+        0x02,
+        0xA0,
+        "mdi:storefront-outline",
+        "Retail display mode",
+        "demo-mode",
         OFF_DEFAULT,
     ),
 ]

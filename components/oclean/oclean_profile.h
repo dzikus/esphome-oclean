@@ -78,6 +78,12 @@ struct OcleanProfile {
   bool skip_cccd_write;
   // 0202 once a downloaded batch is ingested
   bool sends_clear_running_data;
+  // A count=0 reply heads a record still in the brush store, the oldest one,
+  // rather than one already handed over, so it goes out as a session.
+  bool inline_is_session;
+  // 0202 after an inline record on a docked brush, so the next session is
+  // written at the start of the store and becomes the next inline record
+  bool clears_inline_when_docked;
   // the mode byte indexes the scheme select's preset table
   bool cloud_scheme_ids;
   // The X Ultra 20 reads 0 on 0x2A19 right after a wake; its battery comes from
@@ -91,6 +97,7 @@ extern const OcleanProfile PROFILE_TYPE1;
 extern const OcleanProfile PROFILE_UNKNOWN;
 extern const OcleanProfile PROFILE_TYPE_Z1;
 extern const OcleanProfile PROFILE_TYPE_V20;
+extern const OcleanProfile PROFILE_TYPE_V20_FAMILY;
 
 // Longest-matching prefix, never null: anything unrecognised, empty or null
 // lands on PROFILE_UNKNOWN. model need not be null-terminated.

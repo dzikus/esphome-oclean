@@ -55,9 +55,10 @@ static const ProfileCmd V20_QUERY_CMDS[] = {
      .name = "WIFI_CONFIG"},
 };
 
-// Each acknowledged by the brush and read back from the settings buffer before
-// it went on the list. 0206 and 0230 are not here: both move the brush off the
-// mode picked on its screen, and nothing over BLE moves it back.
+// The first nine were acknowledged by the brush and read back from the settings
+// buffer; the program, teaching and retail writes are known from the firmware
+// image only. 0206 and 0230 move the brush off the mode picked on its screen,
+// with no way back over BLE; 02A0 keeps it awake on battery.
 static const uint8_t V20_WRITE_OPCODES[][2] = {
     {0x02, 0x0D},  // area reminder
     {0x02, 0x12},  // over-pressure alert
@@ -68,6 +69,10 @@ static const uint8_t V20_WRITE_OPCODES[][2] = {
     {0x02, 0x16},  // display language
     {0x02, 0x17},  // head time limit
     {0x02, 0x0F},  // head counter reset
+    {0x02, 0x06},  // brushing program
+    {0x02, 0x0B},  // brushing program, second frame
+    {0x02, 0x30},  // voice teaching
+    {0x02, 0xA0},  // retail display mode
 };
 
 // === UNKNOWN query sequence ===
@@ -98,6 +103,8 @@ const OcleanProfile PROFILE_TYPE1 = {
     /*write_opcode_count=*/.write_opcode_count = 0,
     /*skip_cccd_write=*/.skip_cccd_write = true,
     /*sends_clear_running_data=*/.sends_clear_running_data = true,
+    /*inline_is_session=*/.inline_is_session = false,
+    /*clears_inline_when_docked=*/.clears_inline_when_docked = false,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
     /*battery_char_reliable=*/.battery_char_reliable = true,
     /*entity_model=*/.entity_model = BrushModel::X_PRO_ELITE,
@@ -120,6 +127,8 @@ const OcleanProfile PROFILE_UNKNOWN = {
     /*write_opcode_count=*/.write_opcode_count = 0,
     /*skip_cccd_write=*/.skip_cccd_write = true,
     /*sends_clear_running_data=*/.sends_clear_running_data = false,
+    /*inline_is_session=*/.inline_is_session = false,
+    /*clears_inline_when_docked=*/.clears_inline_when_docked = false,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
     /*battery_char_reliable=*/.battery_char_reliable = true,
     /*entity_model=*/.entity_model = BrushModel::X_PRO_ELITE,
@@ -144,16 +153,46 @@ const OcleanProfile PROFILE_TYPE_Z1 = {
     /*write_opcode_count=*/.write_opcode_count = 0,
     /*skip_cccd_write=*/.skip_cccd_write = true,
     /*sends_clear_running_data=*/.sends_clear_running_data = true,
+    /*inline_is_session=*/.inline_is_session = false,
+    /*clears_inline_when_docked=*/.clears_inline_when_docked = false,
     /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
     /*battery_char_reliable=*/.battery_char_reliable = true,
     /*entity_model=*/.entity_model = BrushModel::X_PRO_ELITE,
 };
 
 // === X Ultra 20 (model OCLEANV20*, hardware revision protocol 0x000D) ===
-// TYPE1 routing; it only notifies after a CCCD write. Writes pass one opcode at
-// a time, as each is confirmed on hardware.
+// TYPE1 routing. It notifies with or without a CCCD write; the write stays as
+// harmless. Writes pass one opcode at a time, from an explicit list. The
+// session download never streams on firmware 0.0.1.6: every reply is count=0
+// plus the head of the oldest stored record.
 const OcleanProfile PROFILE_TYPE_V20 = {
     /*name=*/.name = "TYPE_V20",
+    /*confidence=*/.confidence = 2,
+    /*query_cmds=*/.query_cmds = V20_QUERY_CMDS,
+    /*query_cmd_count=*/.query_cmd_count = sizeof(V20_QUERY_CMDS) / sizeof(V20_QUERY_CMDS[0]),
+    /*config_write_target=*/.config_write_target = WriteTarget::TX_MAIN,
+    /*decode_record=*/.decode_record = nullptr,
+    /*session_format=*/.session_format = SessionFormat::VARIABLE,
+    /*settings_kind=*/.settings_kind = SettingsKind::SETTINGS_V20_34B,
+    /*allows_writes=*/.allows_writes = false,
+    /*allows_clock_write=*/.allows_clock_write = true,
+    /*write_opcodes=*/.write_opcodes = V20_WRITE_OPCODES,
+    /*write_opcode_count=*/.write_opcode_count = sizeof(V20_WRITE_OPCODES) / sizeof(V20_WRITE_OPCODES[0]),
+    /*skip_cccd_write=*/.skip_cccd_write = false,
+    /*sends_clear_running_data=*/.sends_clear_running_data = false,
+    /*inline_is_session=*/.inline_is_session = true,
+    /*clears_inline_when_docked=*/.clears_inline_when_docked = true,
+    /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
+    /*battery_char_reliable=*/.battery_char_reliable = false,
+    /*entity_model=*/.entity_model = BrushModel::X_ULTRA_20,
+};
+
+// === X Pro 20 (OCLEANX20) and the first X Ultra (OCLEANV1) ===
+// Same reply shapes as the X Ultra 20 in captures from both: 6-byte STATUS and a
+// count=0 download with the head of a stored record. Untested on a brush, so the
+// store is never cleared and only its oldest record shows up.
+const OcleanProfile PROFILE_TYPE_V20_FAMILY = {
+    /*name=*/.name = "TYPE_V20_FAMILY",
     /*confidence=*/.confidence = 1,
     /*query_cmds=*/.query_cmds = V20_QUERY_CMDS,
     /*query_cmd_count=*/.query_cmd_count = sizeof(V20_QUERY_CMDS) / sizeof(V20_QUERY_CMDS[0]),
@@ -167,7 +206,9 @@ const OcleanProfile PROFILE_TYPE_V20 = {
     /*write_opcode_count=*/.write_opcode_count = sizeof(V20_WRITE_OPCODES) / sizeof(V20_WRITE_OPCODES[0]),
     /*skip_cccd_write=*/.skip_cccd_write = false,
     /*sends_clear_running_data=*/.sends_clear_running_data = false,
-    /*cloud_scheme_ids=*/.cloud_scheme_ids = false,
+    /*inline_is_session=*/.inline_is_session = true,
+    /*clears_inline_when_docked=*/.clears_inline_when_docked = false,
+    /*cloud_scheme_ids=*/.cloud_scheme_ids = true,
     /*battery_char_reliable=*/.battery_char_reliable = false,
     /*entity_model=*/.entity_model = BrushModel::X_ULTRA_20,
 };
@@ -190,9 +231,9 @@ static const ProfileEntry PROFILE_TABLE[] = {
     {.prefix = "OCLEANY3T", .profile = &PROFILE_TYPE1},
     {.prefix = "OCLEANY3", .profile = &PROFILE_TYPE1},  // generic X / X Pro, shorter prefix last
     {.prefix = "OCLEANR3L", .profile = &PROFILE_TYPE1},
-    {.prefix = "OCLEANV20", .profile = &PROFILE_TYPE_V20},  // X Ultra 20
-    {.prefix = "OCLEANX20", .profile = &PROFILE_TYPE1},
-    {.prefix = "OCLEANV1", .profile = &PROFILE_TYPE1},
+    {.prefix = "OCLEANV20", .profile = &PROFILE_TYPE_V20},         // X Ultra 20
+    {.prefix = "OCLEANX20", .profile = &PROFILE_TYPE_V20_FAMILY},  // X Pro 20
+    {.prefix = "OCLEANV1", .profile = &PROFILE_TYPE_V20_FAMILY},   // X Ultra, first generation
     {.prefix = "OCLEANA1e", .profile = &PROFILE_TYPE1},
     {.prefix = "OCLEANA1f", .profile = &PROFILE_TYPE1},
     {.prefix = "OCLEANA1", .profile = &PROFILE_UNKNOWN},  // legacy, after the A1e / A1f specifics
@@ -237,6 +278,8 @@ bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8
     return true;
   if (len < 2)
     return false;
+  if (len == 2 && bytes[0] == 0x02 && bytes[1] == 0x02)
+    return profile.clears_inline_when_docked;
   for (uint8_t i = 0; i < profile.write_opcode_count; i++) {
     if (bytes[0] == profile.write_opcodes[i][0] && bytes[1] == profile.write_opcodes[i][1])
       return true;

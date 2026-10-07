@@ -25,6 +25,21 @@
   next round.
 - Record packets that follow a count=0 header during a session log at debug
   level instead of a warning.
+- X Ultra 20 support (`model: x_ultra_20`): status, settings, clock, voice
+  prompts, auto mode, holiday reminder, language and the other setting writes.
+- X Ultra 20: the record its count=0 reply carries, the oldest in its store,
+  is a session: one event, the brushed time from the record length, and the
+  entities when it is newer than what they show. While the brush is docked the
+  hub clears the store with `0202`, so the next session is read next.
+- X Ultra 20: brushing-mode select with the screen modes and voice teaching as
+  readback and custom programs up to gear 54; voice teaching (`0230`) and the
+  retail display mode (`02A0`) are switches instead of binary sensors.
+- X Ultra 20: the brush-head counters, head limit, head reset and network flag
+  are not built; firmware 0.0.1.6 never fills them. A fast-brushing or
+  over-pressure voice flag is refused while voice prompts are off, as the brush
+  would drop it.
+- The X Pro 20 (`OCLEANX20`) and the first X Ultra (`OCLEANV1*`) use the X
+  Ultra 20 reply formats instead of TYPE1.
 
 ## v1.4.1 (2026-09-13)
 

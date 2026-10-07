@@ -437,6 +437,12 @@ bool should_confirm_sessions(bool profile_confirms, const SessionIngestPlan &pla
   return profile_confirms && plan.implausible.empty();
 }
 
+bool should_clear_inline(bool profile_clears, bool round_status_seen, bool docked, const SessionIngestPlan &plan,
+                         uint32_t inline_epoch, uint32_t cleared_epoch) {
+  return profile_clears && round_status_seen && docked && plan.implausible.empty() && inline_epoch != 0 &&
+         inline_epoch != cleared_epoch;
+}
+
 uint32_t restored_newest_epoch(uint32_t record_epoch, uint32_t watermark) {
   if (watermark == 0)
     return record_epoch;
@@ -602,9 +608,20 @@ bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *ou
     return false;
   decode_v20_head(rec, out);
   out->valid_duration_s = u16be(rec + 11);
+  out->tz_index = rec[SESSION_V20_TZ_OFFSET];
   out->score = rec[SESSION_V20_SCORE_OFFSET];
   out->has_score = out->score != SESSION_NO_SCORE;
   return true;
+}
+
+uint16_t v20_brushed_seconds(size_t record_len, uint16_t program_s) {
+  if (record_len < SESSION_V20_RECORD_MIN || record_len > SESSION_V20_RECORD_MAX)
+    return 0;
+  if (record_len < SESSION_V20_RECORD_MAX)
+    return static_cast<uint16_t>(2 * (record_len - SESSION_V20_LENGTH_BASE));
+  // a cut record brushed 262 s or more, so a program that short ran to its end
+  auto const cut_s = static_cast<uint16_t>(2 * (SESSION_V20_RECORD_MAX - SESSION_V20_LENGTH_BASE));
+  return program_s <= cut_s ? program_s : 0;
 }
 
 bool decode_inline_0307_v20(const uint8_t *data, size_t len, SessionRecord *out) {
@@ -617,6 +634,7 @@ bool decode_inline_0307_v20(const uint8_t *data, size_t len, SessionRecord *out)
   if (rec_len < SESSION_V20_RECORD_MIN || rec_len > SESSION_V20_RECORD_MAX)
     return false;
   decode_v20_head(rec, out);
+  out->valid_duration_s = v20_brushed_seconds(rec_len, out->duration_s);
   return true;
 }
 
@@ -724,6 +742,10 @@ bool parse_status_reply(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1,
 
 bool is_write_refusal(const uint8_t *data, size_t len) {
   return data != nullptr && len == 4 && data[0] == 0x02 && data[2] == 0x45 && data[3] == 0x52;
+}
+
+bool is_bare_ack(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1) {
+  return data != nullptr && len == 4 && data[0] == b0 && data[1] == b1 && data[2] == 0x4F && data[3] == 0x4B;
 }
 
 // Seconds per entry, same order as the string table below.

@@ -13,8 +13,10 @@ from esphome.core import CORE
 
 from . import (
     CONF_OCLEAN_ID,
+    GEAR_MAX,
     OCLEAN_COMPONENT_SCHEMA,
     OcleanHub,
+    hub_model,
     inject_entity_defaults,
     oclean_ns,
 )
@@ -51,6 +53,7 @@ HEAD_MAX_STEP = 1
 # steps, so it fits a single write frame and keeps the brush's four-quadrant
 # guidance.
 # (yaml_key, default_name, kind, index, unit|None, icon, min, max, step, initial)
+# A max of None is the hub model's gear count (GEAR_MAX).
 CUSTOM_PARAMS = [
     *[
         (
@@ -61,7 +64,7 @@ CUSTOM_PARAMS = [
             None,
             "mdi:speedometer",
             1,
-            41,
+            None,
             1,
             8,
         )
@@ -166,6 +169,7 @@ async def to_code(config):
             hub_id,
         )
 
+    gear_max = GEAR_MAX[hub_model(config[CONF_OCLEAN_ID])]
     for (
         key,
         _default_name,
@@ -181,7 +185,12 @@ async def to_code(config):
         sub = config.get(key)
         if sub is None:
             continue
-        num = await number.new_number(sub, min_value=vmin, max_value=vmax, step=vstep)
+        num = await number.new_number(
+            sub,
+            min_value=vmin,
+            max_value=gear_max if vmax is None else vmax,
+            step=vstep,
+        )
         await cg.register_component(num, sub)
         await cg.register_parented(num, hub)
         cg.add(num.set_param(kind, idx))

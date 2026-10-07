@@ -120,6 +120,36 @@ class ModelEntitySets(unittest.TestCase):
         self.assertNotIn("binary_sensor", elite["dev"])
         self.assertNotIn("sensor", elite["dev"])
 
+    def test_x_ultra_20_leaves_out_what_its_firmware_never_fills(self):
+        # 0.0.1.6 never writes settings byte 1 and never counts head use
+        ultra = oc.MODEL_ENTITY_SETS[oc.MODEL_X_ULTRA_20]["unavailable"]
+        self.assertLessEqual(
+            {"head_used_time", "head_used_days", "head_used_times"}, ultra["sensor"]
+        )
+        self.assertIn("head_max_minutes", ultra["number"])
+        self.assertIn("reset_head", ultra["button"])
+        self.assertIn("network", ultra["binary_sensor"])
+
+    def test_teaching_and_retail_mode_are_x_ultra_20_switches(self):
+        elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
+        ultra = oc.MODEL_ENTITY_SETS[oc.MODEL_X_ULTRA_20]["unavailable"]
+        for key in ("voice_teaching", "demo_mode"):
+            self.assertIn(key, elite["switch"])
+            self.assertNotIn(key, ultra["switch"])
+            self.assertIn(key, elite["binary_sensor"])
+            self.assertIn(key, ultra["binary_sensor"])
+            self.assertIn(key, ocsw.HUB_SETTERS)
+
+    def test_both_models_build_the_brushing_mode_select(self):
+        for model, sets in oc.MODEL_ENTITY_SETS.items():
+            missing = sets["unavailable"].get("select", frozenset())
+            self.assertNotIn("brush_scheme", missing, model)
+            self.assertFalse(
+                {key for key, *_row in ocnum.CUSTOM_PARAMS}
+                & sets["unavailable"].get("number", frozenset()),
+                model,
+            )
+
     def test_quadrants_are_hidden_and_elite_only(self):
         keys = {f"quadrant_{pos}" for pos in oc.QUADRANT_POSITIONS}
         self.assertEqual(len(keys), 4)
@@ -195,6 +225,24 @@ class SchemeTable(unittest.TestCase):
         for pnum in ocsel.SCHEMES:
             self.assertGreaterEqual(pnum, 0)
             self.assertLessEqual(pnum, 0xFF)
+
+    def test_x_ultra_20_fixed_modes_stay_clear_of_the_custom_ids(self):
+        # 1-5 screen modes, 6 voice teaching, as buffer 11 numbers them
+        self.assertEqual(sorted(ocsel.X20_FIXED_MODES), [1, 2, 3, 4, 5, 6])
+        self.assertLess(max(ocsel.X20_FIXED_MODES), ocsel.CUSTOM_PNUM)
+        labels = ocsel.fixed_options(oc.MODEL_X_ULTRA_20)
+        self.assertEqual(len(labels), len(set(labels)))
+        self.assertNotIn(ocsel.CUSTOM_OPTION_LABEL, labels)
+        self.assertEqual(
+            ocsel.fixed_options(oc.MODEL_X_PRO_ELITE), ocsel.SCHEME_OPTIONS
+        )
+
+    def test_gear_cap_per_model(self):
+        self.assertEqual(oc.GEAR_MAX, {"x_pro_elite": 41, "x_ultra_20": 54})
+        self.assertEqual(set(oc.GEAR_MAX), set(oc.MODELS))
+        for _pnum, (_label, steps) in ocsel.SCHEMES.items():
+            for gear, _duration in steps:
+                self.assertLessEqual(gear, oc.GEAR_MAX[oc.MODEL_X_PRO_ELITE])
 
 
 class LanguageTable(unittest.TestCase):

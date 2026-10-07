@@ -65,7 +65,13 @@ void OcleanHub::setup() {
     if (v1 || (last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION)) {
       this->newest_record_epoch_ =
           restored_newest_epoch(session_record_epoch(last.record), this->last_session_emitted_);
-      this->publish_session_record_(last.record, last.partial != 0 ? SessionDetail::NO_SCORE : SessionDetail::FULL);
+      SessionDetail detail = SessionDetail::FULL;
+      if (last.partial == static_cast<uint8_t>(SessionDetail::HEAD)) {
+        detail = SessionDetail::HEAD;
+      } else if (last.partial != 0) {
+        detail = SessionDetail::NO_SCORE;
+      }
+      this->publish_session_record_(last.record, detail);
     } else {
       // right length, wrong content; the next ring download refills the entities
       ESP_LOGW(TAG, "[%s] stored session is not v%u (magic 0x%04X, version %u): discarded",
@@ -1201,16 +1207,18 @@ void OcleanHub::handle_variable_session_notify_(const uint8_t *data, size_t len)
   SessionRecord inl{};
   if (!assembler.started() && decode_inline_0307_v20(data, len, &inl)) {
     this->inline_seen_this_round_ = true;
-    uint32_t const ts = session_record_epoch(inl);
     ESP_LOGI(TAG,
-             "[%s] inline newest session %04u-%02u-%02u %02u:%02u:%02u "
-             "scheme=%u program=%us (no unread ring)",
+             "[%s] inline record %04u-%02u-%02u %02u:%02u:%02u "
+             "scheme=%u program=%us brushed=%us (oldest in the store)",
              this->parent_->address_str(), inl.year, inl.month, inl.day, inl.hour, inl.minute, inl.second,
-             (unsigned)inl.scheme, (unsigned)inl.duration_s);
-    if (accept_inline_record(inl, this->newest_record_epoch_,
-                             this->shown_session_valid_ ? &this->shown_session_ : nullptr, this->session_clocks_())) {
+             (unsigned)inl.scheme, (unsigned)inl.duration_s, (unsigned)inl.valid_duration_s);
+    if (this->profile_->inline_is_session) {
+      this->ingest_inline_session_(inl);
+    } else if (accept_inline_record(inl, this->newest_record_epoch_,
+                                    this->shown_session_valid_ ? &this->shown_session_ : nullptr,
+                                    this->session_clocks_())) {
       this->publish_session_record_(inl, SessionDetail::HEAD);
-      this->newest_record_epoch_ = ts;
+      this->newest_record_epoch_ = session_record_epoch(inl);
     }
     return;
   }
@@ -1326,6 +1334,61 @@ void OcleanHub::ingest_session_records_(const std::vector<SessionRecord> &record
       this->capture_active_ = false;
     }
   });
+}
+
+void OcleanHub::ingest_inline_session_(const SessionRecord &inl) {
+  SessionDetail const detail = inl.valid_duration_s != 0 ? SessionDetail::NO_SCORE : SessionDetail::HEAD;
+  SessionIngestPlan const plan =
+      plan_session_ingest({inl}, this->last_session_emitted_, this->newest_record_epoch_, this->session_clocks_());
+  if (!plan.implausible.empty()) {
+    ESP_LOGW(TAG, "[%s] dropping session dated %04u-%02u-%02u: implausibly future", this->parent_->address_str(),
+             inl.year, inl.month, inl.day);
+    return;
+  }
+  for (const auto &rec : plan.to_publish)
+    this->emit_session_event_(rec, session_record_epoch(rec));
+  if (plan.new_watermark > this->last_session_emitted_) {
+    this->last_session_emitted_ = plan.new_watermark;
+    this->session_wm_pref_.save(&this->last_session_emitted_);
+  }
+  // the entities move only forward: the oldest stored record can predate the
+  // session they show
+  if (plan.persist_newest) {
+    PersistedSession const ps{.magic = PERSISTED_SESSION_MAGIC,
+                              .version = PERSISTED_SESSION_VERSION,
+                              .partial = static_cast<uint8_t>(detail),
+                              .record = inl};
+    this->session_last_pref_.save(&ps);
+    this->newest_record_epoch_ = plan.new_newest_epoch;
+    this->publish_session_record_(inl, detail);
+  }
+  uint32_t const epoch = session_record_epoch(inl);
+  if (this->state_ != State::POLLING ||
+      !should_clear_inline(this->profile_->clears_inline_when_docked, this->round_status_seen_, this->docked_last_,
+                           plan, epoch, this->inline_cleared_epoch_))
+    return;
+  if (this->read_only_) {
+    ESP_LOGD(TAG, "[%s] read-only: inline record left in the store", this->parent_->address_str());
+    return;
+  }
+  // the next session then lands at the start of the store and heads the next reply
+  static const uint8_t CLEAR_RUNNING_DATA_CMD[] = {0x02, 0x02};
+  if (this->write_raw_(this->tx_main_handle_, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD),
+                       "CLEAR_RUNNING_DATA"))
+    this->inline_clear_sent_epoch_ = epoch;
+}
+
+bool OcleanHub::handle_inline_clear_ack_(const uint8_t *data, size_t len) {
+  if (!is_bare_ack(data, len, 0x02, 0x02))
+    return false;
+  if (this->inline_clear_sent_epoch_ != 0) {
+    this->inline_cleared_epoch_ = this->inline_clear_sent_epoch_;
+    this->inline_clear_sent_epoch_ = 0;
+    ESP_LOGD(TAG, "[%s] 0202 acked, store cleared after the inline record", this->parent_->address_str());
+  } else {
+    ESP_LOGD(TAG, "[%s] 0202 acked, sessions confirmed", this->parent_->address_str());
+  }
+  return true;
 }
 
 void OcleanHub::emit_session_event_(const SessionRecord &r, uint32_t ts) {
@@ -1530,7 +1593,8 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       esphome::oclean::OcleanHub::publish_(this->volume_index_sensor_, (float)ds.volume_index);
       esphome::oclean::OcleanHub::publish_(this->head_used_time_sensor_, (float)clamp_head_counter(ds.head_used_time));
     }
-  } else if (this->handle_write_refusal_(data, len) || this->handle_status_reply_(data, len)) {
+  } else if (this->handle_write_refusal_(data, len) || this->handle_inline_clear_ack_(data, len) ||
+             this->handle_status_reply_(data, len)) {
     // handled inside
   } else {
     // Any other frame on the main notify char: device-info replies, command
@@ -1565,10 +1629,18 @@ void OcleanHub::publish_v20_start_settings_(const uint8_t *buf) {
     this->auto_mode_switch_->publish_state(s.auto_mode);
   if (this->festival_reminder_switch_ != nullptr)
     this->festival_reminder_switch_->publish_state(s.festival_reminder);
+  if (this->voice_teaching_switch_ != nullptr)
+    this->voice_teaching_switch_->publish_state(s.bus_brushing != 0);
   for (size_t i = 0; i < VOICE_PROMPT_COUNT; i++) {
     if (this->voice_prompt_switches_[i] != nullptr)
       this->voice_prompt_switches_[i]->publish_state(this->voice_prompts_[i]);
   }
+#endif
+#ifdef USE_SELECT
+  // the active mode: 1-5 picked on the screen, 6 voice teaching, or the id of
+  // the program written over BLE
+  if (this->scheme_select_ != nullptr)
+    this->scheme_select_->publish_pnum(s.mode);
 #endif
   esphome::oclean::OcleanHub::publish_(this->auto_mode_binary_sensor_, s.auto_mode);
   esphome::oclean::OcleanHub::publish_(this->head_used_time_sensor_, (float)clamp_head_counter(s.head_used_time));
@@ -1609,6 +1681,10 @@ bool OcleanHub::handle_status_reply_(const uint8_t *data, size_t len) {
   ESP_LOGI(TAG, "[%s] %s: %s (%s)", this->parent_->address_str(), what, ONOFF(on),
            format_hex_pretty(data, len).c_str());
   esphome::oclean::OcleanHub::publish_(target, on);
+#ifdef USE_SWITCH
+  if (data[0] == 0x03 && data[1] == 0xA0 && this->demo_mode_switch_ != nullptr)
+    this->demo_mode_switch_->publish_state(on);
+#endif
   return true;
 }
 
@@ -1663,6 +1739,11 @@ bool OcleanHub::set_voice_prompt(uint8_t index, bool on) {
     return false;
   if (!this->voice_prompts_known_) {
     ESP_LOGW(TAG, "[%s] voice prompts not read from the brush yet, write refused", this->parent_->address_str());
+    return false;
+  }
+  if (!voice_prompt_write_takes(index, this->voice_prompts_[0])) {
+    ESP_LOGW(TAG, "[%s] voice prompts are off, the brush would drop this flag; write refused",
+             this->parent_->address_str());
     return false;
   }
   auto flags = this->voice_prompts_;

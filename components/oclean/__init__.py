@@ -66,9 +66,6 @@ _ZONE_KEYS = frozenset(f"gesture_zone_{i + 1}" for i in range(8))
 # session record order, bytes 19-22
 QUADRANT_POSITIONS = ("upper_left", "lower_left", "upper_right", "lower_right")
 _QUADRANT_KEYS = frozenset(f"quadrant_{position}" for position in QUADRANT_POSITIONS)
-_CUSTOM_STEP_KEYS = frozenset(
-    f"custom_step{i + 1}_{param}" for i in range(4) for param in ("gear", "duration")
-)
 _X_PRO_ELITE_FLAG_KEYS = frozenset(
     {"volume_enabled", "calendar_enabled", "splash_prevent", "fill_brush"}
 )
@@ -82,6 +79,10 @@ _X_ULTRA_20_FLAG_KEYS = frozenset(
         "demo_mode",
     }
 )
+_HEAD_COUNTER_KEYS = frozenset({"head_used_time", "head_used_days", "head_used_times"})
+
+# Highest gear a program step may use; the firmware's motor tables end there.
+GEAR_MAX = {MODEL_X_PRO_ELITE: 41, MODEL_X_ULTRA_20: 54}
 
 # Per model and platform. "unavailable": rows the model has no data or opcode
 # for, never built. "dev": rows with no observable effect on that brush, built
@@ -105,6 +106,8 @@ MODEL_ENTITY_SETS = {
                     "voice_prompts",
                     "voice_fast_brushing",
                     "voice_pressure",
+                    "voice_teaching",
+                    "demo_mode",
                 }
             ),
         },
@@ -114,17 +117,21 @@ MODEL_ENTITY_SETS = {
         },
     },
     # Settings bytes 0, 1, 3, 8-10 and 13 hold other fields on this brush, its
-    # app family has no 0222 / 0209 setter, its program frames differ, and its
-    # 12-zone record is not mapped.
+    # app family has no 0222 / 0209 setter, and its 12-zone record is not mapped.
+    # Nothing in firmware 0.0.1.6 writes byte 1 or counts head use, so the
+    # network flag and the head counters stay zero. Voice teaching and the
+    # retail mode are switches here.
     MODEL_X_ULTRA_20: {
         "unavailable": {
             "sensor": frozenset({"device_theme", "volume_index"})
             | _ZONE_KEYS
-            | _QUADRANT_KEYS,
-            "binary_sensor": _X_PRO_ELITE_FLAG_KEYS | {"auto_mode"},
+            | _QUADRANT_KEYS
+            | _HEAD_COUNTER_KEYS,
+            "binary_sensor": _X_PRO_ELITE_FLAG_KEYS
+            | {"auto_mode", "network", "voice_teaching", "demo_mode"},
             "switch": frozenset({"brush_pause", "brush_mode"}),
-            "number": _CUSTOM_STEP_KEYS,
-            "select": frozenset({"brush_scheme"}),
+            "number": frozenset({"head_max_minutes"}),
+            "button": frozenset({"reset_head"}),
         },
         "dev": {
             "button": frozenset({"capture_sessions"}),

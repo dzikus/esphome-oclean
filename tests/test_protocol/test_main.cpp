@@ -1418,18 +1418,40 @@ void test_profile_z1_routing() {
 void test_profile_select_v20() {
   const char *m = "OCLEANV20B";
   TEST_ASSERT_EQUAL_PTR(&PROFILE_TYPE_V20, profile_for_model(m, strlen(m)));
-  const char *v1 = "OCLEANV1";
-  TEST_ASSERT_EQUAL_PTR(&PROFILE_TYPE1, profile_for_model(v1, strlen(v1)));
+  // X Pro 20 and the first X Ultra answer like the X Ultra 20, not like TYPE1
+  const char *v1 = "OCLEANV1a";
+  TEST_ASSERT_EQUAL_PTR(&PROFILE_TYPE_V20_FAMILY, profile_for_model(v1, strlen(v1)));
+  const char *x20 = "OCLEANX20";
+  TEST_ASSERT_EQUAL_PTR(&PROFILE_TYPE_V20_FAMILY, profile_for_model(x20, strlen(x20)));
+}
+
+void test_profile_v20_family_keeps_the_store() {
+  const OcleanProfile &f = PROFILE_TYPE_V20_FAMILY;
+  TEST_ASSERT_EQUAL_UINT8(1, f.confidence);
+  TEST_ASSERT_EQUAL_INT(SessionFormat::VARIABLE, f.session_format);
+  TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_V20_34B, f.settings_kind);
+  TEST_ASSERT_EQUAL_INT(BrushModel::X_ULTRA_20, f.entity_model);
+  TEST_ASSERT_TRUE(f.inline_is_session);
+  TEST_ASSERT_FALSE(f.clears_inline_when_docked);
+  TEST_ASSERT_FALSE(f.sends_clear_running_data);
+  const uint8_t clear[] = {0x02, 0x02};
+  TEST_ASSERT_FALSE(command_permitted(false, f, clear, sizeof(clear)));
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE_V20, clear, sizeof(clear)));
+  TEST_ASSERT_EQUAL_UINT8(PROFILE_TYPE_V20.query_cmd_count, f.query_cmd_count);
 }
 
 void test_profile_v20_contract() {
+  TEST_ASSERT_EQUAL_UINT8(2, PROFILE_TYPE_V20.confidence);
   TEST_ASSERT_EQUAL_INT(SessionFormat::VARIABLE, PROFILE_TYPE_V20.session_format);
   TEST_ASSERT_EQUAL_INT(SettingsKind::SETTINGS_V20_34B, PROFILE_TYPE_V20.settings_kind);
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.allows_writes);
   TEST_ASSERT_TRUE(PROFILE_TYPE_V20.allows_clock_write);
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.skip_cccd_write);
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.sends_clear_running_data);
-  TEST_ASSERT_FALSE(PROFILE_TYPE_V20.cloud_scheme_ids);
+  TEST_ASSERT_TRUE(PROFILE_TYPE_V20.inline_is_session);
+  TEST_ASSERT_TRUE(PROFILE_TYPE_V20.clears_inline_when_docked);
+  // the mode byte shares its numbering with the settings readback
+  TEST_ASSERT_TRUE(PROFILE_TYPE_V20.cloud_scheme_ids);
   TEST_ASSERT_FALSE(PROFILE_TYPE_V20.battery_char_reliable);
   // TYPE1's queries first, then the four reads only this model answers
   TEST_ASSERT_EQUAL_UINT8(PROFILE_TYPE1.query_cmd_count + 4, PROFILE_TYPE_V20.query_cmd_count);
@@ -1464,6 +1486,11 @@ void test_validated_profiles_keep_writes_and_cccd_skip() {
   TEST_ASSERT_TRUE(PROFILE_TYPE1.allows_clock_write);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.skip_cccd_write);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.sends_clear_running_data);
+  // an inline head here is a record already handed over, never a new session
+  TEST_ASSERT_FALSE(PROFILE_TYPE1.inline_is_session);
+  TEST_ASSERT_FALSE(PROFILE_TYPE1.clears_inline_when_docked);
+  TEST_ASSERT_FALSE(PROFILE_TYPE_Z1.inline_is_session);
+  TEST_ASSERT_FALSE(PROFILE_UNKNOWN.clears_inline_when_docked);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.cloud_scheme_ids);
   TEST_ASSERT_TRUE(PROFILE_TYPE1.battery_char_reliable);
   TEST_ASSERT_TRUE(PROFILE_TYPE_Z1.battery_char_reliable);
@@ -1519,25 +1546,31 @@ void test_command_permitted_v20_passes_only_listed_writes() {
   TEST_ASSERT_TRUE(command_permitted(false, p, voice, sizeof(voice)));
   const uint8_t head_reset[] = {0x02, 0x0F};
   TEST_ASSERT_TRUE(command_permitted(false, p, head_reset, sizeof(head_reset)));
-  // ring clear, firmware update, cloud and OTA hosts, factory reset, the two
-  // mode changers and the retail display mode stay out
+  // the store clear after an inline record, the program, teaching and retail
+  // writes
+  const uint8_t teaching[] = {0x02, 0x30, 0x01};
+  const uint8_t scheme[] = {0x02, 0x06, 0x79, 0x01, 0x00, 0x2F, 0xB4, 0x00, 0x05};
+  const uint8_t scheme_tail[] = {0x02, 0x0B, 0x00, 0x10, 0x1E, 0x00, 0x05};
+  const uint8_t demo[] = {0x02, 0xA0, 0x01};
+  TEST_ASSERT_TRUE(command_permitted(false, p, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
+  TEST_ASSERT_TRUE(command_permitted(false, p, teaching, sizeof(teaching)));
+  TEST_ASSERT_TRUE(command_permitted(false, p, scheme, sizeof(scheme)));
+  TEST_ASSERT_TRUE(command_permitted(false, p, scheme_tail, sizeof(scheme_tail)));
+  TEST_ASSERT_TRUE(command_permitted(false, p, demo, sizeof(demo)));
+  // firmware update, cloud and OTA hosts and factory reset stay out
   const uint8_t service_url[] = {0x02, 0x33, 0x68};
   const uint8_t ota_url[] = {0x03, 0xA1, 0x68};
   const uint8_t factory_reset[] = {0x09, 0xED, 0xEF};
-  const uint8_t teaching[] = {0x02, 0x30, 0x01};
-  const uint8_t scheme[] = {0x02, 0x06, 0x01, 0x01, 0x00, 0x2F, 0xB4};
-  const uint8_t demo[] = {0x02, 0xA0, 0x01};
+  const uint8_t clear_with_payload[] = {0x02, 0x02, 0x00};
   const uint8_t opcode_half[] = {0x02};
-  TEST_ASSERT_FALSE(command_permitted(false, p, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
   TEST_ASSERT_FALSE(command_permitted(false, p, FORCE_UPDATE_CMD, sizeof(FORCE_UPDATE_CMD)));
   TEST_ASSERT_FALSE(command_permitted(false, p, service_url, sizeof(service_url)));
   TEST_ASSERT_FALSE(command_permitted(false, p, ota_url, sizeof(ota_url)));
   TEST_ASSERT_FALSE(command_permitted(false, p, factory_reset, sizeof(factory_reset)));
-  TEST_ASSERT_FALSE(command_permitted(false, p, teaching, sizeof(teaching)));
-  TEST_ASSERT_FALSE(command_permitted(false, p, scheme, sizeof(scheme)));
-  TEST_ASSERT_FALSE(command_permitted(false, p, demo, sizeof(demo)));
+  TEST_ASSERT_FALSE(command_permitted(false, p, clear_with_payload, sizeof(clear_with_payload)));
   TEST_ASSERT_FALSE(command_permitted(false, p, opcode_half, sizeof(opcode_half)));
   TEST_ASSERT_FALSE(command_permitted(true, p, AREA_REMINDER_ON_CMD, sizeof(AREA_REMINDER_ON_CMD)));
+  TEST_ASSERT_FALSE(command_permitted(true, p, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
 }
 
 void test_command_permitted_v20_extra_reads() {
@@ -1645,6 +1678,8 @@ void test_v20_inline_0307_real_frame() {
   TEST_ASSERT_EQUAL_UINT8(37, r.second);
   TEST_ASSERT_EQUAL_UINT8(2, r.scheme);
   TEST_ASSERT_EQUAL_UINT16(180, r.duration_s);
+  // length 0x8D = 141: 2 * (141 - 51) = 180 s brushed, the whole program
+  TEST_ASSERT_EQUAL_UINT16(180, r.valid_duration_s);
   TEST_ASSERT_FALSE(r.has_score);
   TEST_ASSERT_EQUAL_UINT8(SESSION_ZONE_ABSENT, r.zones[0]);
   TEST_ASSERT_FALSE(decode_inline_0307_v20(V20_INLINE_0307, sizeof(V20_INLINE_0307) - 1, &r));
@@ -1689,9 +1724,71 @@ static std::vector<uint8_t> v20_record(size_t len, uint8_t hour, uint8_t minute,
   return r;
 }
 
+void test_v20_brushed_seconds_from_length() {
+  // the shortest record the firmware keeps: 15 s brushed, length 58
+  TEST_ASSERT_EQUAL_UINT16(14, v20_brushed_seconds(58, 120));
+  TEST_ASSERT_EQUAL_UINT16(180, v20_brushed_seconds(141, 180));
+  TEST_ASSERT_EQUAL_UINT16(260, v20_brushed_seconds(181, 300));
+  // cut at 182: 262 s or more, known only when the program is no longer
+  TEST_ASSERT_EQUAL_UINT16(262, v20_brushed_seconds(182, 262));
+  TEST_ASSERT_EQUAL_UINT16(0, v20_brushed_seconds(182, 300));
+  TEST_ASSERT_EQUAL_UINT16(0, v20_brushed_seconds(57, 120));
+  TEST_ASSERT_EQUAL_UINT16(0, v20_brushed_seconds(183, 120));
+}
+
+void test_v20_record_carries_its_time_zone() {
+  std::vector<uint8_t> rec(SESSION_V20_RECORD_MIN, 0xFF);
+  rec[0] = 0;
+  rec[1] = static_cast<uint8_t>(rec.size());
+  const uint8_t when[] = {0x1A, 0x0A, 0x06, 0x02, 0x27, 0x25};
+  for (size_t i = 0; i < sizeof(when); i++)
+    rec[2 + i] = when[i];
+  rec[SESSION_V20_TZ_OFFSET] = 27;
+  SessionRecord r{};
+  TEST_ASSERT_TRUE(decode_session_record_v20(rec.data(), rec.size(), &r));
+  TEST_ASSERT_EQUAL_UINT8(27, r.tz_index);
+  TEST_ASSERT_EQUAL_INT64(28800, session_utc_offset_seconds(r, 7200));
+  TEST_ASSERT_FALSE(decode_session_record_v20(rec.data(), SESSION_V20_RECORD_MIN - 1, &r));
+}
+
+void test_should_clear_inline_only_on_the_dock() {
+  SessionRecord inl{};
+  TEST_ASSERT_TRUE(decode_inline_0307_v20(V20_INLINE_0307, sizeof(V20_INLINE_0307), &inl));
+  uint32_t const epoch = session_record_epoch(inl);
+  SessionIngestPlan plan = plan_session_ingest({inl}, 0, 0, node_only(civil_to_epoch(2026, 10, 7, 9, 0, 0)));
+  TEST_ASSERT_TRUE(should_clear_inline(true, true, true, plan, epoch, 0));
+  // off the dock, a round without STATUS, a profile that keeps the store
+  TEST_ASSERT_FALSE(should_clear_inline(true, true, false, plan, epoch, 0));
+  TEST_ASSERT_FALSE(should_clear_inline(true, false, true, plan, epoch, 0));
+  TEST_ASSERT_FALSE(should_clear_inline(false, true, true, plan, epoch, 0));
+  // acked once already: the same head stays until a new session overwrites it
+  TEST_ASSERT_FALSE(should_clear_inline(true, true, true, plan, epoch, epoch));
+  // an implausible date stays in the store until it can be judged
+  plan = plan_session_ingest({inl}, 0, 0, node_only(civil_to_epoch(2026, 10, 1, 9, 0, 0)));
+  TEST_ASSERT_EQUAL_UINT(1, plan.implausible.size());
+  TEST_ASSERT_FALSE(should_clear_inline(true, true, true, plan, epoch, 0));
+}
+
+void test_is_bare_ack() {
+  const uint8_t ack[] = {0x02, 0x02, 0x4F, 0x4B};
+  const uint8_t echo[] = {0x02, 0x12, 0x01, 0x4F, 0x4B};
+  TEST_ASSERT_TRUE(is_bare_ack(ack, sizeof(ack), 0x02, 0x02));
+  TEST_ASSERT_FALSE(is_bare_ack(ack, sizeof(ack), 0x02, 0x30));
+  TEST_ASSERT_FALSE(is_bare_ack(echo, sizeof(echo), 0x02, 0x12));
+  TEST_ASSERT_FALSE(is_bare_ack(nullptr, 4, 0x02, 0x02));
+}
+
+void test_voice_prompt_flags_need_the_main_one() {
+  TEST_ASSERT_TRUE(voice_prompt_write_takes(0, false));
+  TEST_ASSERT_TRUE(voice_prompt_write_takes(0, true));
+  TEST_ASSERT_TRUE(voice_prompt_write_takes(1, true));
+  TEST_ASSERT_FALSE(voice_prompt_write_takes(1, false));
+  TEST_ASSERT_FALSE(voice_prompt_write_takes(2, false));
+}
+
 void test_v20_assembler_splits_length_prefixed_records() {
-  std::vector<uint8_t> const a = v20_record(51, 7, 30, 2, 180, 80, 75);
-  std::vector<uint8_t> const b = v20_record(61, 21, 10, 3, 120, 20, 30);
+  std::vector<uint8_t> const a = v20_record(58, 7, 30, 2, 180, 80, 75);
+  std::vector<uint8_t> const b = v20_record(68, 21, 10, 3, 120, 20, 30);
   std::vector<uint8_t> body(a);
   body.insert(body.end(), b.begin(), b.end());
   std::vector<uint8_t> first = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x02, 0x00, static_cast<uint8_t>(body.size())};
@@ -1719,7 +1816,7 @@ void test_v20_assembler_splits_length_prefixed_records() {
   TEST_ASSERT_EQUAL_INT(1, s.newest_index());
   size_t raw_len = 0;
   TEST_ASSERT_NOT_NULL(s.raw_record(1, &raw_len));
-  TEST_ASSERT_EQUAL_UINT(61, raw_len);
+  TEST_ASSERT_EQUAL_UINT(68, raw_len);
   TEST_ASSERT_TRUE(s.feed(first.data(), first.size()));
 }
 
@@ -1747,8 +1844,8 @@ void test_v20_assembler_header_cases() {
 }
 
 void test_v20_assembler_stops_at_a_bad_length() {
-  std::vector<uint8_t> body = v20_record(51, 7, 30, 2, 180, 80, 75);
-  std::vector<uint8_t> bogus = v20_record(51, 8, 0, 2, 180, 80, 75);
+  std::vector<uint8_t> body = v20_record(58, 7, 30, 2, 180, 80, 75);
+  std::vector<uint8_t> bogus = v20_record(58, 8, 0, 2, 180, 80, 75);
   bogus[1] = 200;
   body.insert(body.end(), bogus.begin(), bogus.end());
   std::vector<uint8_t> frame = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x02, 0x00, static_cast<uint8_t>(body.size())};
@@ -2161,6 +2258,7 @@ int main() {
   RUN_TEST(test_profile_z1_contract);
   RUN_TEST(test_profile_z1_routing);
   RUN_TEST(test_profile_select_v20);
+  RUN_TEST(test_profile_v20_family_keeps_the_store);
   RUN_TEST(test_profile_v20_contract);
   RUN_TEST(test_profile_entity_model);
   RUN_TEST(test_validated_profiles_keep_writes_and_cccd_skip);
@@ -2174,6 +2272,11 @@ int main() {
   RUN_TEST(test_v20_settings_after_clock_write);
   RUN_TEST(test_v20_inline_0307_real_frame);
   RUN_TEST(test_v20_inline_against_brush_clock);
+  RUN_TEST(test_v20_brushed_seconds_from_length);
+  RUN_TEST(test_v20_record_carries_its_time_zone);
+  RUN_TEST(test_should_clear_inline_only_on_the_dock);
+  RUN_TEST(test_is_bare_ack);
+  RUN_TEST(test_voice_prompt_flags_need_the_main_one);
   RUN_TEST(test_v20_assembler_splits_length_prefixed_records);
   RUN_TEST(test_v20_assembler_header_cases);
   RUN_TEST(test_v20_assembler_stops_at_a_bad_length);
