@@ -48,18 +48,17 @@ class OcleanCloudReceiver : public AsyncWebHandler {
       this->handle_upload_(request);
     } else if (std::strstr(uri, "UploadingMacWiFi") != nullptr) {
       // currentTime sets the brush clock; the wifi password in the body is ignored
-      int64_t now = 0;
+      std::string now;
       for (OcleanHub *hub : this->hubs_) {
-        now = hub->cloud_now_epoch();
-        if (now > 0)
+        now = hub->cloud_current_time();
+        if (!now.empty())
           break;
       }
-      if (now > 0) {
-        char js[72];
-        snprintf(js, sizeof(js), R"({"data":{"currentTime":"%lld"}})", static_cast<long long>(now));
-        request->send(200, "application/json", js);
-      } else {
+      if (now.empty()) {
         request->send(200, "application/json", "{}");
+      } else {
+        std::string const js = R"({"data":{"currentTime":")" + now + R"("}})";
+        request->send(200, "application/json", js.c_str());
       }
     } else if (std::strstr(uri, "OTAUpGrade") != nullptr || std::strstr(uri, "GetOTACounterMode") != nullptr) {
       request->send(200, "application/json", R"({"state":false})");

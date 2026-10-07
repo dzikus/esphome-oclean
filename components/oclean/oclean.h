@@ -199,8 +199,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   // http server task -> main loop; captured gates the record-erasing ack
   void enqueue_cloud_record(const SessionRecord &rec, uint32_t epoch);
   bool cloud_record_captured(uint32_t epoch);
-  // UTC epoch for the brush's currentTime, 0 when unsynced
-  int64_t cloud_now_epoch();
+  // node local time as "YYYYMMDDHHMMSS" for the brush's currentTime (firmware
+  // parses the digits, not an epoch), empty when the node clock is unset
+  std::string cloud_current_time();
 #endif
 
   // resend reprograms the brush, debounced, but only while custom is selected

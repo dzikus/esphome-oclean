@@ -1893,16 +1893,21 @@ void OcleanHub::cloud_remember_(uint32_t epoch) {
   this->cloud_captured_.push_back(epoch);
 }
 
-int64_t OcleanHub::cloud_now_epoch() {
+std::string OcleanHub::cloud_current_time() {
 #ifdef USE_TIME
   if (this->time_ != nullptr) {
-    ESPTime const utc = this->time_->utcnow();
-    // UTC epoch; the brush applies its own tz
-    if (utc.is_valid())
-      return static_cast<int64_t>(utc.timestamp);
+    // local wall time: the firmware reads the digits and mktime()s them, and
+    // the records it stamps are local civil time
+    ESPTime const now = this->time_->now();
+    if (now.is_valid()) {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%04u%02u%02u%02u%02u%02u", now.year, now.month, now.day_of_month, now.hour,
+               now.minute, now.second);
+      return buf;
+    }
   }
 #endif
-  return 0;
+  return {};
 }
 
 void OcleanHub::ingest_cloud_record_(const SessionRecord &rec) {
