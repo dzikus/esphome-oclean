@@ -67,6 +67,11 @@ DEFAULT_MODEL = MODEL_X_PRO_ELITE
 CONF_CLOUD_RECEIVER_PORT = "cloud_receiver_port"
 DEFAULT_CLOUD_RECEIVER_PORT = 8099
 
+# In-node http receiver for the brush's cloud session uploads. Off unless set
+# true, and the C++ and the esp_http_server dependency are not compiled in
+# otherwise (USE_OCLEAN_CLOUD_RECEIVER).
+CONF_CLOUD_RECEIVER = "cloud_receiver"
+
 # BluFi Wi-Fi provisioning is off unless this is set true, and the C++ for it is
 # not compiled in otherwise (USE_OCLEAN_BLUFI).
 CONF_WIFI_PROVISIONING = "wifi_provisioning"
@@ -486,6 +491,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(
                 CONF_CLOUD_RECEIVER_PORT, default=DEFAULT_CLOUD_RECEIVER_PORT
             ): cv.port,
+            cv.Optional(CONF_CLOUD_RECEIVER, default=False): cv.boolean,
             cv.Optional(CONF_WIFI_PROVISIONING, default=False): cv.boolean,
             cv.Optional(CONF_WIFI_SSID): cv.string,
             cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
@@ -648,6 +654,13 @@ async def to_code(config):
         var.set_hold_connection_while_docked(config[CONF_HOLD_CONNECTION_WHILE_DOCKED])
     )
     cg.add(var.set_cloud_receiver_port(config[CONF_CLOUD_RECEIVER_PORT]))
+    if config[CONF_CLOUD_RECEIVER]:
+        # compiles the receiver in and pulls the esp_http_server idf component
+        from esphome.components.esp32 import include_builtin_idf_component
+
+        cg.add_define("USE_OCLEAN_CLOUD_RECEIVER")
+        include_builtin_idf_component("esp_http_server")
+        cg.add(var.set_cloud_receiver_enabled(True))
     if config[CONF_WIFI_PROVISIONING]:
         cg.add_define("USE_OCLEAN_BLUFI")
         blufi_ssid, blufi_password = resolve_blufi_wifi(

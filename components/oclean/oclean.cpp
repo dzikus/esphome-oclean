@@ -16,9 +16,10 @@
 #ifdef USE_TEXT
 #include "oclean_text.h"
 #endif
-
 #include <algorithm>
 #include <cmath>
+
+#include "oclean_cloud_receiver.h"
 
 #ifdef USE_ESP32
 
@@ -87,6 +88,10 @@ void OcleanHub::setup() {
   }
   // static value, so once here instead of on every poll
   esphome::oclean::OcleanHub::publish_(this->mac_text_sensor_, std::string(this->parent_->address_str()));
+#ifdef USE_OCLEAN_CLOUD_RECEIVER
+  if (this->cloud_receiver_enabled_)
+    cloud_receiver_register(this);
+#endif
   // BLEClient sets up later (AFTER_BLUETOOTH) and leaves itself enabled, so a
   // plain set_enabled(false) here is overridden and the client auto-connects at
   // boot, outside any poll cycle.
@@ -1831,6 +1836,110 @@ void OcleanHub::point_cloud_at_node() {
   ESP_LOGW(TAG, "[%s] point cloud at node: firmware built without network", this->parent_->address_str());
 #endif
 }
+
+void OcleanHub::loop() {
+#ifdef USE_OCLEAN_CLOUD_RECEIVER
+  if (!this->cloud_receiver_enabled_)
+    return;
+  // Records arrive on the http server task; publish them here, on the main loop.
+  std::vector<SessionRecord> batch;
+  {
+    LockGuard const guard(this->cloud_mutex_);
+    if (this->cloud_inbound_.empty())
+      return;
+    batch.swap(this->cloud_inbound_);
+  }
+  for (const SessionRecord &rec : batch)
+    this->ingest_cloud_record_(rec);
+#endif
+}
+
+#ifdef USE_OCLEAN_CLOUD_RECEIVER
+// Bounds on the cross-task buffers: the ack ring need only cover the brush store
+// (33 records); a full inbound queue means the main loop is behind, so the brush
+// keeps the record and retries.
+static constexpr size_t CLOUD_CAPTURED_MAX = 48;
+static constexpr size_t CLOUD_INBOUND_MAX = 8;
+
+void OcleanHub::enqueue_cloud_record(const SessionRecord &rec, uint32_t epoch) {
+  LockGuard const guard(this->cloud_mutex_);
+  if (std::ranges::find(this->cloud_captured_, epoch) != this->cloud_captured_.end())
+    return;
+  for (const SessionRecord &queued : this->cloud_inbound_) {
+    if (session_record_epoch(queued) == epoch)
+      return;
+  }
+  if (this->cloud_inbound_.size() >= CLOUD_INBOUND_MAX)
+    return;
+  this->cloud_inbound_.push_back(rec);
+}
+
+bool OcleanHub::cloud_record_captured(uint32_t epoch) {
+  LockGuard const guard(this->cloud_mutex_);
+  return std::ranges::find(this->cloud_captured_, epoch) != this->cloud_captured_.end();
+}
+
+void OcleanHub::cloud_remember_(uint32_t epoch) {
+  LockGuard const guard(this->cloud_mutex_);
+  if (std::ranges::find(this->cloud_captured_, epoch) != this->cloud_captured_.end())
+    return;
+  if (this->cloud_captured_.size() >= CLOUD_CAPTURED_MAX)
+    this->cloud_captured_.erase(this->cloud_captured_.begin());
+  this->cloud_captured_.push_back(epoch);
+}
+
+int64_t OcleanHub::cloud_now_epoch() {
+#ifdef USE_TIME
+  if (this->time_ != nullptr) {
+    ESPTime const utc = this->time_->utcnow();
+    // Unix epoch (UTC); the brush applies its own time zone to it
+    if (utc.is_valid())
+      return static_cast<int64_t>(utc.timestamp);
+  }
+#endif
+  return 0;
+}
+
+void OcleanHub::ingest_cloud_record_(const SessionRecord &rec) {
+  uint32_t const epoch = session_record_epoch(rec);
+  SessionIngestPlan const plan =
+      plan_session_ingest({rec}, this->last_session_emitted_, this->newest_record_epoch_, this->session_clocks_());
+  if (!plan.implausible.empty()) {
+    ESP_LOGW(TAG, "[%s] cloud session dated %04u-%02u-%02u dropped: implausibly future", this->parent_->address_str(),
+             rec.year, rec.month, rec.day);
+    // acked regardless, so the brush store advances past a bad-clock record
+    this->cloud_remember_(epoch);
+    return;
+  }
+  for (const auto &pub : plan.to_publish)
+    this->emit_session_event_(pub, session_record_epoch(pub));
+  if (plan.new_watermark > this->last_session_emitted_) {
+    this->last_session_emitted_ = plan.new_watermark;
+    this->session_wm_pref_.save(&this->last_session_emitted_);
+  }
+  // live entities and persistence only for a genuinely newer record; an older
+  // backlog record stays history (the event above) and must not pull the shown
+  // session back in time
+  if (plan.have_newest && plan.persist_newest) {
+    const SessionRecord &r = plan.newest;
+    PersistedSession const ps{
+        .magic = PERSISTED_SESSION_MAGIC, .version = PERSISTED_SESSION_VERSION, .partial = 0, .record = r};
+    this->session_last_pref_.save(&ps);
+    this->newest_record_epoch_ = plan.new_newest_epoch;
+    this->publish_session_record_(r, SessionDetail::FULL);
+    char score_buf[8];
+    if (r.has_score) {
+      snprintf(score_buf, sizeof(score_buf), "%u", (unsigned)r.score);
+    } else {
+      snprintf(score_buf, sizeof(score_buf), "%s", session_voided(r) ? "void" : "-");
+    }
+    ESP_LOGI(TAG, "[%s] cloud session %04u-%02u-%02u %02u:%02u:%02u scheme=%u dur=%us valid=%us score=%s",
+             this->parent_->address_str(), r.year, r.month, r.day, r.hour, r.minute, r.second, (unsigned)r.scheme,
+             (unsigned)r.duration_s, (unsigned)r.valid_duration_s, score_buf);
+  }
+  this->cloud_remember_(epoch);
+}
+#endif  // USE_OCLEAN_CLOUD_RECEIVER
 
 #ifdef USE_OCLEAN_BLUFI
 void OcleanHub::provision_wifi() {

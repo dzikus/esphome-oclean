@@ -550,6 +550,23 @@ std::vector<uint8_t> build_blufi_frame(uint8_t frame_type, uint8_t subtype, cons
 // (0 = connected) from the frame's data field. False for any other frame.
 bool parse_blufi_wifi_status(const uint8_t *data, size_t len, uint8_t *opmode, uint8_t *sta_state);
 
+// === Cloud session receiver (UploadBrushRecord body) ===
+// The brush posts a flat JSON object whose string values carry no escapes or
+// quotes (mac, model, brushdata hex). A full parser is not pulled in for two
+// fields; these read exactly those shapes and reject anything else.
+
+// Value of a "key":"value" pair in flat JSON. False when the key is absent or
+// its value is not a plain double-quoted string. out is left untouched on false.
+bool cloud_body_field(const char *body, size_t len, const char *key, std::string *out);
+
+// Even-length hex text to bytes. False on odd length or any non-hex character.
+bool parse_hex_bytes(std::string_view hex, std::vector<uint8_t> *out);
+
+// "aa:bb:cc:dd:ee:ff" (any case, one or two digits per octet, a trailing colon
+// tolerated) to the uint64 an ESPHome BLE address holds, most significant byte
+// first. False unless exactly six octets.
+bool parse_mac_u64(std::string_view mac, uint64_t *out);
+
 // === Set-clock (0201) ===
 //   02 01 [year-2000][month][day][hour][minute][second][weekday][tz_index]
 // Plain decimal per byte, not BCD (minute 30 -> 0x1E), device local wall-clock

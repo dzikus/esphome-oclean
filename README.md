@@ -275,7 +275,8 @@ Set on the `oclean:` entry, not on the platforms.
 | `expose_dev_sensors` | bool | `false` | Creates the dev entities of the hub's model (see the per-platform tables) and logs the brush's GATT services and characteristics on each connect. |
 | `read_only` | bool | `false` | The brush only receives the profile's `03` read queries; the X Ultra 20's Wi-Fi check `02 34` is held back too. Every write is refused and logged: controls, clock sync, `0202`. |
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
-| `cloud_receiver_port` | int 1-65535 | `8099` | Port the `point_cloud_at_node` button puts in the host URL (`http://<node ip>:<port>`). X Ultra 20 only; unused without that button. |
+| `cloud_receiver_port` | int 1-65535 | `8099` | Port the `point_cloud_at_node` button puts in the host URL (`http://<node ip>:<port>`), and the port the `cloud_receiver` server listens on. X Ultra 20 only. |
+| `cloud_receiver` | bool | `false` | Runs an HTTP server on the node that receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. The server and its `esp_http_server` dependency are not compiled in unless this is true. Needs the brush pointed at the node (`point_cloud_at_node`) and able to reach it over the network. See **In-node session receiver**. |
 | `wifi_provisioning` | bool | `false` | Enables BluFi Wi-Fi provisioning (the `provision_wifi` button). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
 | `wifi_ssid` | string | the node's `wifi:` SSID | The network `provision_wifi` joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
 | `wifi_password` | string | the node's `wifi:` password | Passphrase for `wifi_ssid`. Needs `wifi_provisioning: true`. Baked into the firmware, not an entity, so it never reaches the recorder; use `!secret`. |
@@ -450,6 +451,29 @@ Wi-Fi provisioning credentials are **not** entities: a password would be kept
 in the Home Assistant recorder. They are the `wifi_ssid` and `wifi_password` hub
 options (see **Hub options**), baked into the firmware like the node's own
 `wifi:`; `provision_wifi` is a button, which has no recorded state.
+
+### In-node session receiver
+
+On X Ultra 20 firmware the brushing score and the full per-session record never
+come over BLE; the brush only uploads them to its cloud host. `cloud_receiver:
+true` runs a small HTTP server on the node that stands in for that cloud: it
+takes the brush's `UploadBrushRecord`, decodes the record, and publishes the
+same session entities a BLE download would (score, durations, timestamp). A
+record is routed to the hub whose brush MAC matches the upload, so several hubs
+on one node share one server.
+
+Setup is three steps: `wifi_provisioning` to join the brush to a network,
+`point_cloud_at_node` to aim its cloud host at `http://<node ip>:<cloud_receiver_port>`,
+and a route that lets the brush reach the node (the brush and the node are often
+on different VLANs). The server is HTTP only; the brush accepts a plain `http://`
+host, and the node does not serve TLS.
+
+The brush keeps a record until the server answers "ok", then drops it and sends
+the next. So the receiver answers "ok" only after a record has been published,
+and answers "keep it" the first time it sees one; the brush re-sends it on its
+next upload and that copy is acked. A record is thus never dropped before it is
+in Home Assistant, at the cost of one extra upload per record. The brush's clock
+is answered from the node's clock, so it also corrects over Wi-Fi.
 
 ### Override per-entity
 
@@ -722,10 +746,13 @@ components/oclean/
 
   oclean_protocol.{h,cpp}  pure C++: command table, session + settings
                            assemblers, record decode, scheme/clock/toggle/
-                           cloud-host/blufi builders, adaptive-poll helpers
+                           cloud-host/blufi builders, cloud-upload body
+                           parsing, adaptive-poll helpers
   oclean_profile.{h,cpp}   model-string to profile dispatch
   oclean.{h,cpp}           OcleanHub: BLE client node + PollingComponent +
                            poll state machine, NVS persistence
+  oclean_cloud_receiver.{h,cpp}  in-node http session receiver (X Ultra 20,
+                           opt-in via cloud_receiver)
   oclean_switch.h          OcleanCommandSwitch / OcleanBleSwitch
   oclean_number.h          OcleanHeadMaxNumber / OcleanCustomParamNumber
   oclean_button.h          the button classes

@@ -76,6 +76,9 @@ oclean:
     # Compiles the BluFi provisioning path (USE_OCLEAN_BLUFI); the SSID falls
     # back to the wifi: block above since no wifi_ssid is set here.
     wifi_provisioning: true
+    # Compiles the in-node session receiver (USE_OCLEAN_CLOUD_RECEIVER) and pulls
+    # the esp_http_server idf component.
+    cloud_receiver: true
 
 # Every entity platform auto-creates its full entity set, so a bare platform
 # block compiles every entity codegen path (dev-gated rows included via

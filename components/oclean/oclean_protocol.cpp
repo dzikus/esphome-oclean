@@ -929,4 +929,85 @@ int64_t set_clock_command_epoch(const uint8_t *cmd, size_t len) {
   return civil_to_epoch(static_cast<uint16_t>(2000 + cmd[2]), cmd[3], cmd[4], cmd[5], cmd[6], cmd[7]);
 }
 
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  return -1;
+}
+
+bool cloud_body_field(const char *body, size_t len, const char *key, std::string *out) {
+  if (body == nullptr || key == nullptr || *key == '\0' || out == nullptr)
+    return false;
+  static constexpr std::string_view BLANK = " \t";
+  std::string_view const hay(body, len);
+  std::string_view const name(key);
+  // the name can also turn up as a value, so every match is tried
+  for (size_t at = hay.find(name); at != std::string_view::npos; at = hay.find(name, at + 1)) {
+    size_t const end = at + name.size();
+    if (at == 0 || hay[at - 1] != '"' || end >= hay.size() || hay[end] != '"')
+      continue;
+    size_t pos = hay.find_first_not_of(BLANK, end + 1);
+    if (pos == std::string_view::npos || hay[pos] != ':')
+      continue;
+    pos = hay.find_first_not_of(BLANK, pos + 1);
+    if (pos == std::string_view::npos || hay[pos] != '"')
+      return false;
+    // values here carry no escapes, so the first quote ends the string
+    size_t const close = hay.find('"', pos + 1);
+    if (close == std::string_view::npos)
+      return false;
+    out->assign(hay.substr(pos + 1, close - pos - 1));
+    return true;
+  }
+  return false;
+}
+
+bool parse_hex_bytes(std::string_view hex, std::vector<uint8_t> *out) {
+  if (out == nullptr || (hex.size() % 2) != 0)
+    return false;
+  out->clear();
+  out->reserve(hex.size() / 2);
+  for (size_t i = 0; i < hex.size(); i += 2) {
+    int const hi = hex_nibble(hex[i]);
+    int const lo = hex_nibble(hex[i + 1]);
+    if (hi < 0 || lo < 0)
+      return false;
+    out->push_back(static_cast<uint8_t>((hi << 4) | lo));
+  }
+  return true;
+}
+
+bool parse_mac_u64(std::string_view mac, uint64_t *out) {
+  if (out == nullptr)
+    return false;
+  uint64_t acc = 0;
+  size_t octets = 0;
+  for (size_t i = 0; i < mac.size();) {
+    int const hi = hex_nibble(mac[i]);
+    if (hi < 0)
+      return false;
+    int const lo = (i + 1 < mac.size()) ? hex_nibble(mac[i + 1]) : -1;
+    // one or two hex digits per octet
+    uint8_t const byte = (lo >= 0) ? static_cast<uint8_t>((hi << 4) | lo) : static_cast<uint8_t>(hi);
+    i += (lo >= 0) ? 2 : 1;
+    acc = (acc << 8) | byte;
+    if (++octets > 6)
+      return false;
+    if (i < mac.size()) {
+      // separator; a trailing one (the firmware's "%02x:" form) is tolerated
+      if (mac[i] != ':')
+        return false;
+      i++;
+    }
+  }
+  if (octets != 6)
+    return false;
+  *out = acc;
+  return true;
+}
+
 }  // namespace esphome::oclean

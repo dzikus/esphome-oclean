@@ -783,6 +783,97 @@ void test_parse_blufi_wifi_status() {
   TEST_ASSERT_FALSE(parse_blufi_wifi_status(short_frame, sizeof(short_frame), &opmode, &sta));
 }
 
+void test_cloud_body_field() {
+  // flat JSON: pull string values, including a mac whose value holds colons
+  const std::string body =
+      "{\"mac\":\"aa:bb:cc:dd:ee:01\",\"model\":\"OCLEANV20\",\"brushdata\":\"2a4201\",\"security\":\"0011\"}";
+  std::string mac;
+  std::string data;
+  std::string model;
+  TEST_ASSERT_TRUE(cloud_body_field(body.data(), body.size(), "mac", &mac));
+  TEST_ASSERT_EQUAL_STRING("aa:bb:cc:dd:ee:01", mac.c_str());
+  TEST_ASSERT_TRUE(cloud_body_field(body.data(), body.size(), "brushdata", &data));
+  TEST_ASSERT_EQUAL_STRING("2a4201", data.c_str());
+  TEST_ASSERT_TRUE(cloud_body_field(body.data(), body.size(), "model", &model));
+  TEST_ASSERT_EQUAL_STRING("OCLEANV20", model.c_str());
+  std::string miss;
+  TEST_ASSERT_FALSE(cloud_body_field(body.data(), body.size(), "absent", &miss));
+  // whitespace around the colon and value is tolerated
+  const std::string spaced = "{ \"brushdata\" : \"ab\" }";
+  std::string spaced_val;
+  TEST_ASSERT_TRUE(cloud_body_field(spaced.data(), spaced.size(), "brushdata", &spaced_val));
+  TEST_ASSERT_EQUAL_STRING("ab", spaced_val.c_str());
+  const std::string num = "{\"n\":123}";
+  std::string num_val;
+  TEST_ASSERT_FALSE(cloud_body_field(num.data(), num.size(), "n", &num_val));
+  // the name showing up first as another key's value does not hide the key
+  const std::string decoy = "{\"model\":\"mac\",\"mac\":\"aa:bb:cc:dd:ee:01\"}";
+  std::string decoy_val;
+  TEST_ASSERT_TRUE(cloud_body_field(decoy.data(), decoy.size(), "mac", &decoy_val));
+  TEST_ASSERT_EQUAL_STRING("aa:bb:cc:dd:ee:01", decoy_val.c_str());
+}
+
+void test_parse_hex_bytes() {
+  std::vector<uint8_t> out;
+  TEST_ASSERT_TRUE(parse_hex_bytes("2a4201ff", &out));
+  const uint8_t expected[] = {0x2A, 0x42, 0x01, 0xFF};
+  TEST_ASSERT_EQUAL_UINT(sizeof(expected), out.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, out.data(), sizeof(expected));
+  TEST_ASSERT_TRUE(parse_hex_bytes("AB", &out));
+  TEST_ASSERT_EQUAL_UINT8(0xAB, out[0]);
+  TEST_ASSERT_FALSE(parse_hex_bytes("abc", &out));
+  TEST_ASSERT_FALSE(parse_hex_bytes("zz", &out));
+}
+
+void test_parse_mac_u64() {
+  uint64_t v = 0;
+  TEST_ASSERT_TRUE(parse_mac_u64("aa:bb:cc:dd:ee:01", &v));
+  TEST_ASSERT_EQUAL_UINT64(0xAABBCCDDEE01ULL, v);
+  // the firmware's trailing-colon "%02x:" form resolves to the same address
+  TEST_ASSERT_TRUE(parse_mac_u64("aa:bb:cc:dd:ee:01:", &v));
+  TEST_ASSERT_EQUAL_UINT64(0xAABBCCDDEE01ULL, v);
+  TEST_ASSERT_FALSE(parse_mac_u64("aa:bb:cc:dd:ee", &v));
+  TEST_ASSERT_FALSE(parse_mac_u64("zz:bb:cc:dd:ee:01", &v));
+}
+
+void test_decode_cloud_brushdata_record() {
+  // the full v20 record the cloud body carries, length prefix included: the
+  // score at [28] is the datum BLE on this firmware never hands over
+  std::vector<uint8_t> rec(SESSION_V20_RECORD_MIN, 0);
+  rec[0] = static_cast<uint8_t>(SESSION_V20_RECORD_MIN);  // length prefix lo
+  rec[2] = 26;                                            // year 2026
+  rec[3] = 10;                                            // month
+  rec[4] = 7;                                             // day
+  rec[5] = 21;                                            // hour
+  rec[6] = 41;                                            // minute
+  rec[7] = 24;                                            // second
+  rec[8] = 3;                                             // scheme
+  rec[9] = 0;
+  rec[10] = 120;  // program 120 s
+  rec[11] = 0;
+  rec[12] = 118;                       // brushed 118 s
+  rec[SESSION_V20_TZ_OFFSET] = 16;     // tz index (UTC+2)
+  rec[SESSION_V20_SCORE_OFFSET] = 88;  // score
+  std::string hex;
+  for (uint8_t b : rec) {
+    char buf[3];
+    snprintf(buf, sizeof(buf), "%02x", b);
+    hex += buf;
+  }
+  std::vector<uint8_t> bytes;
+  TEST_ASSERT_TRUE(parse_hex_bytes(hex, &bytes));
+  SessionRecord out{};
+  TEST_ASSERT_TRUE(decode_session_record_v20(bytes.data(), bytes.size(), &out));
+  TEST_ASSERT_EQUAL_UINT16(2026, out.year);
+  TEST_ASSERT_EQUAL_UINT8(10, out.month);
+  TEST_ASSERT_EQUAL_UINT8(7, out.day);
+  TEST_ASSERT_EQUAL_UINT16(120, out.duration_s);
+  TEST_ASSERT_EQUAL_UINT16(118, out.valid_duration_s);
+  TEST_ASSERT_EQUAL_UINT8(16, out.tz_index);
+  TEST_ASSERT_TRUE(out.has_score);
+  TEST_ASSERT_EQUAL_UINT8(88, out.score);
+}
+
 void test_timezone_index_to_string() {
   // Wire index is 1-based into the 33-entry GMT table.
   TEST_ASSERT_EQUAL_STRING("GMT-12:00", timezone_index_to_string(1));
@@ -2272,6 +2363,10 @@ int main() {
   RUN_TEST(test_build_blufi_frame_control);
   RUN_TEST(test_build_blufi_frame_data);
   RUN_TEST(test_parse_blufi_wifi_status);
+  RUN_TEST(test_cloud_body_field);
+  RUN_TEST(test_parse_hex_bytes);
+  RUN_TEST(test_parse_mac_u64);
+  RUN_TEST(test_decode_cloud_brushdata_record);
   RUN_TEST(test_timezone_index_to_string);
   RUN_TEST(test_tz_index_for_offset_seconds);
   RUN_TEST(test_tz_index_offset_seconds_round_trips);
