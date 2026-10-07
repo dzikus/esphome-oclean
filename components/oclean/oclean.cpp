@@ -502,6 +502,11 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
       } else if (param->notify.handle == this->rx_main_handle_) {
         this->handle_main_notify_(buf, len);
       }
+#ifdef USE_OCLEAN_BLUFI
+      else if (this->blufi_notify_handle_ != 0 && param->notify.handle == this->blufi_notify_handle_) {
+        this->handle_blufi_notify_(buf, len);
+      }
+#endif
       break;
     }
     default:
@@ -534,6 +539,10 @@ void OcleanHub::resolve_handles_() {
   this->rx_session_handle_ = resolve_full(RX_SESSION);
   this->tx_session_handle_ = resolve_full(TX_SESSION);
   this->tx_main_handle_ = resolve_full(TX_MAIN);
+#ifdef USE_OCLEAN_BLUFI
+  this->blufi_write_handle_ = resolve16(BLUFI_SERVICE_UUID16, BLUFI_WRITE_CHAR_UUID16);
+  this->blufi_notify_handle_ = resolve16(BLUFI_SERVICE_UUID16, BLUFI_NOTIFY_CHAR_UUID16);
+#endif
 
   ESP_LOGD(TAG,
            "[%s] handles bat=0x%04X model=0x%04X hw=0x%04X fw=0x%04X sw=0x%04X "
@@ -555,6 +564,10 @@ void OcleanHub::resolve_handles_() {
     this->rx_session_cccd_ = this->lookup_cccd_(this->rx_session_handle_);
     ESP_LOGD(TAG, "[%s] cccd bat=0x%04X rx-main=0x%04X rx-session=0x%04X", this->parent_->address_str(),
              this->battery_cccd_, this->rx_main_cccd_, this->rx_session_cccd_);
+#ifdef USE_OCLEAN_BLUFI
+    this->blufi_notify_cccd_ = this->lookup_cccd_(this->blufi_notify_handle_);
+    ESP_LOGD(TAG, "[%s] blufi cccd=0x%04X", this->parent_->address_str(), this->blufi_notify_cccd_);
+#endif
   }
 }
 
@@ -614,6 +627,14 @@ void OcleanHub::dump_gatt_map_() {
 void OcleanHub::begin_queries_() {
   if (this->state_ != State::POLLING)
     return;
+#ifdef USE_OCLEAN_BLUFI
+  // A provisioning press diverts this cycle to BluFi instead of the Oclean
+  // query round; the normal poll resumes on the next cycle.
+  if (this->blufi_provision_armed_) {
+    this->start_blufi_provision_();
+    return;
+  }
+#endif
   // The base client enables notifications by walking the stack's GATT cache,
   // which is released by now (an earlier walk at this point faulted the node on
   // the validated brushes). The cache connection type keeps it off that path;
@@ -1810,6 +1831,148 @@ void OcleanHub::point_cloud_at_node() {
   ESP_LOGW(TAG, "[%s] point cloud at node: firmware built without network", this->parent_->address_str());
 #endif
 }
+
+#ifdef USE_OCLEAN_BLUFI
+void OcleanHub::provision_wifi() {
+  if (!this->ble_user_enabled_) {
+    ESP_LOGW(TAG, "[%s] provision ignored: BLE user-disabled", this->parent_->address_str());
+    return;
+  }
+  if (this->read_only_) {
+    ESP_LOGW(TAG, "[%s] provision ignored: read-only hub", this->parent_->address_str());
+    return;
+  }
+  if (this->blufi_ssid_.empty()) {
+    ESP_LOGW(TAG, "[%s] provision ignored: no Wi-Fi SSID configured (set wifi_ssid or a wifi: network)",
+             this->parent_->address_str());
+    return;
+  }
+  bool const connected = this->node_state == espbt::ClientState::ESTABLISHED;
+  if (!connected) {
+    ESP_LOGI(TAG, "[%s] Wi-Fi provisioning armed, starting cycle", this->parent_->address_str());
+    this->blufi_provision_armed_ = true;
+    if (!this->parent_->enabled)
+      this->begin_connect_cycle_(false);
+    return;
+  }
+  // on a live, idle link run now; mid-round, arm for the next cycle
+  if (this->state_ == State::POLLING && !this->round_setup_pending_() && !this->capture_active_) {
+    this->start_blufi_provision_();
+  } else {
+    this->blufi_provision_armed_ = true;
+  }
+}
+
+void OcleanHub::start_blufi_provision_() {
+  this->blufi_provision_armed_ = false;  // consume
+  if (this->read_only_) {
+    ESP_LOGW(TAG, "[%s] BluFi provisioning refused: read-only hub", this->parent_->address_str());
+    this->disconnect_();
+    return;
+  }
+  if (this->blufi_write_handle_ == 0 || this->blufi_notify_handle_ == 0) {
+    ESP_LOGW(TAG, "[%s] BluFi service not found (0xFF01/0xFF02); provisioning skipped", this->parent_->address_str());
+    this->disconnect_();
+    return;
+  }
+  ESP_LOGI(TAG, "[%s] BluFi provisioning: ssid '%s'", this->parent_->address_str(), this->blufi_ssid_.c_str());
+  // keep the base client off the faulting CCCD walk, same as the query path
+  this->parent_->set_connection_type(espbt::ConnectionType::V3_WITH_CACHE);
+  // hold the link past the frames so the Wi-Fi status report is caught
+  this->capture_active_ = true;
+  this->blufi_seq_ = 0;
+  this->register_notify_handle_(this->blufi_notify_handle_, "blufi-rx");
+  if (this->blufi_notify_cccd_ != 0)
+    this->write_cccd_(this->blufi_notify_cccd_);
+
+  // one Write With Response outstanding at a time, so the frames are staggered.
+  // Distinct literal timer names: the scheduler keys const char* by pointer.
+  uint32_t const base = QUERY_STAGGER_MS;
+  uint32_t const step = PENDING_WRITE_STAGGER_MS;
+  this->set_timeout("blufi0", base, [this]() {
+    if (this->state_ != State::POLLING)
+      return;
+    const uint8_t sec = 0x00;
+    this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_SET_SEC_MODE, &sec, 1, this->blufi_seq_++),
+                             "blufi set-sec");
+  });
+  this->set_timeout("blufi1", base + step, [this]() {
+    if (this->state_ != State::POLLING)
+      return;
+    const uint8_t opmode = BLUFI_OPMODE_STA;
+    this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_SET_OPMODE, &opmode, 1, this->blufi_seq_++),
+                             "blufi set-opmode");
+  });
+  this->set_timeout("blufi2", base + (2 * step), [this]() {
+    if (this->state_ != State::POLLING)
+      return;
+    this->write_blufi_frame_(
+        build_blufi_frame(BLUFI_TYPE_DATA, BLUFI_DATA_SSID, reinterpret_cast<const uint8_t *>(this->blufi_ssid_.data()),
+                          this->blufi_ssid_.size(), this->blufi_seq_++),
+        "blufi ssid");
+  });
+  this->set_timeout("blufi3", base + (3 * step), [this]() {
+    if (this->state_ != State::POLLING)
+      return;
+    this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_DATA, BLUFI_DATA_PASSWORD,
+                                               reinterpret_cast<const uint8_t *>(this->blufi_password_.data()),
+                                               this->blufi_password_.size(), this->blufi_seq_++),
+                             "blufi password", true);
+  });
+  this->set_timeout("blufi4", base + (4 * step), [this]() {
+    if (this->state_ != State::POLLING)
+      return;
+    this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_CONNECT_AP, nullptr, 0, this->blufi_seq_++),
+                             "blufi connect");
+  });
+  // give the brush ~2 s to attempt the join, then ask for a status report
+  this->set_timeout("blufi5", base + (4 * step) + 2000, [this]() {
+    if (this->state_ != State::POLLING)
+      return;
+    this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_GET_STATUS, nullptr, 0, this->blufi_seq_++),
+                             "blufi get-status");
+  });
+  this->set_timeout("capture_hold", base + (4 * step) + 2000 + CAPTURE_HOLD_MS, [this]() {
+    ESP_LOGI(TAG, "[%s] BluFi provisioning window ended", this->parent_->address_str());
+    this->end_query_window_("blufi provisioning done");
+  });
+}
+
+bool OcleanHub::write_blufi_frame_(const std::vector<uint8_t> &frame, const char *name, bool redact) {
+  if (this->read_only_) {
+    ESP_LOGW(TAG, "[%s] read-only: refusing %s", this->parent_->address_str(), name);
+    return false;
+  }
+  if (this->blufi_write_handle_ == 0) {
+    ESP_LOGW(TAG, "[%s] BluFi write char not found for %s", this->parent_->address_str(), name);
+    return false;
+  }
+  if (redact) {
+    ESP_LOGI(TAG, "[%s] %s -> <redacted, %u bytes>", this->parent_->address_str(), name, (unsigned)frame.size());
+  } else {
+    ESP_LOGI(TAG, "[%s] %s -> %s", this->parent_->address_str(), name,
+             format_hex_pretty(frame.data(), frame.size()).c_str());
+  }
+  auto status = esp_ble_gattc_write_char(this->parent_->get_gattc_if(), this->parent_->get_conn_id(),
+                                         this->blufi_write_handle_, frame.size(), const_cast<uint8_t *>(frame.data()),
+                                         ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+  if (status != ESP_OK) {
+    ESP_LOGW(TAG, "[%s] %s write failed status=%d", this->parent_->address_str(), name, status);
+    return false;
+  }
+  return true;
+}
+
+void OcleanHub::handle_blufi_notify_(const uint8_t *data, size_t len) {
+  uint8_t opmode = 0;
+  uint8_t sta_state = 0;
+  if (parse_blufi_wifi_status(data, len, &opmode, &sta_state)) {
+    bool const connected = sta_state == 0;
+    ESP_LOGI(TAG, "[%s] BluFi Wi-Fi status: opmode=%u sta=%u (%s)", this->parent_->address_str(), (unsigned)opmode,
+             (unsigned)sta_state, connected ? "connected" : "not connected");
+  }
+}
+#endif  // USE_OCLEAN_BLUFI
 
 void OcleanHub::maybe_finish_poll_() {
   // While holding the link across a charging cycle, a spontaneous battery notify

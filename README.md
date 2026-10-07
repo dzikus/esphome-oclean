@@ -276,6 +276,9 @@ Set on the `oclean:` entry, not on the platforms.
 | `read_only` | bool | `false` | The brush only receives the profile's `03` read queries; the X Ultra 20's Wi-Fi check `02 34` is held back too. Every write is refused and logged: controls, clock sync, `0202`. |
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
 | `cloud_receiver_port` | int 1-65535 | `8099` | Port the `point_cloud_at_node` button puts in the host URL (`http://<node ip>:<port>`). X Ultra 20 only; unused without that button. |
+| `wifi_provisioning` | bool | `false` | Enables BluFi Wi-Fi provisioning (the `provision_wifi` button). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
+| `wifi_ssid` | string | the node's `wifi:` SSID | The network `provision_wifi` joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
+| `wifi_password` | string | the node's `wifi:` password | Passphrase for `wifi_ssid`. Needs `wifi_provisioning: true`. Baked into the firmware, not an entity, so it never reaches the recorder; use `!secret`. |
 
 The brushing-mode select additionally accepts `custom_modes` (a list of named
 programs); that option lives under the `select:` platform, not the hub. See
@@ -428,6 +431,7 @@ program wants four steps to keep the four-quadrant guidance.
 | `apply_cloud_host` | Apply cloud host | writes `02 33` + url | X Ultra 20 only; opt-in; sends the `cloud_host` text to the brush |
 | `clear_cloud_host` | Clear cloud host | writes `02 33 2A 00 00` | X Ultra 20 only; opt-in; reverts the brush to its firmware default server |
 | `point_cloud_at_node` | Point cloud at this node | writes `02 33` + `http://<node ip>:<port>` | X Ultra 20 only; opt-in; fills the host with this node's own IPv4 and `cloud_receiver_port` |
+| `provision_wifi` | Provision Wi-Fi | BluFi join with the configured SSID/password | X Ultra 20 only; needs `wifi_provisioning: true` (see **Hub options**); runs the BluFi sequence over service `0xFFFF` on the next connect |
 
 ### Entities (text)
 
@@ -441,6 +445,11 @@ The brush takes `02 33` with no pairing, so treat it as a redirect, not a
 control. Point it at a server you run, and block the brush's internet on the
 router, to keep its uploads off the vendor cloud; with no Wi-Fi set the brush
 uploads nothing and this does not apply.
+
+Wi-Fi provisioning credentials are **not** entities: a password would be kept
+in the Home Assistant recorder. They are the `wifi_ssid` and `wifi_password` hub
+options (see **Hub options**), baked into the firmware like the node's own
+`wifi:`; `provision_wifi` is a button, which has no recorded state.
 
 ### Override per-entity
 
@@ -708,12 +717,12 @@ components/oclean/
   switch.py                command and voice switches + the local bluetooth switch
   number.py                head_max_minutes + 8 custom-program parameters
   select.py                scheme presets + custom modes, language table
-  button.py                capture / reset-head / sync-clock / poll-now / cloud host
+  button.py                capture / reset-head / sync-clock / poll-now / cloud host / provision
   text.py                  cloud host (X Ultra 20, opt-in)
 
   oclean_protocol.{h,cpp}  pure C++: command table, session + settings
                            assemblers, record decode, scheme/clock/toggle/
-                           cloud-host builders, adaptive-poll helpers
+                           cloud-host/blufi builders, adaptive-poll helpers
   oclean_profile.{h,cpp}   model-string to profile dispatch
   oclean.{h,cpp}           OcleanHub: BLE client node + PollingComponent +
                            poll state machine, NVS persistence

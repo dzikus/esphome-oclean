@@ -12,9 +12,11 @@ from esphome.core import CORE
 
 from . import (
     CONF_OCLEAN_ID,
+    CONF_WIFI_PROVISIONING,
     DOMAIN,
     OCLEAN_COMPONENT_SCHEMA,
     OcleanHub,
+    final_hub_conf,
     hub_builds,
     inject_entity_defaults,
     oclean_ns,
@@ -55,6 +57,9 @@ OcleanClearCloudHostButton = oclean_ns.class_(
 OcleanPointCloudHereButton = oclean_ns.class_(
     "OcleanPointCloudHereButton", button.Button, cg.Parented.template(OcleanHub)
 )
+OcleanProvisionWifiButton = oclean_ns.class_(
+    "OcleanProvisionWifiButton", button.Button, cg.Parented.template(OcleanHub)
+)
 
 # Dev-gated. Requests a buffered-session download and holds the link open so
 # the record stream can be captured into the log.
@@ -83,6 +88,8 @@ CONF_CLEAR_CLOUD_HOST = "clear_cloud_host"
 DEFAULT_CLEAR_CLOUD_HOST_NAME = "Clear cloud host"
 CONF_POINT_CLOUD_AT_NODE = "point_cloud_at_node"
 DEFAULT_POINT_CLOUD_AT_NODE_NAME = "Point cloud at this node"
+CONF_PROVISION_WIFI = "provision_wifi"
+DEFAULT_PROVISION_WIFI_NAME = "Provision Wi-Fi"
 
 
 _DEFAULT_NAMES = [
@@ -93,10 +100,16 @@ _DEFAULT_NAMES = [
     (CONF_APPLY_CLOUD_HOST, DEFAULT_APPLY_CLOUD_HOST_NAME),
     (CONF_CLEAR_CLOUD_HOST, DEFAULT_CLEAR_CLOUD_HOST_NAME),
     (CONF_POINT_CLOUD_AT_NODE, DEFAULT_POINT_CLOUD_AT_NODE_NAME),
+    (CONF_PROVISION_WIFI, DEFAULT_PROVISION_WIFI_NAME),
 ]
 
 _OPT_IN = frozenset(
-    {CONF_APPLY_CLOUD_HOST, CONF_CLEAR_CLOUD_HOST, CONF_POINT_CLOUD_AT_NODE}
+    {
+        CONF_APPLY_CLOUD_HOST,
+        CONF_CLEAR_CLOUD_HOST,
+        CONF_POINT_CLOUD_AT_NODE,
+        CONF_PROVISION_WIFI,
+    }
 )
 
 
@@ -150,9 +163,31 @@ CONFIG_SCHEMA = cv.All(
                 icon="mdi:cloud-sync-outline",
                 entity_category=ENTITY_CATEGORY_CONFIG,
             ),
+            cv.Optional(CONF_PROVISION_WIFI): button.button_schema(
+                OcleanProvisionWifiButton,
+                icon="mdi:wifi-plus",
+                entity_category=ENTITY_CATEGORY_CONFIG,
+            ),
         }
     ),
 )
+
+
+def _provision_needs_wifi_provisioning(config):
+    # The provisioning code, button class included, is compiled only with
+    # wifi_provisioning: true on the hub.
+    if CONF_PROVISION_WIFI not in config:
+        return config
+    if not final_hub_conf(config[CONF_OCLEAN_ID]).get(CONF_WIFI_PROVISIONING):
+        raise cv.Invalid(
+            f"'{CONF_PROVISION_WIFI}' needs '{CONF_WIFI_PROVISIONING}: true' on "
+            f"hub '{config[CONF_OCLEAN_ID]}'",
+            path=[CONF_PROVISION_WIFI],
+        )
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _provision_needs_wifi_provisioning
 
 
 async def to_code(config):
@@ -188,3 +223,8 @@ async def to_code(config):
         if sub is not None:
             btn = await button.new_button(sub)
             await cg.register_parented(btn, hub)
+
+    sub = config.get(CONF_PROVISION_WIFI)
+    if sub is not None:
+        btn = await button.new_button(sub)
+        await cg.register_parented(btn, hub)

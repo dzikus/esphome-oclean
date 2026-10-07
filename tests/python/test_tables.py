@@ -261,5 +261,22 @@ class LanguageTable(unittest.TestCase):
         self.assertEqual(len(ocsel.LANGUAGE_OPTIONS), len(ocsel.LANGUAGES))
 
 
+class BlufiWifi(unittest.TestCase):
+    def test_hub_override_wins(self):
+        wifi = {"networks": [{"ssid": "other", "password": "x"}]}
+        self.assertEqual(oc.resolve_blufi_wifi("net", "pw", wifi), ("net", "pw"))
+
+    def test_override_ssid_without_password(self):
+        self.assertEqual(oc.resolve_blufi_wifi("net", None, None), ("net", ""))
+
+    def test_falls_back_to_node_wifi(self):
+        wifi = {"networks": [{"ssid": "home", "password": "secret"}]}
+        self.assertEqual(oc.resolve_blufi_wifi(None, None, wifi), ("home", "secret"))
+
+    def test_nothing_configured(self):
+        self.assertEqual(oc.resolve_blufi_wifi(None, None, None), ("", ""))
+        self.assertEqual(oc.resolve_blufi_wifi(None, None, {"networks": []}), ("", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

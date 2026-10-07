@@ -30,6 +30,8 @@ static constexpr uint16_t DIS_FW_REV_UUID16 = 0x2A26;
 static constexpr uint16_t DIS_HW_REV_UUID16 = 0x2A27;
 static constexpr uint16_t DIS_SW_REV_UUID16 = 0x2A28;
 static constexpr uint16_t BLUFI_SERVICE_UUID16 = 0xFFFF;
+static constexpr uint16_t BLUFI_WRITE_CHAR_UUID16 = 0xFF01;
+static constexpr uint16_t BLUFI_NOTIFY_CHAR_UUID16 = 0xFF02;
 
 std::string dis_printable_text(const uint8_t *data, size_t len);
 
@@ -524,6 +526,29 @@ std::vector<std::vector<uint8_t>> build_scheme_packets(uint8_t pnum, const std::
 // unfragmented packet; empty url writes 02 33 2A 00 00 (firmware falls back).
 static constexpr size_t CLOUD_HOST_MAX_LEN = 59;
 std::vector<uint8_t> build_set_cloud_host_command(std::string_view url);
+
+// === BluFi Wi-Fi provisioning (service 0xFFFF, write 0xFF01, notify 0xFF02) ===
+// Standard Espressif BluFi, the unencrypted variant (the X Ultra 20 accepts it).
+// Frame: [type_byte][frame_control][seq][data_len] <data>, type_byte packs the
+// subtype in bits 7..2 and the frame type in bits 1..0. frame_control 0 means no
+// encryption, no checksum, phone-to-device, no ack, no fragment.
+static constexpr uint8_t BLUFI_TYPE_CTRL = 0;
+static constexpr uint8_t BLUFI_TYPE_DATA = 1;
+static constexpr uint8_t BLUFI_CTRL_SET_SEC_MODE = 1;
+static constexpr uint8_t BLUFI_CTRL_SET_OPMODE = 2;
+static constexpr uint8_t BLUFI_CTRL_CONNECT_AP = 3;
+static constexpr uint8_t BLUFI_CTRL_GET_STATUS = 5;
+static constexpr uint8_t BLUFI_DATA_SSID = 2;
+static constexpr uint8_t BLUFI_DATA_PASSWORD = 3;
+static constexpr uint8_t BLUFI_DATA_WIFI_STATUS = 15;
+static constexpr uint8_t BLUFI_OPMODE_STA = 1;
+
+std::vector<uint8_t> build_blufi_frame(uint8_t frame_type, uint8_t subtype, const uint8_t *data, size_t data_len,
+                                       uint8_t seq);
+
+// A Wi-Fi connection report (data subtype 15): opmode and the station state
+// (0 = connected) from the frame's data field. False for any other frame.
+bool parse_blufi_wifi_status(const uint8_t *data, size_t len, uint8_t *opmode, uint8_t *sta_state);
 
 // === Set-clock (0201) ===
 //   02 01 [year-2000][month][day][hour][minute][second][weekday][tz_index]

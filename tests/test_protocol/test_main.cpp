@@ -744,6 +744,45 @@ void test_build_set_cloud_host_command_clamps_over_limit() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CLOUD_HOST_MAX_LEN), cmd[4]);
 }
 
+void test_build_blufi_frame_control() {
+  // control frame, no data: [type_byte][fc=0][seq][len=0]
+  auto sec = build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_SET_SEC_MODE, nullptr, 0, 0);
+  const uint8_t sec_expected[] = {0x04, 0x00, 0x00, 0x00};
+  TEST_ASSERT_EQUAL_UINT(sizeof(sec_expected), sec.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(sec_expected, sec.data(), sizeof(sec_expected));
+  auto status = build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_GET_STATUS, nullptr, 0, 5);
+  const uint8_t status_expected[] = {0x14, 0x00, 0x05, 0x00};
+  TEST_ASSERT_EQUAL_UINT(sizeof(status_expected), status.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(status_expected, status.data(), sizeof(status_expected));
+}
+
+void test_build_blufi_frame_data() {
+  // ssid data frame: type DATA, subtype 2, seq 2, the ascii ssid after the header
+  const uint8_t ssid[] = {'e', 's', 'p'};
+  auto f = build_blufi_frame(BLUFI_TYPE_DATA, BLUFI_DATA_SSID, ssid, sizeof(ssid), 2);
+  const uint8_t expected[] = {0x09, 0x00, 0x02, 0x03, 'e', 's', 'p'};
+  TEST_ASSERT_EQUAL_UINT(sizeof(expected), f.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, f.data(), sizeof(expected));
+}
+
+void test_parse_blufi_wifi_status() {
+  uint8_t opmode = 0xFF;
+  uint8_t sta = 0xFF;
+  // data subtype 15, opmode 1, sta_state 0 (connected)
+  const uint8_t report[] = {0x3D, 0x00, 0x00, 0x02, 0x01, 0x00};
+  TEST_ASSERT_TRUE(parse_blufi_wifi_status(report, sizeof(report), &opmode, &sta));
+  TEST_ASSERT_EQUAL_UINT8(1, opmode);
+  TEST_ASSERT_EQUAL_UINT8(0, sta);
+  // a control frame is not a status report
+  const uint8_t ctrl[] = {0x04, 0x00, 0x00, 0x00, 0x00, 0x00};
+  TEST_ASSERT_FALSE(parse_blufi_wifi_status(ctrl, sizeof(ctrl), &opmode, &sta));
+  // a data frame of another subtype (ssid) is not a status report
+  const uint8_t ssid[] = {0x09, 0x00, 0x02, 0x03, 0x65, 0x73};
+  TEST_ASSERT_FALSE(parse_blufi_wifi_status(ssid, sizeof(ssid), &opmode, &sta));
+  const uint8_t short_frame[] = {0x3D, 0x00, 0x00, 0x02};
+  TEST_ASSERT_FALSE(parse_blufi_wifi_status(short_frame, sizeof(short_frame), &opmode, &sta));
+}
+
 void test_timezone_index_to_string() {
   // Wire index is 1-based into the 33-entry GMT table.
   TEST_ASSERT_EQUAL_STRING("GMT-12:00", timezone_index_to_string(1));
@@ -2230,6 +2269,9 @@ int main() {
   RUN_TEST(test_build_set_cloud_host_command);
   RUN_TEST(test_build_set_cloud_host_command_empty);
   RUN_TEST(test_build_set_cloud_host_command_clamps_over_limit);
+  RUN_TEST(test_build_blufi_frame_control);
+  RUN_TEST(test_build_blufi_frame_data);
+  RUN_TEST(test_parse_blufi_wifi_status);
   RUN_TEST(test_timezone_index_to_string);
   RUN_TEST(test_tz_index_for_offset_seconds);
   RUN_TEST(test_tz_index_offset_seconds_round_trips);

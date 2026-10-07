@@ -892,6 +892,29 @@ std::vector<uint8_t> build_set_cloud_host_command(std::string_view url) {
   return cmd;
 }
 
+std::vector<uint8_t> build_blufi_frame(uint8_t frame_type, uint8_t subtype, const uint8_t *data, size_t data_len,
+                                       uint8_t seq) {
+  uint8_t const type_byte = static_cast<uint8_t>(((subtype & 0x3F) << 2) | (frame_type & 0x03));
+  // one-byte length field; the provisioning payloads (ssid, password) fit
+  size_t const n = data_len > 255 ? 255 : data_len;
+  std::vector<uint8_t> f = {type_byte, 0x00, seq, static_cast<uint8_t>(n)};
+  f.insert(f.end(), data, data + n);
+  return f;
+}
+
+bool parse_blufi_wifi_status(const uint8_t *data, size_t len, uint8_t *opmode, uint8_t *sta_state) {
+  if (data == nullptr || opmode == nullptr || sta_state == nullptr || len < 6)
+    return false;
+  uint8_t const frame_type = data[0] & 0x03;
+  uint8_t const subtype = static_cast<uint8_t>((data[0] >> 2) & 0x3F);
+  if (frame_type != BLUFI_TYPE_DATA || subtype != BLUFI_DATA_WIFI_STATUS)
+    return false;
+  // data field starts after the 4-byte header: [opmode][sta_state] ...
+  *opmode = data[4];
+  *sta_state = data[5];
+  return true;
+}
+
 std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute,
                                              uint8_t second, uint8_t weekday, uint8_t tz_index) {
   // year is sent as the offset from 2000. Clamp below 2000 to 0 so the byte

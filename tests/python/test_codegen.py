@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "componen
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 import oclean as oc
+import oclean.button as ocbtn
 import oclean.number as ocnum
 import oclean.select as ocsel
 from esphome.core import CORE
@@ -134,6 +135,24 @@ class WarnOnSharedDefaultNames(unittest.TestCase):
     def test_a_single_hub_is_silent(self):
         hubs = [{"id": "hub_a"}]
         self.assertEqual(self._run(hubs, hubs[0]), [])
+
+
+class ProvisionWifiButton(unittest.TestCase):
+    def _validate(self, hub):
+        token = fv.full_config.set({"oclean": [hub]})
+        try:
+            ocbtn._provision_needs_wifi_provisioning(
+                {"oclean_id": "hub_a", "provision_wifi": {}}
+            )
+        finally:
+            fv.full_config.reset(token)
+
+    def test_fails_validation_without_wifi_provisioning(self):
+        with self.assertRaises(cv.Invalid):
+            self._validate({"id": "hub_a", "wifi_provisioning": False})
+
+    def test_passes_with_wifi_provisioning(self):
+        self._validate({"id": "hub_a", "wifi_provisioning": True})
 
 
 # a row on every model, one only on the X Ultra 20, one only on the X Pro Elite

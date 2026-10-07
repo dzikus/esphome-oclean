@@ -179,6 +179,12 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_scheme_select(OcleanSchemeSelect *s) { this->scheme_select_ = s; }
   void set_language_select(OcleanLanguageSelect *s) { this->language_select_ = s; }
   void set_cloud_host_text(OcleanStoredText *t) { this->cloud_host_text_ = t; }
+#ifdef USE_OCLEAN_BLUFI
+  // Baked provisioning credentials (hub yaml or the node's own wifi:), not
+  // entities, so a Wi-Fi password never reaches the Home Assistant recorder.
+  void set_blufi_ssid(const std::string &s) { this->blufi_ssid_ = s; }
+  void set_blufi_password(const std::string &s) { this->blufi_password_ = s; }
+#endif
   // port the in-node session receiver listens on; the point-at-node button
   // writes http://<node ip>:<port> as the cloud host
   void set_cloud_receiver_port(uint16_t p) { this->cloud_receiver_port_ = p; }
@@ -219,6 +225,13 @@ class OcleanHub : public ble_client::BLEClientNode,
   // Writes http://<this node's IPv4>:<cloud_receiver_port> as the cloud host, so
   // the brush uploads to a receiver on this node. Warns if no address is up yet.
   void point_cloud_at_node();
+
+#ifdef USE_OCLEAN_BLUFI
+  // Provisions the brush onto Wi-Fi over BluFi with the configured SSID and
+  // password. X Ultra 20 only; brings the link up if down, then runs the
+  // frame sequence.
+  void provision_wifi();
+#endif
 
  protected:
   // per-cycle flags plus the watchdog, for a link that is already up.
@@ -296,6 +309,17 @@ class OcleanHub : public ble_client::BLEClientNode,
     return target == WriteTarget::TX_SESSION ? this->tx_session_handle_ : this->tx_main_handle_;
   }
   bool write_raw_(uint16_t handle, const uint8_t *bytes, size_t len, const char *name);
+
+#ifdef USE_OCLEAN_BLUFI
+  // BluFi provisioning runs on its own cycle, not the Oclean query round: it
+  // registers the 0xFF02 notify, then staggers the control and data frames.
+  void start_blufi_provision_();
+  // writes to the BluFi characteristic, bypassing the Oclean command gate (the
+  // frames are not Oclean opcodes); still refused on a read-only hub. redact
+  // keeps the Wi-Fi password frame out of the log.
+  bool write_blufi_frame_(const std::vector<uint8_t> &frame, const char *name, bool redact = false);
+  void handle_blufi_notify_(const uint8_t *data, size_t len);
+#endif
   // Staggered: Write With Response allows one outstanding write. Returns the ms
   // offset at which the read queries may start without colliding.
   uint32_t flush_pending_writes_();
@@ -442,6 +466,12 @@ class OcleanHub : public ble_client::BLEClientNode,
   uint16_t battery_cccd_{0};
   uint16_t rx_main_cccd_{0};
   uint16_t rx_session_cccd_{0};
+#ifdef USE_OCLEAN_BLUFI
+  // BluFi provisioning characteristics, X Ultra 20 only (service 0xFFFF)
+  uint16_t blufi_write_handle_{0};
+  uint16_t blufi_notify_handle_{0};
+  uint16_t blufi_notify_cccd_{0};
+#endif
 
   // Per-cycle completion tracking. The poll is done once battery and DIS model
   // have been read (or their reads have failed) so the link can drop early.
@@ -520,6 +550,15 @@ class OcleanHub : public ble_client::BLEClientNode,
   // Session-capture dev hook.
   bool capture_armed_{false};
   bool capture_active_{false};
+
+#ifdef USE_OCLEAN_BLUFI
+  // BluFi provisioning. The credentials are baked from yaml at build time; the
+  // armed flag is consumed at the start of the provisioning cycle.
+  bool blufi_provision_armed_{false};
+  std::string blufi_ssid_{};
+  std::string blufi_password_{};
+  uint8_t blufi_seq_{0};
+#endif
   // Reassembles the *B# record stream that arrives on the session notify
   // characteristic during a capture window.
   SessionAssembler session_asm_{};

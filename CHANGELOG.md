@@ -38,10 +38,19 @@
   are not built; firmware 0.0.1.6 never fills them. A fast-brushing or
   over-pressure voice flag is refused while voice prompts are off, as the brush
   would drop it.
-- X Ultra 20: an opt-in `cloud_host` text with Apply and Clear buttons sets the
-  server the brush uploads to (`0233`), or clears it back to the firmware
-  default. The firmware has no read-back, so the text shows the last value
-  written, not the brush's own.
+- X Ultra 20: an opt-in `cloud_host` text with Apply, Clear and Point-at-node
+  buttons sets the server the brush uploads to (`0233`), clears it back to the
+  firmware default, or points it at a receiver on this node
+  (`http://<node ip>:<cloud_receiver_port>`). The firmware has no read-back, so
+  the text shows the last value written, not the brush's own.
+- X Ultra 20: Wi-Fi provisioning over BluFi (service `0xFFFF`, unencrypted
+  variant). Enabled per hub with `wifi_provisioning: true`; the code is not
+  compiled in otherwise. Credentials are the `wifi_ssid` / `wifi_password` hub
+  options (baked into the firmware, falling back to the node's own `wifi:`), not
+  entities, so a Wi-Fi password never reaches the recorder. A `provision_wifi`
+  button runs the join.
+- The ESPHome floor is now 2026.2.0 (the point-at-node button formats the
+  node's own IP through the current network API).
 - The X Pro 20 (`OCLEANX20`) and the first X Ultra (`OCLEANV1*`) use the X
   Ultra 20 reply formats instead of TYPE1.
 

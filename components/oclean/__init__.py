@@ -67,6 +67,27 @@ DEFAULT_MODEL = MODEL_X_PRO_ELITE
 CONF_CLOUD_RECEIVER_PORT = "cloud_receiver_port"
 DEFAULT_CLOUD_RECEIVER_PORT = 8099
 
+# BluFi Wi-Fi provisioning is off unless this is set true, and the C++ for it is
+# not compiled in otherwise (USE_OCLEAN_BLUFI).
+CONF_WIFI_PROVISIONING = "wifi_provisioning"
+# Wi-Fi credentials the provision button sends to the brush over BluFi. Kept in
+# yaml (baked into the firmware), not as entities, so a password never reaches
+# the Home Assistant recorder. Left unset they fall back to the node's own wifi:.
+CONF_WIFI_SSID = "wifi_ssid"
+CONF_WIFI_PASSWORD = "wifi_password"
+
+
+def resolve_blufi_wifi(hub_ssid, hub_password, wifi_config):
+    # pure so it can be tested without a full config
+    if hub_ssid is not None:
+        return str(hub_ssid), str(hub_password or "")
+    for network in (wifi_config or {}).get("networks") or []:
+        ssid = network.get("ssid")
+        if ssid:
+            return str(ssid), str(network.get("password") or "")
+    return "", ""
+
+
 _ZONE_KEYS = frozenset(f"gesture_zone_{i + 1}" for i in range(8))
 # session record order, bytes 19-22
 QUADRANT_POSITIONS = ("upper_left", "lower_left", "upper_right", "lower_right")
@@ -85,10 +106,10 @@ _X_ULTRA_20_FLAG_KEYS = frozenset(
     }
 )
 _HEAD_COUNTER_KEYS = frozenset({"head_used_time", "head_used_days", "head_used_times"})
-# X Ultra 20 only: cloud host and Wi-Fi provisioning, all writes to the brush.
+# X Ultra 20 only: cloud host text and the write buttons.
 _X_ULTRA_20_TEXT_KEYS = frozenset({"cloud_host"})
-_X_ULTRA_20_CLOUD_BUTTON_KEYS = frozenset(
-    {"apply_cloud_host", "clear_cloud_host", "point_cloud_at_node"}
+_X_ULTRA_20_WRITE_BUTTON_KEYS = frozenset(
+    {"apply_cloud_host", "clear_cloud_host", "point_cloud_at_node", "provision_wifi"}
 )
 
 # Highest gear a program step may use; the firmware's motor tables end there.
@@ -121,7 +142,7 @@ MODEL_ENTITY_SETS = {
                 }
             ),
             "text": _X_ULTRA_20_TEXT_KEYS,
-            "button": _X_ULTRA_20_CLOUD_BUTTON_KEYS,
+            "button": _X_ULTRA_20_WRITE_BUTTON_KEYS,
         },
         "dev": {
             "switch": frozenset({"area_reminder", "brush_pause", "brush_mode"}),
@@ -231,6 +252,15 @@ def _hub_conf(hub_id):
 
 def register_hub_conf(config):
     _hub_configs()[str(config[CONF_ID])] = config
+
+
+def final_hub_conf(hub_id):
+    # For FINAL_VALIDATE_SCHEMA: CORE.config is only set once validation is over.
+    target = str(hub_id)
+    for hub_conf in fv.full_config.get().get(DOMAIN, []):
+        if str(hub_conf.get(CONF_ID)) == target:
+            return hub_conf
+    return {}
 
 
 def hub_expose_dev(hub_id):
@@ -387,6 +417,20 @@ def _validate_auto_sync_time(config):
     return config
 
 
+def _validate_blufi_wifi(config):
+    if CONF_WIFI_PASSWORD in config and CONF_WIFI_SSID not in config:
+        raise cv.Invalid(
+            f"{CONF_WIFI_PASSWORD} needs {CONF_WIFI_SSID}", path=[CONF_WIFI_PASSWORD]
+        )
+    if not config.get(CONF_WIFI_PROVISIONING):
+        for key in (CONF_WIFI_SSID, CONF_WIFI_PASSWORD):
+            if key in config:
+                raise cv.Invalid(
+                    f"{key} needs {CONF_WIFI_PROVISIONING}: true", path=[key]
+                )
+    return config
+
+
 def _validate_adaptive_poll(config):
     # Copy before mutating: the validator may run against a shared dict.
     config = dict(config)
@@ -442,6 +486,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(
                 CONF_CLOUD_RECEIVER_PORT, default=DEFAULT_CLOUD_RECEIVER_PORT
             ): cv.port,
+            cv.Optional(CONF_WIFI_PROVISIONING, default=False): cv.boolean,
+            cv.Optional(CONF_WIFI_SSID): cv.string,
+            cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
             cv.Optional(CONF_NAME_PREFIX): cv.All(
                 cv.string_strict, cv.Length(max=48), _validate_name_prefix
             ),
@@ -469,6 +516,7 @@ CONFIG_SCHEMA = cv.All(
     _validate_auto_sync_time,
     _validate_adaptive_poll,
     _validate_name_prefix_is_reachable,
+    _validate_blufi_wifi,
     cv.require_esphome_version(2026, 2, 0),
 )
 
@@ -547,9 +595,30 @@ def _warn_on_shared_default_names(config):
     return config
 
 
+def _blufi_ssid_available(full):
+    # With wifi_provisioning on, there must be an SSID to send: the hub's
+    # wifi_ssid, or a wifi: network to fall back on. A node on Ethernet has
+    # neither unless wifi_ssid is set, so require it here rather than ship a
+    # provision button that can only warn at runtime.
+    wifi_config = full.get("wifi")
+    for hub in full.get(DOMAIN, []):
+        if not hub.get(CONF_WIFI_PROVISIONING):
+            continue
+        ssid, _password = resolve_blufi_wifi(
+            hub.get(CONF_WIFI_SSID), hub.get(CONF_WIFI_PASSWORD), wifi_config
+        )
+        if not ssid:
+            raise cv.Invalid(
+                f"oclean '{hub[CONF_ID]}' has {CONF_WIFI_PROVISIONING}: true but no "
+                f"Wi-Fi SSID to send. Set {CONF_WIFI_SSID} on the hub; this node has "
+                f"no wifi: network to fall back on."
+            )
+
+
 def _final_validate(config):
     _one_hub_per_ble_client(config)
     _warn_if_session_events_unavailable(config)
+    _blufi_ssid_available(fv.full_config.get())
     return _warn_on_shared_default_names(config)
 
 
@@ -579,6 +648,15 @@ async def to_code(config):
         var.set_hold_connection_while_docked(config[CONF_HOLD_CONNECTION_WHILE_DOCKED])
     )
     cg.add(var.set_cloud_receiver_port(config[CONF_CLOUD_RECEIVER_PORT]))
+    if config[CONF_WIFI_PROVISIONING]:
+        cg.add_define("USE_OCLEAN_BLUFI")
+        blufi_ssid, blufi_password = resolve_blufi_wifi(
+            config.get(CONF_WIFI_SSID),
+            config.get(CONF_WIFI_PASSWORD),
+            CORE.config.get("wifi"),
+        )
+        cg.add(var.set_blufi_ssid(blufi_ssid))
+        cg.add(var.set_blufi_password(blufi_password))
     cg.add(var.set_model(config[CONF_MODEL]))
     cg.add(var.set_expose_dev_sensors(config[CONF_EXPOSE_DEV_SENSORS]))
     cg.add(var.set_read_only(config[CONF_READ_ONLY]))

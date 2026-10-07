@@ -55,6 +55,15 @@ class OcleanPointCloudHereButton : public button::Button, public Parented<Oclean
   void press_action() override { this->parent_->point_cloud_at_node(); }
 };
 
+// Provisions the brush onto Wi-Fi over BluFi with the configured SSID and
+// password. Compiled only with wifi_provisioning: true.
+#ifdef USE_OCLEAN_BLUFI
+class OcleanProvisionWifiButton : public button::Button, public Parented<OcleanHub> {
+ public:
+  void press_action() override { this->parent_->provision_wifi(); }
+};
+#endif
+
 }  // namespace esphome::oclean
 
 #endif  // USE_ESP32 && USE_BUTTON
