@@ -21,12 +21,11 @@ CODEOWNERS = ["@dzikus"]
 
 # (yaml_key, setter, device_class|None, icon, entity_category, default_name)
 # charging is published from the STATUS (0303) response byte 2: 0x01 means on the
-# dock / charging, 0x02 means off the dock. The rest are config toggles read back
-# from the settings buffer (030201) on each poll and have no device class. Every
-# row is auto-created so the entities appear without listing them in the yaml.
-# fill_brush and auto_mode are read-only: the brush returns a one-byte error stub
-# for their write opcodes (0224 / 0225) and the setting never changes, so they are
-# surfaced as state, not controls.
+# dock / charging, 0x02 means off the dock. Every row the hub's model has is
+# auto-created so the entities appear without listing them in the yaml.
+# volume_enabled, calendar_enabled, splash_prevent, fill_brush and auto_mode hold
+# no setting on any supported model (MODEL_ENTITY_SETS); their rows stay so a yaml
+# that names one gets an error that says so.
 BINARY_SENSORS = [
     (
         "charging",

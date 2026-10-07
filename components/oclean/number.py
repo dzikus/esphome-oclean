@@ -3,13 +3,17 @@ import logging
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import number
-from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG, UNIT_SECOND
+from esphome.const import (
+    CONF_DEVICE_ID,
+    ENTITY_CATEGORY_CONFIG,
+    UNIT_MINUTE,
+    UNIT_SECOND,
+)
 from esphome.core import CORE
 
 from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
-    UNIT_DAY,
     OcleanHub,
     inject_entity_defaults,
     oclean_ns,
@@ -20,8 +24,8 @@ _LOGGER = logging.getLogger(__name__)
 DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
 
-OcleanHeadDaysNumber = oclean_ns.class_(
-    "OcleanHeadDaysNumber", number.Number, cg.Parented.template(OcleanHub)
+OcleanHeadMaxNumber = oclean_ns.class_(
+    "OcleanHeadMaxNumber", number.Number, cg.Parented.template(OcleanHub)
 )
 OcleanCustomParamNumber = oclean_ns.class_(
     "OcleanCustomParamNumber",
@@ -30,14 +34,16 @@ OcleanCustomParamNumber = oclean_ns.class_(
     cg.Parented.template(OcleanHub),
 )
 
+CONF_HEAD_MAX_MINUTES = "head_max_minutes"
+DEFAULT_HEAD_MAX_MINUTES_NAME = "Brush head time limit"
+# the old key, rejected with a pointer to the new one
 CONF_HEAD_MAX_DAYS = "head_max_days"
-DEFAULT_HEAD_MAX_DAYS_NAME = "Head replacement days"
 
-# Brush-head reminder period, in days. The command carries the value as a
-# two-byte big-endian payload. Range covers the usual replacement windows.
-HEAD_DAYS_MIN = 1
-HEAD_DAYS_MAX = 365
-HEAD_DAYS_STEP = 1
+# Minutes of valid brushing on one head before the replacement reminder; 240 out
+# of the box, about 120 two-minute sessions. Two bytes big-endian on the wire.
+HEAD_MAX_MIN = 1
+HEAD_MAX_MAX = 65535
+HEAD_MAX_STEP = 1
 
 # Parameters of the runtime custom brushing program: per-step gear and
 # duration. Values live on the node (flash-persisted) and only reach the brush
@@ -79,7 +85,7 @@ CUSTOM_PARAMS = [
 ]
 
 
-_DEFAULT_NAMES = [(CONF_HEAD_MAX_DAYS, DEFAULT_HEAD_MAX_DAYS_NAME)] + [
+_DEFAULT_NAMES = [(CONF_HEAD_MAX_MINUTES, DEFAULT_HEAD_MAX_MINUTES_NAME)] + [
     (key, name) for key, name, *_row in CUSTOM_PARAMS
 ]
 
@@ -102,9 +108,13 @@ CONFIG_SCHEMA = cv.All(
     OCLEAN_COMPONENT_SCHEMA.extend(
         {
             cv.Optional(CONF_DEVICE_ID): cv.sub_device_id,
-            cv.Optional(CONF_HEAD_MAX_DAYS): number.number_schema(
-                OcleanHeadDaysNumber,
-                unit_of_measurement=UNIT_DAY,
+            cv.Optional(CONF_HEAD_MAX_DAYS): cv.invalid(
+                f"'{CONF_HEAD_MAX_DAYS}' was renamed to '{CONF_HEAD_MAX_MINUTES}': "
+                "the brush counts the head limit in minutes of brushing, not days"
+            ),
+            cv.Optional(CONF_HEAD_MAX_MINUTES): number.number_schema(
+                OcleanHeadMaxNumber,
+                unit_of_measurement=UNIT_MINUTE,
                 icon="mdi:toothbrush",
                 entity_category=ENTITY_CATEGORY_CONFIG,
             ).extend(
@@ -128,13 +138,13 @@ CONFIG_SCHEMA = cv.All(
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
 
-    sub = config.get(CONF_HEAD_MAX_DAYS)
+    sub = config.get(CONF_HEAD_MAX_MINUTES)
     if sub is not None:
         num = await number.new_number(
             sub,
-            min_value=HEAD_DAYS_MIN,
-            max_value=HEAD_DAYS_MAX,
-            step=HEAD_DAYS_STEP,
+            min_value=HEAD_MAX_MIN,
+            max_value=HEAD_MAX_MAX,
+            step=HEAD_MAX_STEP,
         )
         await cg.register_parented(num, hub)
         cg.add(hub.set_head_max_number(num))

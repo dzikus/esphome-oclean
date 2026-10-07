@@ -80,8 +80,8 @@ switch:
 number:
   - platform: oclean
     oclean_id: hub_probe
-    head_max_days:
-      name: Head replacement days
+    head_max_minutes:
+      name: Brush head time limit
 
 select:
   - platform: oclean

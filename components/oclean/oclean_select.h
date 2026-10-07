@@ -143,6 +143,7 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
     for (const auto &lang : this->languages_) {
       if (lang.id != id)
         continue;
+      this->shown_id_ = id;
       this->publish_state(lang.name);
       return;
     }
@@ -153,8 +154,16 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
     for (const auto &lang : this->languages_) {
       if (lang.name != value)
         continue;
-      if (this->parent_->send_command(build_language_command(lang.id), "device-language"))
+      if (!this->parent_->language_available(lang.id)) {
+        // put back what the brush shows, so the refused pick does not linger
+        if (this->shown_id_ != 0)
+          this->publish_language(this->shown_id_);
+        return;
+      }
+      if (this->parent_->send_command(build_language_command(lang.id), "device-language")) {
+        this->shown_id_ = lang.id;
         this->publish_state(value);
+      }
       return;
     }
   }
@@ -164,6 +173,7 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
     std::string name;
   };
   std::vector<Language> languages_;
+  uint8_t shown_id_{0};
 };
 
 }  // namespace esphome::oclean

@@ -66,7 +66,7 @@ static const uint8_t V20_WRITE_OPCODES[][2] = {
     {0x02, 0x28},  // holiday reminder
     {0x02, 0x31},  // voice prompts, all three flags in one frame
     {0x02, 0x16},  // display language
-    {0x02, 0x17},  // head replacement days
+    {0x02, 0x17},  // head time limit
     {0x02, 0x0F},  // head counter reset
 };
 

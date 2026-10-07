@@ -39,7 +39,7 @@ class OcleanCommandSwitch;
 class OcleanVoiceSwitch;
 class OcleanSchemeSelect;
 class OcleanLanguageSelect;
-class OcleanHeadDaysNumber;
+class OcleanHeadMaxNumber;
 class OcleanSyncTimeButton;
 
 // Connect-poll-disconnect: the brush streams nothing live, it buffers sessions
@@ -103,6 +103,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_hold_connection_while_docked(bool en) { this->hold_while_docked_ = en; }
 
   void set_battery_sensor(sensor::Sensor *s) { this->battery_sensor_ = s; }
+  void set_battery_voltage_sensor(sensor::Sensor *s) { this->battery_voltage_sensor_ = s; }
   void set_model_text_sensor(text_sensor::TextSensor *s) { this->model_text_sensor_ = s; }
   void set_hw_revision_text_sensor(text_sensor::TextSensor *s) { this->hw_rev_text_sensor_ = s; }
   void set_sw_version_text_sensor(text_sensor::TextSensor *s) { this->sw_rev_text_sensor_ = s; }
@@ -120,6 +121,10 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_gesture_zone_sensor(int i, sensor::Sensor *s) {
     if (i >= 0 && i < (int)SESSION_ZONES_COUNT)
       this->zone_sensors_[i] = s;
+  }
+  void set_quadrant_sensor(int i, sensor::Sensor *s) {
+    if (i >= 0 && i < (int)SESSION_QUADRANTS_COUNT)
+      this->quadrant_sensors_[i] = s;
   }
   void set_session_time_text_sensor(text_sensor::TextSensor *s) { this->session_time_text_sensor_ = s; }
   void set_device_clock_text_sensor(text_sensor::TextSensor *s) { this->device_clock_text_sensor_ = s; }
@@ -153,8 +158,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_head_used_time_sensor(sensor::Sensor *s) { this->head_used_time_sensor_ = s; }
   void set_clock_drift_sensor(sensor::Sensor *s) { this->clock_drift_sensor_ = s; }
   void set_timezone_text_sensor(text_sensor::TextSensor *s) { this->timezone_text_sensor_ = s; }
-  // The head-replacement number doubles as a readback target for buffer 25-26.
-  void set_head_max_number(OcleanHeadDaysNumber *n) { this->head_max_number_ = n; }
+  // The head time limit number doubles as a readback target for buffer 25-26.
+  void set_head_max_number(OcleanHeadMaxNumber *n) { this->head_max_number_ = n; }
 
   // back-pointers, so the settings readback can correct each optimistic publish
   void set_area_reminder_switch(OcleanCommandSwitch *s) { this->area_reminder_switch_ = s; }
@@ -194,6 +199,10 @@ class OcleanHub : public ble_client::BLEClientNode,
   // The frame carries all three flags, so the other two come from the last
   // readback; refused until one has arrived.
   bool set_voice_prompt(uint8_t index, bool on);
+
+  // False, with a warning, for an id past what this brush's firmware has: the
+  // brush would switch to English instead.
+  bool language_available(uint8_t id);
 
  protected:
   // per-cycle flags plus the watchdog, for a link that is already up.
@@ -267,6 +276,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   bool read_handle_(uint16_t handle, const char *name);
   bool register_notify_handle_(uint16_t handle, const char *name);
   void log_refusal_(const char *name, const uint8_t *bytes, size_t len);
+  uint16_t tx_handle_(WriteTarget target) const {
+    return target == WriteTarget::TX_SESSION ? this->tx_session_handle_ : this->tx_main_handle_;
+  }
   bool write_raw_(uint16_t handle, const uint8_t *bytes, size_t len, const char *name);
   // Staggered: Write With Response allows one outstanding write. Returns the ms
   // offset at which the read queries may start without colliding.
@@ -293,6 +305,12 @@ class OcleanHub : public ble_client::BLEClientNode,
   // ts is the ordering/dedup epoch, not the timestamp sent to Home Assistant
   void emit_session_event_(const SessionRecord &r, uint32_t ts);
   void handle_main_notify_(const uint8_t *data, size_t len);
+  // an ER reply to one of this round's writes queues it once more for the next
+  // round; false for any other frame
+  bool handle_write_refusal_(const uint8_t *data, size_t len);
+  // the record packets a count=0 header is followed by while a session runs;
+  // true when the packet was one of them
+  bool skip_after_inline_(const uint8_t *data, size_t len);
   void publish_v20_start_settings_(const uint8_t *buf);
   // the one-byte answers to the X Ultra 20's extra reads; false for other frames
   bool handle_status_reply_(const uint8_t *data, size_t len);
@@ -325,6 +343,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   static void publish_(text_sensor::TextSensor *s, const std::string &value);
 
   sensor::Sensor *battery_sensor_{nullptr};
+  sensor::Sensor *battery_voltage_sensor_{nullptr};
   text_sensor::TextSensor *model_text_sensor_{nullptr};
   text_sensor::TextSensor *hw_rev_text_sensor_{nullptr};
   text_sensor::TextSensor *sw_rev_text_sensor_{nullptr};
@@ -339,6 +358,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   text_sensor::TextSensor *session_mode_text_sensor_{nullptr};
   sensor::Sensor *session_coverage_sensor_{nullptr};
   sensor::Sensor *zone_sensors_[SESSION_ZONES_COUNT]{};
+  sensor::Sensor *quadrant_sensors_[SESSION_QUADRANTS_COUNT]{};
   text_sensor::TextSensor *session_time_text_sensor_{nullptr};
   text_sensor::TextSensor *device_clock_text_sensor_{nullptr};
   text_sensor::TextSensor *mac_text_sensor_{nullptr};
@@ -370,7 +390,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   sensor::Sensor *head_used_time_sensor_{nullptr};
   sensor::Sensor *clock_drift_sensor_{nullptr};
   text_sensor::TextSensor *timezone_text_sensor_{nullptr};
-  OcleanHeadDaysNumber *head_max_number_{nullptr};
+  OcleanHeadMaxNumber *head_max_number_{nullptr};
   OcleanCommandSwitch *area_reminder_switch_{nullptr};
   OcleanCommandSwitch *over_pressure_switch_{nullptr};
   OcleanCommandSwitch *brush_pause_switch_{nullptr};
@@ -414,8 +434,16 @@ class OcleanHub : public ble_client::BLEClientNode,
   struct PendingWrite {
     std::vector<uint8_t> bytes;
     const char *name;
+    uint8_t retries{0};
+    // requeued or dropped after a refusal: not sent if still due, not matched
+    // by another refusal
+    bool settled{false};
   };
   std::vector<PendingWrite> pending_writes_{};
+  // The writes flushed into the current round, kept so an ER reply can requeue
+  // them. The generation lets a stale write timer from an older round bail out.
+  std::vector<PendingWrite> round_writes_{};
+  uint32_t round_write_gen_{0};
 
   // epoch of the newest record already emitted; anything at or below it is
   // skipped, so a session fires its event once across reboots
@@ -425,9 +453,12 @@ class OcleanHub : public ble_client::BLEClientNode,
   // layout has to be rejected by size, not by inspection: this one runs two
   // bytes longer than the {record, flag} blob it replaced. Magic and version are
   // the second line. Change both the size and the version on any layout change
-  // here or in SessionRecord.
+  // here or in SessionRecord. Version 1 is the same size: it carried five
+  // unmapped record bytes where the time zone and the quadrants sit now, and is
+  // loaded with those marked unknown.
   static constexpr uint16_t PERSISTED_SESSION_MAGIC = 0x0C1E;
-  static constexpr uint8_t PERSISTED_SESSION_VERSION = 1;
+  static constexpr uint8_t PERSISTED_SESSION_VERSION = 2;
+  static constexpr uint8_t PERSISTED_SESSION_VERSION_V1 = 1;
   // partial marks an inline fragment, which carries no zones or score
   struct PersistedSession {
     uint16_t magic;
@@ -450,6 +481,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   // reset each query round
   uint32_t notify_count_this_round_{0};
   bool notify_flood_warned_{false};
+  bool inline_seen_this_round_{false};
+  bool after_inline_logged_{false};
 
   // One-shot boot-stagger latch. Latched so a millis() wrap (which resets the
   // stagger window) cannot re-defer an already-running hub.

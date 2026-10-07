@@ -76,7 +76,7 @@ struct OcleanProfile {
   const uint8_t (*write_opcodes)[2];
   uint8_t write_opcode_count;
   bool skip_cccd_write;
-  // 0202 after the queries
+  // 0202 once a downloaded batch is ingested
   bool sends_clear_running_data;
   // the mode byte indexes the scheme select's preset table
   bool cloud_scheme_ids;

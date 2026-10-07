@@ -116,6 +116,7 @@ bool parse_status_response(const uint8_t *data, size_t len, StatusResponse *out)
     return false;
   out->battery = battery;
   out->charging_raw = data[2];
+  out->voltage_mv = u16be(data + 3);
   return true;
 }
 
@@ -259,12 +260,13 @@ bool decode_session_record(const uint8_t *rec, SessionRecord *out) {
   out->scheme = rec[6];
   out->duration_s = u16be(rec + 7);
   out->valid_duration_s = u16be(rec + 9);
-  for (size_t i = 0; i < 5; i++)
-    out->areas[i] = rec[11 + i];
+  out->tz_index = rec[SESSION_TZ_OFFSET];
+  for (size_t i = 0; i < SESSION_QUADRANTS_COUNT; i++)
+    out->quadrants[i] = rec[SESSION_QUADRANTS_OFFSET + i];
   for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
     out->zones[i] = rec[SESSION_ZONES_OFFSET + i];
   uint8_t const s = rec[SESSION_SCORE_OFFSET];
-  out->has_score = (s != SESSION_NO_SCORE);
+  out->has_score = s != SESSION_NO_SCORE && s != SESSION_SCORE_VOID;
   out->score = s;
   return true;
 }
@@ -272,9 +274,8 @@ bool decode_session_record(const uint8_t *rec, SessionRecord *out) {
 bool decode_inline_0307(const uint8_t *data, size_t len, SessionRecord *out) {
   if (data == nullptr || out == nullptr)
     return false;
-  // 0307 marker, *B# magic, record count 0, then the head of the newest
-  // record. The fixed head (date-time, scheme, duration, valid duration) is
-  // 11 bytes; up to two leading area bytes follow within one notify.
+  // 0307 marker, *B# magic, record count 0, then the head of ring slot 0. The
+  // fixed head (date-time, scheme, duration, valid duration) is 11 bytes.
   static const uint8_t HEAD[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00};
   static const size_t HEAD_LEN = sizeof(HEAD);
   if (len < HEAD_LEN + 11)
@@ -296,11 +297,9 @@ bool decode_inline_0307(const uint8_t *data, size_t len, SessionRecord *out) {
   out->scheme = r[6];
   out->duration_s = u16be(r + 7);
   out->valid_duration_s = u16be(r + 9);
-  const size_t avail = len - HEAD_LEN;
-  for (size_t i = 0; i < 5; i++)
-    out->areas[i] = (11 + i < avail) ? r[11 + i] : 0;
-  for (unsigned char &zone : out->zones)
-    zone = 0;
+  out->tz_index = 0;
+  std::ranges::fill(out->quadrants, SESSION_ZONE_ABSENT);
+  std::ranges::fill(out->zones, uint8_t{0});
   out->score = 0;
   out->has_score = false;
   return true;
@@ -432,6 +431,10 @@ bool accept_inline_record(const SessionRecord &inl, uint32_t newest_epoch, const
   if (epoch <= newest_epoch || (shown != nullptr && same_session(inl, *shown)))
     return false;
   return session_epoch_plausible(epoch, clocks);
+}
+
+bool should_confirm_sessions(bool profile_confirms, const SessionIngestPlan &plan) {
+  return profile_confirms && plan.implausible.empty();
 }
 
 uint32_t restored_newest_epoch(uint32_t record_epoch, uint32_t watermark) {
@@ -588,8 +591,8 @@ static void decode_v20_head(const uint8_t *rec, SessionRecord *out) {
   out->second = rec[7];
   out->scheme = rec[8];
   out->duration_s = u16be(rec + 9);
-  for (uint8_t &zone : out->zones)
-    zone = SESSION_ZONE_ABSENT;
+  std::ranges::fill(out->quadrants, SESSION_ZONE_ABSENT);
+  std::ranges::fill(out->zones, SESSION_ZONE_ABSENT);
   out->score = SESSION_NO_SCORE;
   out->has_score = false;
 }
@@ -719,6 +722,21 @@ bool parse_status_reply(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1,
   return true;
 }
 
+bool is_write_refusal(const uint8_t *data, size_t len) {
+  return data != nullptr && len == 4 && data[0] == 0x02 && data[2] == 0x45 && data[3] == 0x52;
+}
+
+// Seconds per entry, same order as the string table below.
+static const int32_t TZ_OFFSETS[33] = {
+    -43200, -39600, -36000, -32400, -28800,  // -12:00 .. -08:00
+    -25200, -21600, -18000, -14400, -12600,  // -07:00 .. -03:30
+    -10800, -7200,  -3600,  0,               // -03:00 .. +00:00
+    3600,   7200,   10800,  12600,           // +01:00 .. +03:30
+    14400,  16200,  18000,  19800,  20700,   // +04:00 .. +05:45
+    21600,  23400,  25200,  28800,  32400,   // +06:00 .. +09:00
+    34200,  36000,  39600,  43200,  46800,   // +09:30 .. +13:00
+};
+
 const char *timezone_index_to_string(uint8_t wire_index) {
   static const char *const TABLE[33] = {
       "GMT-12:00", "GMT-11:00", "GMT-10:00", "GMT-09:00", "GMT-08:00", "GMT-07:00", "GMT-06:00",
@@ -733,25 +751,45 @@ const char *timezone_index_to_string(uint8_t wire_index) {
 }
 
 uint8_t tz_index_for_offset_seconds(int32_t offset_seconds) {
-  // Seconds per entry, same order as the string table above.
-  static const int32_t OFFSETS[33] = {
-      -43200, -39600, -36000, -32400, -28800,  // -12:00 .. -08:00
-      -25200, -21600, -18000, -14400, -12600,  // -07:00 .. -03:30
-      -10800, -7200,  -3600,  0,               // -03:00 .. +00:00
-      3600,   7200,   10800,  12600,           // +01:00 .. +03:30
-      14400,  16200,  18000,  19800,  20700,   // +04:00 .. +05:45
-      21600,  23400,  25200,  28800,  32400,   // +06:00 .. +09:00
-      34200,  36000,  39600,  43200,  46800,   // +09:30 .. +13:00
-  };
   for (uint8_t i = 0; i < 33; i++) {
-    if (OFFSETS[i] == offset_seconds)
+    if (TZ_OFFSETS[i] == offset_seconds)
       return static_cast<uint8_t>(i + 1);
   }
   return 0;
 }
 
+bool tz_index_offset_seconds(uint8_t wire_index, int32_t *offset_seconds) {
+  if (offset_seconds == nullptr || wire_index < 1 || wire_index > 33)
+    return false;
+  *offset_seconds = TZ_OFFSETS[wire_index - 1];
+  return true;
+}
+
+int64_t session_utc_offset_seconds(const SessionRecord &r, int64_t node_offset_s) {
+  int32_t offset = 0;
+  if (tz_index_offset_seconds(r.tz_index, &offset))
+    return offset;
+  return node_offset_s;
+}
+
 std::vector<uint8_t> build_language_command(uint8_t lang_id) {
   return {0x02, 0x16, lang_id};
+}
+
+uint8_t max_language_id(const char *model, size_t len) {
+  // firmware 1.0.0.32 and 1.0.0.41; longer prefix first
+  static constexpr struct {
+    std::string_view prefix;
+    uint8_t last;
+  } CAPS[] = {{.prefix = "OCLEANY3PD", .last = 13}, {.prefix = "OCLEANY3P", .last = 14}};
+  if (model == nullptr)
+    return 0;
+  std::string_view const reported(model, len);
+  for (const auto &cap : CAPS) {
+    if (reported.starts_with(cap.prefix))
+      return cap.last;
+  }
+  return 0;
 }
 
 uint8_t encode_scheme_gear(uint8_t gear) {

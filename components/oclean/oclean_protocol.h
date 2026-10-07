@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace esphome::oclean {
@@ -61,6 +62,9 @@ static constexpr size_t SESSION_RECORD_SIZE = 42;
 // declared count as malformed rather than trusting it
 static constexpr uint16_t SESSION_MAX_RECORDS = 64;
 static constexpr uint8_t SESSION_NO_SCORE = 0xFF;
+// The firmware scores a session it voids as 1: 14 s or less of brushing, or 85%
+// or more of it without motion. Kept raw, published as no score.
+static constexpr uint8_t SESSION_SCORE_VOID = 1;
 // a zone the record does not carry; published as unknown
 static constexpr uint8_t SESSION_ZONE_ABSENT = 0xFF;
 // Per-region coverage, left 0-3 then right 4-7, each side ordered upper-outer /
@@ -68,8 +72,16 @@ static constexpr uint8_t SESSION_ZONE_ABSENT = 0xFF;
 static constexpr size_t SESSION_ZONES_OFFSET = 23;
 static constexpr size_t SESSION_ZONES_COUNT = 8;
 static constexpr size_t SESSION_SCORE_OFFSET = 33;
+// time zone index of the brush clock when the session was recorded
+static constexpr size_t SESSION_TZ_OFFSET = 17;
+// Share per quadrant, summing to 100: upper left, lower left, upper right, lower
+// right, i.e. the zone pairs 0+1, 2+3, 4+5, 6+7 rounded on the brush.
+static constexpr size_t SESSION_QUADRANTS_OFFSET = 19;
+static constexpr size_t SESSION_QUADRANTS_COUNT = 4;
 static_assert(SESSION_ZONES_OFFSET + SESSION_ZONES_COUNT <= SESSION_RECORD_SIZE, "zones must fit inside a record");
 static_assert(SESSION_SCORE_OFFSET < SESSION_RECORD_SIZE, "score offset must lie inside a record");
+static_assert(SESSION_QUADRANTS_OFFSET + SESSION_QUADRANTS_COUNT <= SESSION_ZONES_OFFSET,
+              "quadrants must sit before the zones");
 
 struct SessionRecord {
   uint16_t year;  // full year (2000 + record byte 0)
@@ -78,22 +90,29 @@ struct SessionRecord {
   uint8_t hour;
   uint8_t minute;
   uint8_t second;
-  uint8_t scheme;                      // pNum (brushing scheme id)
-  uint16_t duration_s;                 // total brushing time
-  uint16_t valid_duration_s;           // time counted as effective
-  uint8_t areas[5];                    // offset 11-15 (area1-5 / pressureRatio)
-  uint8_t zones[SESSION_ZONES_COUNT];  // gestureArray at SESSION_ZONES_OFFSET (left 0-3, right 4-7)
-  uint8_t score;                       // 0-100; SESSION_NO_SCORE means absent
+  uint8_t scheme;             // pNum (brushing scheme id)
+  uint16_t duration_s;        // program length
+  uint16_t valid_duration_s;  // time actually brushed
+  // 1-based into the 33-entry GMT table; 0 when the record does not carry it
+  uint8_t tz_index;
+  uint8_t quadrants[SESSION_QUADRANTS_COUNT];  // SESSION_ZONE_ABSENT when not carried
+  uint8_t zones[SESSION_ZONES_COUNT];          // gestureArray at SESSION_ZONES_OFFSET (left 0-3, right 4-7)
+  uint8_t score;                               // 0-100; SESSION_NO_SCORE means absent
   bool has_score;
 };
 
 // caller guarantees SESSION_RECORD_SIZE readable bytes at rec
 bool decode_session_record(const uint8_t *rec, SessionRecord *out);
 
+inline bool session_voided(const SessionRecord &r) {
+  return !r.has_score && r.score == SESSION_SCORE_VOID;
+}
+
 // With no unread sessions the device answers a download with a count=0 header
-// plus the head of the newest already-read record. Timestamp, scheme and both
-// durations fit in that fragment; zones and score do not (zeroed, has_score
-// false).
+// plus the first 13 bytes of ring slot 0. Sessions after a 0202 are written from
+// slot 0 on, so that is the oldest session of the last batch handed over, not the
+// newest. Timestamp, scheme and both durations fit in the fragment; time zone,
+// quadrants, zones and score do not.
 bool decode_inline_0307(const uint8_t *data, size_t len, SessionRecord *out);
 
 // the ring is not stored chronologically, so newest is found by timestamp
@@ -284,17 +303,25 @@ inline uint16_t u16be(const uint8_t *buf) {
 // one byte, 0-100; a longer buffer is tolerated and only the first byte read
 bool parse_battery_level(const uint8_t *data, size_t len, uint8_t *out);
 
-// STATUS (0303) response. Empirically 8 bytes: 03 03 [b2] [b3] [b4] [battery]
-// [b6] 00. battery (byte 5) is confirmed. charging_raw (byte 2) is the
-// dock/charge state, confirmed empirically with three values: 0x01 charging on
-// the dock, 0x02 off the dock, 0x03 on the dock fully charged (battery 100%).
-// Returns false unless data starts 03 03, is at least 6 bytes long, and the
-// battery byte is 0-100.
+// STATUS (0303) response: 03 03 [dock] [voltage u16 BE] [battery], then two more
+// bytes on the X Pro Elite (8 in all) and none on the X Ultra 20 (6).
+// charging_raw is the dock/charge state: 0x01 charging on the dock, 0x02 off the
+// dock, 0x03 on the dock fully charged (battery 100%). Returns false unless data
+// starts 03 03, is at least 6 bytes long, and the battery byte is 0-100.
 struct StatusResponse {
   uint8_t battery;       // byte 5, percent (0-100)
   uint8_t charging_raw;  // byte 2, dock/charge state (0x01/0x02/0x03)
+  uint16_t voltage_mv;   // bytes 3-4, cell voltage
 };
 bool parse_status_response(const uint8_t *data, size_t len, StatusResponse *out);
+
+// outside this a reading is a glitch, not a li-ion cell
+static constexpr uint16_t STATUS_VOLTAGE_MIN_MV = 2000;
+static constexpr uint16_t STATUS_VOLTAGE_MAX_MV = 5000;
+
+inline bool status_voltage_plausible(uint16_t mv) {
+  return mv >= STATUS_VOLTAGE_MIN_MV && mv <= STATUS_VOLTAGE_MAX_MV;
+}
 
 // True when the STATUS byte2 value means the brush is actively charging: only
 // 0x01. This drives the Home Assistant charging binary sensor.
@@ -361,7 +388,7 @@ struct DeviceSettings {
   uint8_t scheme_pnum;      // buffer 11
   bool brush_mode_on;       // buffer 12 != 0xEC (0xEC is the off sentinel)
   bool splash_prevent;      // buffer 13 != 0
-  uint16_t head_used_time;  // buffer 14-15 BE
+  uint16_t head_used_time;  // buffer 14-15 BE, minutes brushed on this head
   // Continuation-frame fields (buffer 16..33), valid once it has the cont.
   uint16_t year;  // clock, buffer 16-21
   uint8_t month;
@@ -373,7 +400,7 @@ struct DeviceSettings {
   bool over_pressure;        // buffer 22 != 0
   bool area_reminder;        // buffer 23 != 0
   uint8_t tz_index;          // buffer 24 (index into the GMT-offset table)
-  uint16_t head_max;         // buffer 25-26 BE (head replacement reminder days)
+  uint16_t head_max;         // buffer 25-26 BE, head reminder limit in minutes brushed
   uint16_t head_used_days;   // buffer 27-28 BE
   uint16_t head_used_times;  // buffer 29-30 BE
   uint8_t device_language;   // buffer 31
@@ -443,6 +470,10 @@ std::vector<uint8_t> build_voice_prompts_command(const std::array<bool, VOICE_PR
 // frame is another opcode or too short.
 bool parse_status_reply(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1, uint8_t *status);
 
+// <opcode> 45 52 ("ER"): a write turned down while a session runs, e.g. 0206,
+// 0212 and 020C on the X Pro Elite
+bool is_write_refusal(const uint8_t *data, size_t len);
+
 // === Timezone index decode ===
 // 1-based index into the device's 33-entry GMT table; "unknown" out of range.
 const char *timezone_index_to_string(uint8_t wire_index);
@@ -450,9 +481,21 @@ const char *timezone_index_to_string(uint8_t wire_index);
 // exact match only, 0 when the offset has no table entry
 uint8_t tz_index_for_offset_seconds(int32_t offset_seconds);
 
+// false for an index outside the table
+bool tz_index_offset_seconds(uint8_t wire_index, int32_t *offset_seconds);
+
+// Seconds to subtract from a record epoch (its local fields read as UTC) for
+// the true UTC instant: the record's own time zone when it carries one, else
+// node_offset_s, the node's offset now.
+int64_t session_utc_offset_seconds(const SessionRecord &r, int64_t node_offset_s);
+
 // === Device UI language (0216) ===
 // one value byte, read back from settings buffer 31
 std::vector<uint8_t> build_language_command(uint8_t lang_id);
+
+// Highest language id the brush firmware has, from the DIS model string; 0 when
+// the model's cap is unknown. A higher id turns the display English.
+uint8_t max_language_id(const char *model, size_t len);
 
 // one packet, or two when the program needs the 020B split
 std::vector<std::vector<uint8_t>> build_scheme_packets(uint8_t pnum, const std::vector<SchemeStep> &steps);
@@ -563,6 +606,10 @@ struct SessionIngestPlan {
 // fails to decode.
 SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records, uint32_t watermark,
                                       uint32_t newest_epoch, const SessionClocks &clocks);
+
+// 0202 confirms the batch: the brush zeroes its unread count and never serves
+// those records again. A record held back as implausible would be lost with it.
+bool should_confirm_sessions(bool profile_confirms, const SessionIngestPlan &plan);
 
 // The stored record keeps the time base it was written in, while the watermark
 // follows every clock shift, so after a set the watermark is the lower one.

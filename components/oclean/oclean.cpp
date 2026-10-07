@@ -55,7 +55,14 @@ void OcleanHub::setup() {
   this->session_last_pref_ = esphome::global_preferences->make_preference<PersistedSession>(hub_hash ^ 0x5E55D47Au);
   PersistedSession last{};
   if (this->session_last_pref_.load(&last)) {
-    if (last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION) {
+    bool const v1 = last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION_V1;
+    if (v1) {
+      last.record.tz_index = 0;
+      std::ranges::fill(last.record.quadrants, SESSION_ZONE_ABSENT);
+      if (last.record.score == SESSION_SCORE_VOID)
+        last.record.has_score = false;
+    }
+    if (v1 || (last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION)) {
       this->newest_record_epoch_ =
           restored_newest_epoch(session_record_epoch(last.record), this->last_session_emitted_);
       this->publish_session_record_(last.record, last.partial != 0 ? SessionDetail::NO_SCORE : SessionDetail::FULL);
@@ -865,8 +872,7 @@ bool OcleanHub::write_due_clock_() {
     return false;
   int64_t const shift = clock_set_shift(this->round_brush_clock_, millis() - this->round_brush_clock_ms_,
                                         set_clock_command_epoch(cmd.data(), cmd.size()));
-  uint16_t const handle = (this->profile_->config_write_target == WriteTarget::TX_SESSION) ? this->tx_session_handle_
-                                                                                           : this->tx_main_handle_;
+  uint16_t const handle = this->tx_handle_(this->profile_->config_write_target);
   if (!this->write_raw_(handle, cmd.data(), cmd.size(), "sync-clock"))
     return false;
   this->clock_shift_pending_s_ = clock_shift_applies(shift) ? shift : 0;
@@ -933,35 +939,38 @@ void OcleanHub::publish_last_seen_() {
 }
 
 uint32_t OcleanHub::flush_pending_writes_() {
+  // a refusal can only answer this round's writes
+  this->round_writes_.clear();
+  uint32_t const gen = ++this->round_write_gen_;
   if (this->pending_writes_.empty())
     return 0;
   // Config writes go to the characteristic named by the active profile (the
   // main tx char on every active profile).
-  uint16_t const write_handle = (this->profile_->config_write_target == WriteTarget::TX_SESSION)
-                                    ? this->tx_session_handle_
-                                    : this->tx_main_handle_;
+  uint16_t const write_handle = this->tx_handle_(this->profile_->config_write_target);
+  this->round_writes_.swap(this->pending_writes_);
   uint32_t offset = 0;
-  for (auto &pw : this->pending_writes_) {
-    // Move into the scheduled callback so the bytes outlive the queue clear
-    // below. Nameless timeout: these are fire-once and must not cancel one
-    // another, so they cannot share a name.
-    std::vector<uint8_t> bytes = std::move(pw.bytes);
-    const char *name = pw.name;
-    this->set_timeout(offset, [this, write_handle, name, bytes = std::move(bytes)]() {
+  for (size_t i = 0; i < this->round_writes_.size(); i++) {
+    // Nameless timeout: these are fire-once and must not cancel one another, so
+    // they cannot share a name.
+    this->set_timeout(offset, [this, write_handle, gen, i]() {
+      if (gen != this->round_write_gen_ || i >= this->round_writes_.size())
+        return;
+      const PendingWrite &pw = this->round_writes_[i];
       // The watchdog can disconnect before this fires. Drop the write unless
       // the link is still in the query phase, so it never lands on a dead or
       // freshly reopened connection.
       if (this->state_ != State::POLLING) {
-        ESP_LOGD(TAG, "[%s] dropping queued write %s, no longer polling", this->parent_->address_str(), name);
+        ESP_LOGD(TAG, "[%s] dropping queued write %s, no longer polling", this->parent_->address_str(), pw.name);
         return;
       }
-      this->write_raw_(write_handle, bytes.data(), bytes.size(), name);
+      if (pw.settled)
+        return;
+      this->write_raw_(write_handle, pw.bytes.data(), pw.bytes.size(), pw.name);
     });
     offset += PENDING_WRITE_STAGGER_MS;
   }
   ESP_LOGI(TAG, "[%s] flushing %u queued command(s)", this->parent_->address_str(),
-           (unsigned)this->pending_writes_.size());
-  this->pending_writes_.clear();
+           (unsigned)this->round_writes_.size());
   return offset;
 }
 
@@ -1071,6 +1080,10 @@ void OcleanHub::publish_session_record_(const SessionRecord &r, SessionDetail de
     bool const known = detail == SessionDetail::FULL && r.zones[i] != SESSION_ZONE_ABSENT;
     esphome::oclean::OcleanHub::publish_(this->zone_sensors_[i], known ? (float)r.zones[i] : NAN);
   }
+  for (size_t i = 0; i < SESSION_QUADRANTS_COUNT; i++) {
+    bool const known = detail == SessionDetail::FULL && r.quadrants[i] <= 100;
+    esphome::oclean::OcleanHub::publish_(this->quadrant_sensors_[i], known ? (float)r.quadrants[i] : NAN);
+  }
   if (this->session_time_text_sensor_ != nullptr) {
     // 32, not 24: date fields are unvalidated uint8, three digits each in the
     // worst case (26 bytes with the terminator)
@@ -1112,6 +1125,20 @@ void OcleanHub::handle_session_notify_(const uint8_t *data, size_t len) {
   }
 }
 
+bool OcleanHub::skip_after_inline_(const uint8_t *data, size_t len) {
+  if (!this->inline_seen_this_round_)
+    return false;
+  // A brush in the middle of a session answers count=0 and still streams its
+  // unread records behind the header. Nothing is confirmed this round, so the
+  // next poll gets them whole.
+  if (!this->after_inline_logged_) {
+    this->after_inline_logged_ = true;
+    ESP_LOGD(TAG, "[%s] record packets after a count=0 header, left for the next poll: %s",
+             this->parent_->address_str(), format_hex_pretty(data, len).c_str());
+  }
+  return true;
+}
+
 void OcleanHub::handle_fixed_session_notify_(const uint8_t *data, size_t len) {
   // past the end of the stream everything on this channel is an enrichment
   // push, not more record bytes
@@ -1119,17 +1146,19 @@ void OcleanHub::handle_fixed_session_notify_(const uint8_t *data, size_t len) {
     this->handle_enrichment_notify_(data, len);
     return;
   }
-  if (this->session_asm_.failed())
+  if (this->session_asm_.failed() || this->skip_after_inline_(data, len))
     return;
-  // Inline count=0 reply: no unread sessions, but the head of the newest
-  // already-read record rides along. Published live and never persisted, since
-  // a genuinely new session always arrives as a full ring. The epoch gate stops
-  // a repeated inline frame from blanking that ring's score and zones.
+  // Inline count=0 reply: no unread sessions, but the head of ring slot 0 rides
+  // along, the oldest session of the last batch handed over. Published live and
+  // never persisted, since a genuinely new session always arrives as a full
+  // ring. The epoch gate keeps it from replacing a newer session and from
+  // blanking that one's score and zones.
   SessionRecord inl{};
   if (!this->session_asm_.started() && decode_inline_0307(data, len, &inl)) {
+    this->inline_seen_this_round_ = true;
     uint32_t const ts = session_record_epoch(inl);
     ESP_LOGI(TAG,
-             "[%s] inline newest session %04u-%02u-%02u %02u:%02u:%02u "
+             "[%s] inline session %04u-%02u-%02u %02u:%02u:%02u "
              "scheme=%u dur=%us valid=%us (no unread ring)",
              this->parent_->address_str(), inl.year, inl.month, inl.day, inl.hour, inl.minute, inl.second,
              (unsigned)inl.scheme, (unsigned)inl.duration_s, (unsigned)inl.valid_duration_s);
@@ -1167,10 +1196,11 @@ void OcleanHub::handle_fixed_session_notify_(const uint8_t *data, size_t len) {
 
 void OcleanHub::handle_variable_session_notify_(const uint8_t *data, size_t len) {
   VarSessionAssembler &assembler = this->session_v20_asm_;
-  if (assembler.complete() || assembler.empty() || assembler.failed())
+  if (assembler.complete() || assembler.empty() || assembler.failed() || this->skip_after_inline_(data, len))
     return;
   SessionRecord inl{};
   if (!assembler.started() && decode_inline_0307_v20(data, len, &inl)) {
+    this->inline_seen_this_round_ = true;
     uint32_t const ts = session_record_epoch(inl);
     ESP_LOGI(TAG,
              "[%s] inline newest session %04u-%02u-%02u %02u:%02u:%02u "
@@ -1229,6 +1259,16 @@ void OcleanHub::ingest_session_records_(const std::vector<SessionRecord> &record
   }
   ESP_LOGD(TAG, "[%s] session events emitted: %u (watermark ts=%u)", this->parent_->address_str(),
            (unsigned)plan.to_publish.size(), (unsigned)this->last_session_emitted_);
+  // Confirmed only now, with the events out and the watermark stored: once the
+  // brush has its 0202, a record lost on the way is not served again.
+  if (this->state_ == State::POLLING && should_confirm_sessions(this->profile_->sends_clear_running_data, plan)) {
+    static const uint8_t CLEAR_RUNNING_DATA_CMD[] = {0x02, 0x02};
+    this->write_raw_(this->tx_main_handle_, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD),
+                     "CLEAR_RUNNING_DATA");
+  } else if (!plan.implausible.empty()) {
+    ESP_LOGD(TAG, "[%s] sessions not confirmed: %u held back", this->parent_->address_str(),
+             (unsigned)plan.implausible.size());
+  }
 
   if (plan.have_newest) {
     const SessionRecord &r = plan.newest;
@@ -1236,8 +1276,7 @@ void OcleanHub::ingest_session_records_(const std::vector<SessionRecord> &record
     if (r.has_score) {
       snprintf(score_buf, sizeof(score_buf), "%u", (unsigned)r.score);
     } else {
-      score_buf[0] = '-';
-      score_buf[1] = '\0';
+      snprintf(score_buf, sizeof(score_buf), "%s", session_voided(r) ? "void" : "-");
     }
     ESP_LOGD(TAG,
              "[%s] newest session %04u-%02u-%02u %02u:%02u:%02u "
@@ -1291,21 +1330,21 @@ void OcleanHub::ingest_session_records_(const std::vector<SessionRecord> &record
 
 void OcleanHub::emit_session_event_(const SessionRecord &r, uint32_t ts) {
   // The brush clock runs on local wall time, so the record epoch (civil fields
-  // read as if UTC) is local-as-UTC. Subtract the current local-to-UTC offset
-  // (DST-aware, from the time source) so Home Assistant buckets the session at
-  // its true UTC instant instead of one timezone width late. The dedup watermark
-  // (the ts argument) stays on the unshifted record epoch, so this conversion
-  // does not touch session ordering or persisted state.
-  uint32_t event_ts = ts;
+  // read as if UTC) is local-as-UTC. The record's own time zone gives the true
+  // UTC instant even for a session read after a DST change; a record without
+  // one falls back to the node offset now. The dedup watermark (the ts
+  // argument) stays on the unshifted record epoch, so this conversion does not
+  // touch session ordering or persisted state.
+  int64_t node_offset = 0;
 #ifdef USE_TIME
   if (this->time_ != nullptr) {
     ESPTime const local = this->time_->now();
     ESPTime const utc = this->time_->utcnow();
-    if (local.is_valid() && utc.is_valid()) {
-      event_ts = (uint32_t)((int64_t)ts - (epoch_of(local) - epoch_of(utc)));
-    }
+    if (local.is_valid() && utc.is_valid())
+      node_offset = epoch_of(local) - epoch_of(utc);
   }
 #endif
+  auto const event_ts = (uint32_t)((int64_t)ts - session_utc_offset_seconds(r, node_offset));
   std::map<std::string, std::string> data;
   data["device"] = this->parent_->address_str();
   data["ts"] = to_string(event_ts);
@@ -1370,13 +1409,15 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
     if (parse_status_response(data, len, &st)) {
       bool const charging = status_is_charging(st.charging_raw);
       bool const docked = status_is_docked(st.charging_raw);
-      ESP_LOGI(TAG, "[%s] status: battery %u%% charging=%s docked=%s (byte2=0x%02X)", this->parent_->address_str(),
-               st.battery, ONOFF(charging), ONOFF(docked), st.charging_raw);
+      ESP_LOGI(TAG, "[%s] status: battery %u%% %umV charging=%s docked=%s (byte2=0x%02X)", this->parent_->address_str(),
+               st.battery, (unsigned)st.voltage_mv, ONOFF(charging), ONOFF(docked), st.charging_raw);
       this->round_status_seen_ = true;
       // STATUS carries the same battery byte as the battery characteristic,
       // which is only read at connect; publishing from here keeps the sensor
       // moving on a held link that never re-reads it.
       esphome::oclean::OcleanHub::publish_(this->battery_sensor_, (float)st.battery);
+      if (status_voltage_plausible(st.voltage_mv))
+        esphome::oclean::OcleanHub::publish_(this->battery_voltage_sensor_, (float)st.voltage_mv / 1000.0f);
       // Remember the dock-presence state so the next adaptive-poll tick picks the
       // fast (docked) or slow (battery) interval. The HA charging sensor below
       // tracks the narrower actively-charging state instead.
@@ -1384,10 +1425,10 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       this->docked_last_ = docked;
       esphome::oclean::OcleanHub::publish_(this->charging_binary_sensor_, charging);
       esphome::oclean::OcleanHub::publish_(this->docked_binary_sensor_, docked);
-      // While holding the link for a docked brush, any STATUS that reports the
-      // brush is off the dock (re-query readback or a spontaneous push the brush
-      // sends on a dock-state change) ends the hold and returns to the normal
-      // adaptive cadence. A fully-charged brush still on the dock stays held.
+      // A held link ends on the first STATUS that reports the brush off the dock.
+      // The brush sends nothing unasked, so that is the next held re-query, up to
+      // charging_interval after the lift. A fully-charged brush still on the dock
+      // stays held.
       if (this->holding_ && !docked) {
         ESP_LOGI(TAG, "[%s] leaving held mode (off dock)", this->parent_->address_str());
         this->disconnect_();
@@ -1410,7 +1451,7 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       ESP_LOGI(TAG,
                "[%s] settings: clock %04u-%02u-%02u %02u:%02u:%02u "
                "over_pressure=%s area_reminder=%s head_days=%u head_sessions=%u "
-               "tz=%u head_max=%u lang=%u",
+               "tz=%u head_max=%umin lang=%u",
                this->parent_->address_str(), ds.year, ds.month, ds.day, ds.hour, ds.minute, ds.second,
                ONOFF(ds.over_pressure), ONOFF(ds.area_reminder), ds.head_used_days, ds.head_used_times, ds.tz_index,
                ds.head_max, ds.device_language);
@@ -1444,14 +1485,12 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
         this->language_select_->publish_language(ds.device_language);
 #endif
 #ifdef USE_NUMBER
-      // The head-replacement number entity advertises a 1-365 day range; a raw
-      // readback outside it is logged and not published.
+      // 0 sits below the entity's range, so it is logged and not published
       if (this->head_max_number_ != nullptr) {
-        if (ds.head_max >= 1 && ds.head_max <= 365) {
+        if (ds.head_max >= 1) {
           this->head_max_number_->publish_state((float)ds.head_max);
         } else {
-          ESP_LOGD(TAG, "[%s] head_max readback %u outside 1-365, not published", this->parent_->address_str(),
-                   (unsigned)ds.head_max);
+          ESP_LOGD(TAG, "[%s] head_max readback 0, not published", this->parent_->address_str());
         }
       }
 #endif
@@ -1491,8 +1530,8 @@ void OcleanHub::handle_main_notify_(const uint8_t *data, size_t len) {
       esphome::oclean::OcleanHub::publish_(this->volume_index_sensor_, (float)ds.volume_index);
       esphome::oclean::OcleanHub::publish_(this->head_used_time_sensor_, (float)clamp_head_counter(ds.head_used_time));
     }
-  } else if (this->handle_status_reply_(data, len)) {
-    // published inside
+  } else if (this->handle_write_refusal_(data, len) || this->handle_status_reply_(data, len)) {
+    // handled inside
   } else {
     // Any other frame on the main notify char: device-info replies, command
     // ACKs and anything not yet mapped. Debug-level raw dump keeps ACKs
@@ -1571,6 +1610,52 @@ bool OcleanHub::handle_status_reply_(const uint8_t *data, size_t len) {
            format_hex_pretty(data, len).c_str());
   esphome::oclean::OcleanHub::publish_(target, on);
   return true;
+}
+
+bool OcleanHub::handle_write_refusal_(const uint8_t *data, size_t len) {
+  if (!is_write_refusal(data, len))
+    return false;
+  auto &writes = this->round_writes_;
+  auto it = std::ranges::find_if(writes, [data](const PendingWrite &pw) {
+    return !pw.settled && pw.bytes.size() >= 2 && pw.bytes[0] == data[0] && pw.bytes[1] == data[1];
+  });
+  if (it == writes.end()) {
+    ESP_LOGW(TAG, "[%s] write %02X%02X refused while brushing", this->parent_->address_str(), data[0], data[1]);
+    return true;
+  }
+  auto first = static_cast<size_t>(it - writes.begin());
+  size_t last = first;
+  // a program split over 0206 and 020B goes again as a pair
+  if (data[1] == 0x06 && first + 1 < writes.size() && writes[first + 1].bytes.size() >= 2 &&
+      writes[first + 1].bytes[0] == 0x02 && writes[first + 1].bytes[1] == 0x0B)
+    last = first + 1;
+  bool const retry = writes[first].retries == 0 && this->ble_user_enabled_ &&
+                     this->pending_writes_.size() + (last - first) < MAX_PENDING_WRITES;
+  for (size_t i = first; i <= last; i++) {
+    writes[i].settled = true;
+    if (retry) {
+      this->pending_writes_.push_back(PendingWrite{.bytes = writes[i].bytes,
+                                                   .name = writes[i].name,
+                                                   .retries = static_cast<uint8_t>(writes[i].retries + 1),
+                                                   .settled = false});
+    }
+  }
+  if (retry) {
+    ESP_LOGW(TAG, "[%s] %s refused while brushing, sending it again next round", this->parent_->address_str(),
+             writes[first].name);
+  } else {
+    ESP_LOGW(TAG, "[%s] %s refused while brushing, dropped", this->parent_->address_str(), writes[first].name);
+  }
+  return true;
+}
+
+bool OcleanHub::language_available(uint8_t id) {
+  uint8_t const last = max_language_id(this->model_string_.c_str(), this->model_string_.size());
+  if (last == 0 || id <= last)
+    return true;
+  ESP_LOGW(TAG, "[%s] language %u not sent: %s firmware stops at %u and would show English",
+           this->parent_->address_str(), id, this->model_string_.c_str(), last);
+  return false;
 }
 
 bool OcleanHub::set_voice_prompt(uint8_t index, bool on) {
@@ -1697,6 +1782,8 @@ void OcleanHub::query_device_(bool capture_mode) {
   this->round_status_seen_ = false;
   this->notify_count_this_round_ = 0;
   this->notify_flood_warned_ = false;
+  this->inline_seen_this_round_ = false;
+  this->after_inline_logged_ = false;
   this->session_asm_.reset();
   this->session_v20_asm_.reset();
   this->settings_asm_.reset();
@@ -1724,7 +1811,7 @@ void OcleanHub::query_device_(bool capture_mode) {
       break;
     }
     const ProfileCmd &qc = prof->query_cmds[i];
-    uint16_t const handle = (qc.target == WriteTarget::TX_SESSION) ? this->tx_session_handle_ : this->tx_main_handle_;
+    uint16_t const handle = this->tx_handle_(qc.target);
     const uint8_t *bytes = qc.bytes;
     uint8_t const len = qc.len;
     const char *wname = qc.name;
@@ -1735,17 +1822,6 @@ void OcleanHub::query_device_(bool capture_mode) {
       if (this->state_ != State::POLLING)
         return;
       this->write_raw_(handle, bytes, len, wname);
-    });
-  }
-  if (prof->sends_clear_running_data) {
-    this->set_timeout("query_info", base + (uint32_t(prof->query_cmd_count) * QUERY_STAGGER_MS), [this]() {
-      // Skip the query if the watchdog tore the link down
-      // before it fired.
-      if (this->state_ != State::POLLING)
-        return;
-      static const uint8_t CLEAR_RUNNING_DATA_CMD[] = {0x02, 0x02};
-      this->write_raw_(this->tx_main_handle_, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD),
-                       "CLEAR_RUNNING_DATA");
     });
   }
   // Capture mode only extends the hold below; every read query above already
@@ -1766,8 +1842,7 @@ void OcleanHub::end_query_window_(const char *reason) {
       const ProfileCmd *q = settings_query(*this->profile_);
       if (this->state_ != State::POLLING || q == nullptr)
         return;
-      this->write_raw_(q->target == WriteTarget::TX_SESSION ? this->tx_session_handle_ : this->tx_main_handle_,
-                       q->bytes, q->len, q->name);
+      this->write_raw_(this->tx_handle_(q->target), q->bytes, q->len, q->name);
     });
     this->set_timeout("capture_hold", CLOCK_READBACK_MS, [this, reason]() {
       this->capture_active_ = false;

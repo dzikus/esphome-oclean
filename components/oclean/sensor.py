@@ -5,18 +5,22 @@ from esphome.const import (
     CONF_DEVICE_ID,
     DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_DURATION,
+    DEVICE_CLASS_VOLTAGE,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
     UNIT_EMPTY,
+    UNIT_MINUTE,
     UNIT_PERCENT,
     UNIT_SECOND,
+    UNIT_VOLT,
 )
 
 from . import (
     CONF_OCLEAN_ID,
     HIDDEN_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
+    QUADRANT_POSITIONS,
     UNIT_DAY,
     hub_builds,
     inject_entity_defaults,
@@ -39,6 +43,18 @@ SENSORS = [
         None,
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Battery",
+    ),
+    # STATUS bytes 3-4, published in volts from the millivolt reading
+    (
+        "battery_voltage",
+        "set_battery_voltage_sensor",
+        UNIT_VOLT,
+        2,
+        DEVICE_CLASS_VOLTAGE,
+        STATE_CLASS_MEASUREMENT,
+        None,
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Battery voltage",
     ),
     (
         "last_session_score",
@@ -169,12 +185,12 @@ SENSORS = [
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Running state",
     ),
-    # unitless on purpose: the unit is unconfirmed, and total-increasing still
-    # gives long-term statistics with the head reset absorbed as a counter reset
+    # minutes of valid brushing on this head; total-increasing absorbs the head
+    # reset as a counter reset
     (
         "head_used_time",
         "set_head_used_time_sensor",
-        UNIT_EMPTY,
+        UNIT_MINUTE,
         0,
         None,
         STATE_CLASS_TOTAL_INCREASING,
@@ -212,6 +228,22 @@ SENSORS = [
             f"Zone {i + 1}",
         )
         for i in range(8)
+    ],
+    # session record bytes 19-22, each the share of one quadrant, summing to 100
+    *[
+        (
+            f"quadrant_{position}",
+            # wired through set_quadrant_sensor, like the zones
+            None,
+            UNIT_PERCENT,
+            0,
+            None,
+            STATE_CLASS_MEASUREMENT,
+            "mdi:tooth-outline",
+            None,
+            f"Quadrant {position.replace('_', ' ')}",
+        )
+        for position in QUADRANT_POSITIONS
     ],
 ]
 
@@ -273,6 +305,9 @@ async def to_code(config):
         if key.startswith("gesture_zone_"):
             index = int(key.rsplit("_", 1)[1]) - 1
             cg.add(hub.set_gesture_zone_sensor(index, sens))
+        elif key.startswith("quadrant_"):
+            index = QUADRANT_POSITIONS.index(key.removeprefix("quadrant_"))
+            cg.add(hub.set_quadrant_sensor(index, sens))
         else:
             # Generic setter path requires a setter string. A None sentinel
             # means the row belongs on a dedicated branch above; fail loudly

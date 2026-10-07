@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Breaking: the number `head_max_days` is now `head_max_minutes`, "Brush head
+  time limit", 1-65535 min. The brush counts the limit in minutes of brushing;
+  the old key fails validation with a pointer to the new one. Home Assistant
+  gets a new entity for it.
+- Breaking: the X Pro Elite no longer builds `fill_brush`, `auto_mode`,
+  `volume_enabled`, `calendar_enabled`, `splash_prevent` and `volume_index`:
+  their settings bytes hold no setting in the firmware.
+- `head_used_time` has the unit `min`. Its long-term statistics were recorded
+  without a unit, so Home Assistant may ask to fix them.
+- `0202` goes out only after a whole session stream is in, the events are sent
+  and the watermark is stored, and never with a record held back as
+  implausible; before, it went on a timer in every poll.
+- A session the firmware voids (score 1) reads as no score.
+- New sensors: battery voltage on every model, and four hidden per-quadrant
+  shares on the X Pro Elite.
+- The session event takes its UTC offset from the record's own time zone,
+  so a session read after a daylight-saving change keeps its real hour.
+- A language past the brush firmware's last one (14 on `OCLEANY3P`, 13 on
+  `OCLEANY3PD`) is refused instead of turning the display English.
+- A write the brush turns down while a session runs is sent once more in the
+  next round.
+- Record packets that follow a count=0 header during a session log at debug
+  level instead of a warning.
+
 ## v1.4.1 (2026-09-13)
 
 - No change to the component.

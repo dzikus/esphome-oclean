@@ -94,11 +94,40 @@ class ModelEntitySets(unittest.TestCase):
         self.assertIn("voice_prompts", elite["switch"])
         self.assertIn("gesture_zone_1", ultra["sensor"])
 
-    def test_auto_mode_is_a_switch_on_one_model_and_a_sensor_on_the_other(self):
+    def test_auto_mode_is_a_switch_on_the_x_ultra_20_only(self):
         elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
         ultra = oc.MODEL_ENTITY_SETS[oc.MODEL_X_ULTRA_20]["unavailable"]
         self.assertIn("auto_mode", elite["switch"])
+        self.assertNotIn("auto_mode", ultra.get("switch", frozenset()))
+        self.assertIn("auto_mode", elite["binary_sensor"])
         self.assertIn("auto_mode", ultra["binary_sensor"])
+
+    def test_elite_settings_bytes_without_a_setting_are_not_built(self):
+        # constant zero, copies of bytes 0 and 1, a flag nothing writes, and a
+        # pause flag the next session clears
+        elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]
+        self.assertLessEqual(
+            {
+                "fill_brush",
+                "auto_mode",
+                "volume_enabled",
+                "calendar_enabled",
+                "splash_prevent",
+            },
+            elite["unavailable"]["binary_sensor"],
+        )
+        self.assertIn("volume_index", elite["unavailable"]["sensor"])
+        self.assertNotIn("binary_sensor", elite["dev"])
+        self.assertNotIn("sensor", elite["dev"])
+
+    def test_quadrants_are_hidden_and_elite_only(self):
+        keys = {f"quadrant_{pos}" for pos in oc.QUADRANT_POSITIONS}
+        self.assertEqual(len(keys), 4)
+        self.assertLessEqual(keys, oc.HIDDEN_SENSOR_KEYS)
+        ultra = oc.MODEL_ENTITY_SETS[oc.MODEL_X_ULTRA_20]["unavailable"]
+        elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
+        self.assertLessEqual(keys, ultra["sensor"])
+        self.assertFalse(keys & elite["sensor"])
 
 
 class ModelEntityDefaults(unittest.TestCase):

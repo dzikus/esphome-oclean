@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "componen
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 import oclean as oc
+import oclean.number as ocnum
 from esphome.core import CORE
 
 ROWS = [("battery", "Battery"), ("score", "Score")]
@@ -136,9 +137,9 @@ class WarnOnSharedDefaultNames(unittest.TestCase):
 
 # a row on every model, one only on the X Ultra 20, one only on the X Pro Elite
 MODEL_ROWS = [
-    ("charging", "Charging"),
-    ("wifi_configured", "Wi-Fi provisioned"),
-    ("fill_brush", "Fill brush"),
+    ("battery", "Battery"),
+    ("device_mode", "Device mode"),
+    ("gesture_zone_1", "Zone 1"),
 ]
 
 
@@ -159,37 +160,76 @@ class RawHubModel(RawConfigCase):
 
 class InjectPerModel(RawConfigCase):
     def _inject(self, config):
-        return oc.inject_entity_defaults(config, MODEL_ROWS, platform="binary_sensor")
+        return oc.inject_entity_defaults(config, MODEL_ROWS, platform="sensor")
 
     def test_x_ultra_20_builds_its_rows_and_not_the_elite_ones(self):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
         out = self._inject({"oclean_id": "hub_a"})
-        self.assertIn("charging", out)
-        self.assertIn("wifi_configured", out)
-        self.assertNotIn("fill_brush", out)
+        self.assertIn("battery", out)
+        self.assertIn("device_mode", out)
+        self.assertNotIn("gesture_zone_1", out)
 
     def test_the_default_builds_the_elite_rows_and_not_the_ultra_ones(self):
         self.set_hubs({"id": "hub_a"})
         out = self._inject({"oclean_id": "hub_a"})
-        self.assertIn("charging", out)
-        self.assertIn("fill_brush", out)
-        self.assertNotIn("wifi_configured", out)
+        self.assertIn("battery", out)
+        self.assertIn("gesture_zone_1", out)
+        self.assertNotIn("device_mode", out)
 
     def test_an_explicit_row_the_model_lacks_is_rejected(self):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
-        for want in ({"name": "Fill"}, True, None):
+        for want in ({"name": "Zone"}, True, None):
             with self.assertRaises(cv.Invalid):
-                self._inject({"oclean_id": "hub_a", "fill_brush": want})
+                self._inject({"oclean_id": "hub_a", "gesture_zone_1": want})
 
     def test_false_on_a_row_the_model_lacks_is_accepted(self):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
-        out = self._inject({"oclean_id": "hub_a", "fill_brush": False})
-        self.assertNotIn("fill_brush", out)
+        out = self._inject({"oclean_id": "hub_a", "gesture_zone_1": False})
+        self.assertNotIn("gesture_zone_1", out)
 
     def test_without_a_platform_nothing_is_filtered(self):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
         out = oc.inject_entity_defaults({"oclean_id": "hub_a"}, MODEL_ROWS)
-        self.assertIn("fill_brush", out)
+        self.assertIn("gesture_zone_1", out)
+
+    def test_flags_without_a_setting_are_built_on_no_model(self):
+        rows = [("fill_brush", "Fill brush"), ("charging", "Charging")]
+        for model in oc.MODELS:
+            self.set_hubs({"id": "hub_a", "model": model})
+            out = oc.inject_entity_defaults(
+                {"oclean_id": "hub_a"}, rows, platform="binary_sensor"
+            )
+            self.assertNotIn("fill_brush", out, model)
+            self.assertIn("charging", out, model)
+            # no model to switch to, so the error does not suggest one
+            with self.assertRaises(cv.Invalid) as caught:
+                oc.inject_entity_defaults(
+                    {"oclean_id": "hub_a", "fill_brush": True},
+                    rows,
+                    platform="binary_sensor",
+                )
+            self.assertIn("No supported model", str(caught.exception))
+
+    def test_a_row_another_model_has_suggests_the_model_option(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        with self.assertRaises(cv.Invalid) as caught:
+            self._inject({"oclean_id": "hub_a", "gesture_zone_1": True})
+        self.assertIn("set model:", str(caught.exception))
+
+
+class HeadMaxKey(RawConfigCase):
+    def test_the_old_days_key_points_at_the_minutes_one(self):
+        self.set_hubs({"id": "hub_a"})
+        for value in (90, False, {"name": "Head days"}):
+            with self.assertRaises(cv.Invalid) as caught:
+                ocnum.CONFIG_SCHEMA({"oclean_id": "hub_a", "head_max_days": value})
+            self.assertIn("head_max_minutes", str(caught.exception))
+
+    def test_the_limit_takes_any_u16_minute_count(self):
+        keys = {key for key, _n in ocnum._DEFAULT_NAMES}
+        self.assertIn("head_max_minutes", keys)
+        self.assertNotIn("head_max_days", keys)
+        self.assertEqual((ocnum.HEAD_MAX_MIN, ocnum.HEAD_MAX_MAX), (1, 0xFFFF))
 
 
 SWITCH_ROWS = [

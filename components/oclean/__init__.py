@@ -63,6 +63,9 @@ MODEL_X_ULTRA_20 = "x_ultra_20"
 DEFAULT_MODEL = MODEL_X_PRO_ELITE
 
 _ZONE_KEYS = frozenset(f"gesture_zone_{i + 1}" for i in range(8))
+# session record order, bytes 19-22
+QUADRANT_POSITIONS = ("upper_left", "lower_left", "upper_right", "lower_right")
+_QUADRANT_KEYS = frozenset(f"quadrant_{position}" for position in QUADRANT_POSITIONS)
 _CUSTOM_STEP_KEYS = frozenset(
     f"custom_step{i + 1}_{param}" for i in range(4) for param in ("gear", "duration")
 )
@@ -84,12 +87,17 @@ _X_ULTRA_20_FLAG_KEYS = frozenset(
 # for, never built. "dev": rows with no observable effect on that brush, built
 # only with expose_dev_sensors. Every other row is built on every model.
 MODEL_ENTITY_SETS = {
-    # The brush rejects the auto-mode write, so auto mode is a binary sensor here
-    # and a switch on the X Ultra 20.
+    # Settings bytes 3, 4, 8-10 and 13 hold no setting in the firmware: constant
+    # zero, copies of bytes 0 and 1, a flag nothing writes, and a pause flag the
+    # next session clears. The brush also rejects the auto-mode write.
     MODEL_X_PRO_ELITE: {
         "unavailable": {
-            "sensor": frozenset({"device_mode", "mode_number", "running_state"}),
-            "binary_sensor": _X_ULTRA_20_FLAG_KEYS,
+            "sensor": frozenset(
+                {"device_mode", "mode_number", "running_state", "volume_index"}
+            ),
+            "binary_sensor": _X_ULTRA_20_FLAG_KEYS
+            | _X_PRO_ELITE_FLAG_KEYS
+            | {"auto_mode"},
             "switch": frozenset(
                 {
                     "auto_mode",
@@ -101,8 +109,6 @@ MODEL_ENTITY_SETS = {
             ),
         },
         "dev": {
-            "sensor": frozenset({"volume_index"}),
-            "binary_sensor": _X_PRO_ELITE_FLAG_KEYS,
             "switch": frozenset({"area_reminder", "brush_pause", "brush_mode"}),
             "button": frozenset({"capture_sessions"}),
         },
@@ -112,7 +118,9 @@ MODEL_ENTITY_SETS = {
     # 12-zone record is not mapped.
     MODEL_X_ULTRA_20: {
         "unavailable": {
-            "sensor": frozenset({"device_theme", "volume_index"}) | _ZONE_KEYS,
+            "sensor": frozenset({"device_theme", "volume_index"})
+            | _ZONE_KEYS
+            | _QUADRANT_KEYS,
             "binary_sensor": _X_PRO_ELITE_FLAG_KEYS | {"auto_mode"},
             "switch": frozenset({"brush_pause", "brush_mode"}),
             "number": _CUSTOM_STEP_KEYS,
@@ -163,6 +171,7 @@ HIDDEN_SENSOR_KEYS = frozenset(
         "mode_number",
         "running_state",
     }
+    | _QUADRANT_KEYS
 )
 
 HIDDEN_BINARY_SENSOR_KEYS = frozenset(
@@ -284,10 +293,16 @@ def inject_entity_defaults(
             # An error, not a warning: the entity would be missing from a node
             # that compiled cleanly, which reads as a bug on the brush side.
             if want is not ... and want is not False:
+                if all(
+                    key in sets["unavailable"].get(platform, frozenset())
+                    for sets in MODEL_ENTITY_SETS.values()
+                ):
+                    hint = "No supported model has it."
+                else:
+                    hint = "Or set model: on the hub to the brush you have."
                 raise cv.Invalid(
                     f"'{key}' does not exist on model: {model}. Remove it from "
-                    f"this {platform} block, or set model: on the hub to the "
-                    f"brush you have.",
+                    f"this {platform} block. {hint}",
                     path=[key],
                 )
             config.pop(key, None)

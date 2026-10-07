@@ -96,11 +96,26 @@ void test_decode_record_normal() {
   TEST_ASSERT_EQUAL_UINT8(13, r.second);
   TEST_ASSERT_EQUAL_UINT16(120, r.duration_s);
   TEST_ASSERT_EQUAL_UINT16(120, r.valid_duration_s);
-  TEST_ASSERT_EQUAL_UINT8(8, r.areas[0]);
-  TEST_ASSERT_EQUAL_UINT8(21, r.areas[1]);
-  TEST_ASSERT_EQUAL_UINT8(69, r.areas[2]);
+  TEST_ASSERT_EQUAL_UINT8(15, r.tz_index);
+  const uint8_t quadrants[SESSION_QUADRANTS_COUNT] = {31, 14, 37, 18};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(quadrants, r.quadrants, SESSION_QUADRANTS_COUNT);
   TEST_ASSERT_TRUE(r.has_score);
   TEST_ASSERT_EQUAL_UINT8(82, r.score);
+  TEST_ASSERT_FALSE(session_voided(r));
+}
+
+void test_decode_record_quadrants_follow_zone_pairs() {
+  // the brush rounds each quadrant on its own, so a pair of zones lands within a
+  // few points of it, never on the other side
+  SessionRecord r;
+  TEST_ASSERT_TRUE(decode_session_record(fixtures::SESSION_REC_HIGH, &r));
+  unsigned sum = 0;
+  for (size_t q = 0; q < SESSION_QUADRANTS_COUNT; q++) {
+    sum += r.quadrants[q];
+    int const pair = r.zones[2 * q] + r.zones[(2 * q) + 1];
+    TEST_ASSERT_INT_WITHIN(3, pair, r.quadrants[q]);
+  }
+  TEST_ASSERT_EQUAL_UINT(100, sum);
 }
 
 void test_decode_record_gesture_zones_offset23() {
@@ -113,13 +128,15 @@ void test_decode_record_gesture_zones_offset23() {
 }
 
 void test_decode_record_aborted() {
+  // 2 s of brushing: the firmware voids the session and scores it 1, which is
+  // not a score to publish
   SessionRecord r;
   TEST_ASSERT_TRUE(decode_session_record(fixtures::SESSION_REC_ABORTED, &r));
   TEST_ASSERT_EQUAL_UINT16(2, r.valid_duration_s);
-  TEST_ASSERT_EQUAL_UINT8(100, r.areas[0]);
-  TEST_ASSERT_EQUAL_UINT8(0, r.areas[1]);
-  TEST_ASSERT_TRUE(r.has_score);
+  TEST_ASSERT_FALSE(r.has_score);
   TEST_ASSERT_EQUAL_UINT8(1, r.score);
+  TEST_ASSERT_TRUE(session_voided(r));
+  TEST_ASSERT_EQUAL_UINT8(0, r.quadrants[0]);
 }
 
 void test_decode_record_no_score() {
@@ -203,6 +220,7 @@ void test_assembler_fragmented_stream() {
   TEST_ASSERT_EQUAL_UINT8(82, r0.score);
   TEST_ASSERT_TRUE(asm_.record(2, &r2));
   TEST_ASSERT_EQUAL_UINT8(1, r2.score);
+  TEST_ASSERT_FALSE(r2.has_score);
   TEST_ASSERT_EQUAL_UINT16(2, r2.valid_duration_s);
 }
 
@@ -263,6 +281,22 @@ void test_parse_status_response_valid() {
   TEST_ASSERT_TRUE(parse_status_response(st, sizeof(st), &out));
   TEST_ASSERT_EQUAL_UINT8(100, out.battery);
   TEST_ASSERT_EQUAL_UINT8(0x02, out.charging_raw);
+  TEST_ASSERT_EQUAL_UINT16(4154, out.voltage_mv);
+}
+
+void test_parse_status_voltage_six_byte_frame() {
+  // X Ultra 20 on the dock at 94%: the frame ends at the battery byte
+  const uint8_t st[] = {0x03, 0x03, 0x01, 0x10, 0x1B, 0x5E};
+  StatusResponse out;
+  TEST_ASSERT_TRUE(parse_status_response(st, sizeof(st), &out));
+  TEST_ASSERT_EQUAL_UINT8(94, out.battery);
+  TEST_ASSERT_EQUAL_UINT16(4123, out.voltage_mv);
+  TEST_ASSERT_TRUE(status_voltage_plausible(out.voltage_mv));
+  // a Y3P at 40% read 3711 mV
+  TEST_ASSERT_TRUE(status_voltage_plausible(3711));
+  TEST_ASSERT_FALSE(status_voltage_plausible(0));
+  TEST_ASSERT_FALSE(status_voltage_plausible(STATUS_VOLTAGE_MIN_MV - 1));
+  TEST_ASSERT_FALSE(status_voltage_plausible(STATUS_VOLTAGE_MAX_MV + 1));
 }
 
 void test_status_dock_predicates() {
@@ -706,6 +740,61 @@ void test_tz_index_for_offset_seconds() {
   TEST_ASSERT_EQUAL_UINT8(0, tz_index_for_offset_seconds(-1));
 }
 
+void test_tz_index_offset_seconds_round_trips() {
+  for (uint8_t idx = 1; idx <= 33; idx++) {
+    int32_t offset = 0;
+    TEST_ASSERT_TRUE(tz_index_offset_seconds(idx, &offset));
+    TEST_ASSERT_EQUAL_UINT8(idx, tz_index_for_offset_seconds(offset));
+  }
+  int32_t offset = 1;
+  TEST_ASSERT_FALSE(tz_index_offset_seconds(0, &offset));
+  TEST_ASSERT_FALSE(tz_index_offset_seconds(34, &offset));
+  TEST_ASSERT_FALSE(tz_index_offset_seconds(15, nullptr));
+  TEST_ASSERT_EQUAL_INT32(1, offset);
+}
+
+void test_session_utc_offset_prefers_the_record_zone() {
+  // recorded in CEST (16), read after the switch to CET: the record still says +2
+  SessionRecord r{};
+  r.tz_index = 16;
+  TEST_ASSERT_EQUAL_INT64(7200, session_utc_offset_seconds(r, 3600));
+  // the X Ultra 20 factory clock: UTC+8 (27)
+  r.tz_index = 27;
+  TEST_ASSERT_EQUAL_INT64(28800, session_utc_offset_seconds(r, 7200));
+  // no zone in the record (inline head, or a record from before it was read)
+  r.tz_index = 0;
+  TEST_ASSERT_EQUAL_INT64(3600, session_utc_offset_seconds(r, 3600));
+  r.tz_index = 0xFF;
+  TEST_ASSERT_EQUAL_INT64(-18000, session_utc_offset_seconds(r, -18000));
+}
+
+void test_max_language_id_per_model() {
+  const char *y3pd = "OCLEANY3PD";
+  const char *y3p = "OCLEANY3P";
+  const char *v20 = "OCLEANV20B";
+  TEST_ASSERT_EQUAL_UINT8(13, max_language_id(y3pd, strlen(y3pd)));
+  TEST_ASSERT_EQUAL_UINT8(14, max_language_id(y3p, strlen(y3p)));
+  TEST_ASSERT_EQUAL_UINT8(0, max_language_id(v20, strlen(v20)));
+  // DIS not read yet
+  TEST_ASSERT_EQUAL_UINT8(0, max_language_id("", 0));
+  TEST_ASSERT_EQUAL_UINT8(0, max_language_id(nullptr, 0));
+  // a truncated string must not match the longer prefix
+  TEST_ASSERT_EQUAL_UINT8(14, max_language_id(y3pd, strlen(y3p)));
+}
+
+void test_is_write_refusal() {
+  const uint8_t er[] = {0x02, 0x06, 0x45, 0x52};
+  const uint8_t ok[] = {0x02, 0x06, 0x4F, 0x4B};
+  const uint8_t read_er[] = {0x03, 0x06, 0x45, 0x52};
+  const uint8_t longer[] = {0x02, 0x12, 0x45, 0x52, 0x00};
+  TEST_ASSERT_TRUE(is_write_refusal(er, sizeof(er)));
+  TEST_ASSERT_FALSE(is_write_refusal(ok, sizeof(ok)));
+  TEST_ASSERT_FALSE(is_write_refusal(read_er, sizeof(read_er)));
+  TEST_ASSERT_FALSE(is_write_refusal(longer, sizeof(longer)));
+  TEST_ASSERT_FALSE(is_write_refusal(er, 3));
+  TEST_ASSERT_FALSE(is_write_refusal(nullptr, 4));
+}
+
 // === Set-clock builder (0201) ===
 
 void test_build_set_clock_summer() {
@@ -966,6 +1055,23 @@ void test_plan_ingest_picks_newest_itself() {
   TEST_ASSERT_EQUAL_UINT8(6, plan.newest.day);
   TEST_ASSERT_EQUAL_UINT8(18, plan.newest.hour);
   TEST_ASSERT_EQUAL_UINT8(99, plan.newest.score);
+}
+
+void test_confirm_sessions_only_with_nothing_held_back() {
+  std::vector<SessionRecord> ring = {ingest_record(6, 7, 83)};
+  int64_t const now = civil_to_epoch(2026, 6, 7, 12, 0, 0);
+  SessionIngestPlan plan = plan_session_ingest(ring, 0, 0, node_only(now));
+  TEST_ASSERT_TRUE(should_confirm_sessions(true, plan));
+  TEST_ASSERT_FALSE(should_confirm_sessions(false, plan));
+  // already emitted: the batch is still the brush's to drop
+  plan = plan_session_ingest(ring, session_record_epoch(ring[0]), 0, node_only(now));
+  TEST_ASSERT_TRUE(should_confirm_sessions(true, plan));
+  // a record too far ahead stays unread on the brush until it is plausible
+  ring.push_back(ingest_record(6, 9, 90));
+  ring[1].year = 2099;
+  plan = plan_session_ingest(ring, 0, 0, node_only(now));
+  TEST_ASSERT_EQUAL_UINT(1, plan.implausible.size());
+  TEST_ASSERT_FALSE(should_confirm_sessions(true, plan));
 }
 
 void test_plan_ingest_empty_ring_is_inert() {
@@ -1608,7 +1714,7 @@ void test_v20_assembler_splits_length_prefixed_records() {
   TEST_ASSERT_EQUAL_UINT8(3, r.scheme);
   TEST_ASSERT_EQUAL_UINT16(120, r.duration_s);
   TEST_ASSERT_EQUAL_UINT16(20, r.valid_duration_s);
-  TEST_ASSERT_EQUAL_UINT8(0, r.areas[0]);
+  TEST_ASSERT_EQUAL_UINT8(SESSION_ZONE_ABSENT, r.quadrants[0]);
   TEST_ASSERT_EQUAL_UINT8(SESSION_ZONE_ABSENT, r.zones[7]);
   TEST_ASSERT_EQUAL_INT(1, s.newest_index());
   size_t raw_len = 0;
@@ -1722,9 +1828,9 @@ void test_decode_inline_0307() {
   TEST_ASSERT_EQUAL_UINT8(0, r.scheme);
   TEST_ASSERT_EQUAL_UINT16(120, r.duration_s);
   TEST_ASSERT_EQUAL_UINT16(68, r.valid_duration_s);
-  TEST_ASSERT_EQUAL_UINT8(5, r.areas[0]);
-  TEST_ASSERT_EQUAL_UINT8(22, r.areas[1]);
-  TEST_ASSERT_EQUAL_UINT8(0, r.areas[2]);
+  // 13 bytes of the record: no time zone and no quadrants in them
+  TEST_ASSERT_EQUAL_UINT8(0, r.tz_index);
+  TEST_ASSERT_EQUAL_UINT8(SESSION_ZONE_ABSENT, r.quadrants[3]);
   TEST_ASSERT_FALSE(r.has_score);
   for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
     TEST_ASSERT_EQUAL_UINT8(0, r.zones[i]);
@@ -1941,6 +2047,7 @@ int main() {
   RUN_TEST(test_assembler_rejects_wrong_magic);
 
   RUN_TEST(test_decode_record_normal);
+  RUN_TEST(test_decode_record_quadrants_follow_zone_pairs);
   RUN_TEST(test_decode_record_gesture_zones_offset23);
   RUN_TEST(test_decode_record_aborted);
   RUN_TEST(test_decode_record_no_score);
@@ -1958,6 +2065,7 @@ int main() {
   RUN_TEST(test_assembler_overlong_count_rejected);
 
   RUN_TEST(test_parse_status_response_valid);
+  RUN_TEST(test_parse_status_voltage_six_byte_frame);
   RUN_TEST(test_status_dock_predicates);
   RUN_TEST(test_parse_status_response_bad_header_rejected);
   RUN_TEST(test_parse_status_response_over_100_rejected);
@@ -1992,6 +2100,10 @@ int main() {
   RUN_TEST(test_build_language_command);
   RUN_TEST(test_timezone_index_to_string);
   RUN_TEST(test_tz_index_for_offset_seconds);
+  RUN_TEST(test_tz_index_offset_seconds_round_trips);
+  RUN_TEST(test_session_utc_offset_prefers_the_record_zone);
+  RUN_TEST(test_max_language_id_per_model);
+  RUN_TEST(test_is_write_refusal);
 
   RUN_TEST(test_build_set_clock_summer);
   RUN_TEST(test_build_set_clock_winter_sunday_midnight_fields);
@@ -2016,6 +2128,7 @@ int main() {
   RUN_TEST(test_plan_ingest_persists_only_strictly_newer);
   RUN_TEST(test_plan_ingest_unsynced_clock_cannot_judge);
   RUN_TEST(test_plan_ingest_picks_newest_itself);
+  RUN_TEST(test_confirm_sessions_only_with_nothing_held_back);
   RUN_TEST(test_plan_ingest_empty_ring_is_inert);
   RUN_TEST(test_accept_inline_only_when_strictly_newer);
   RUN_TEST(test_accept_inline_rejects_implausible_future);

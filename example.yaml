@@ -105,8 +105,8 @@ switch:
 number:
   - platform: oclean
     oclean_id: brush_hub
-    head_max_days:
-      name: Head replacement days
+    head_max_minutes:
+      name: Brush head time limit
 
 select:
   - platform: oclean
