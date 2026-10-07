@@ -48,8 +48,7 @@ class OcleanClearCloudHostButton : public button::Button, public Parented<Oclean
   void press_action() override { this->parent_->clear_cloud_host(); }
 };
 
-// Points the cloud host at a receiver on this node (its own IP and the
-// configured receiver port).
+// Points the cloud host at this node: its IPv4 and the receiver port.
 class OcleanPointCloudHereButton : public button::Button, public Parented<OcleanHub> {
  public:
   void press_action() override { this->parent_->point_cloud_at_node(); }

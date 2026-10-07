@@ -26,6 +26,11 @@ wifi:
   ssid: "esphome-ci"
   password: "esphome-ci-password"
 
+# The in-node session receiver (cloud_receiver below) reuses this shared web
+# server, so it compiles the web_server_base handler path.
+web_server:
+  port: 80
+
 api:
   # fire_homeassistant_event() (session-history events) needs this flag.
   homeassistant_services: true
@@ -76,8 +81,8 @@ oclean:
     # Compiles the BluFi provisioning path (USE_OCLEAN_BLUFI); the SSID falls
     # back to the wifi: block above since no wifi_ssid is set here.
     wifi_provisioning: true
-    # Compiles the in-node session receiver (USE_OCLEAN_CLOUD_RECEIVER) and pulls
-    # the esp_http_server idf component.
+    # Compiles the in-node session receiver (USE_OCLEAN_CLOUD_RECEIVER) on the
+    # web_server above.
     cloud_receiver: true
 
 # Every entity platform auto-creates its full entity set, so a bare platform

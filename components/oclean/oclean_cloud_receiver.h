@@ -4,15 +4,15 @@
 
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
 
+#include "esphome/components/web_server_base/web_server_base.h"
+
 namespace esphome::oclean {
 
 class OcleanHub;
 
-// Registers a hub with the node-level cloud receiver and starts the http server
-// on the hub's receiver port if one is not already listening there. Routing to
-// the hub is by the brush MAC in each request body, so several hubs can share
-// one server. Call once from the hub setup when the receiver is enabled.
-void cloud_receiver_register(OcleanHub *hub);
+// Attaches the cloud session receiver to the shared ESPHome web server (first
+// call) and registers the hub for MAC routing. Call once from the hub setup.
+void cloud_receiver_register(OcleanHub *hub, web_server_base::WebServerBase *base);
 
 }  // namespace esphome::oclean
 

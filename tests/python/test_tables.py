@@ -13,6 +13,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "components"))
 
+import esphome.config_validation as cv
 import oclean as oc
 import oclean.binary_sensor as ocbs
 import oclean.button as ocbtn
@@ -276,6 +277,42 @@ class BlufiWifi(unittest.TestCase):
     def test_nothing_configured(self):
         self.assertEqual(oc.resolve_blufi_wifi(None, None, None), ("", ""))
         self.assertEqual(oc.resolve_blufi_wifi(None, None, {"networks": []}), ("", ""))
+
+
+class BlufiSsidAvailable(unittest.TestCase):
+    def _check(self, provisioning, wifi_config):
+        hub = {oc.CONF_ID: "x20", oc.CONF_WIFI_PROVISIONING: provisioning}
+        oc._blufi_ssid_available(hub, wifi_config)
+
+    def test_provisioning_without_any_ssid_fails(self):
+        with self.assertRaises(cv.Invalid):
+            self._check(True, None)
+
+    def test_the_node_wifi_is_enough(self):
+        self._check(True, {"networks": [{"ssid": "home"}]})
+
+    def test_no_provisioning_needs_nothing(self):
+        self._check(False, None)
+
+
+class CloudReceiverWebServer(unittest.TestCase):
+    # The receiver reuses web_server_base, so a web_server must be configured.
+    def _check(self, cloud_receiver, with_web_server):
+        hub = {oc.CONF_ID: "x20", oc.CONF_CLOUD_RECEIVER: cloud_receiver}
+        full = {oc.DOMAIN: [hub]}
+        if with_web_server:
+            full["web_server"] = {"port": 80}
+        oc._cloud_receiver_needs_web_server(hub, full)
+
+    def test_receiver_with_web_server_ok(self):
+        self._check(True, True)
+
+    def test_receiver_without_web_server_fails(self):
+        with self.assertRaises(cv.Invalid):
+            self._check(True, False)
+
+    def test_no_receiver_needs_nothing(self):
+        self._check(False, False)
 
 
 if __name__ == "__main__":

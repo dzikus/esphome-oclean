@@ -56,7 +56,9 @@ class OcleanHub : public ble_client::BLEClientNode,
 {
  public:
   void setup() override;
+#ifdef USE_OCLEAN_CLOUD_RECEIVER
   void loop() override;
+#endif
   void update() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
@@ -186,21 +188,18 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_blufi_ssid(const std::string &s) { this->blufi_ssid_ = s; }
   void set_blufi_password(const std::string &s) { this->blufi_password_ = s; }
 #endif
-  // port the in-node session receiver listens on; the point-at-node button
-  // writes http://<node ip>:<port> as the cloud host
+  // the port point_cloud_at_node writes while cloud_receiver is off; with it on,
+  // the receiver shares the web server and its port
   void set_cloud_receiver_port(uint16_t p) { this->cloud_receiver_port_ = p; }
 
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
   void set_cloud_receiver_enabled(bool en) { this->cloud_receiver_enabled_ = en; }
   bool cloud_receiver_enabled() const { return this->cloud_receiver_enabled_; }
-  uint16_t cloud_receiver_port() const { return this->cloud_receiver_port_; }
   uint64_t brush_address() const { return this->parent_ != nullptr ? this->parent_->get_address() : 0; }
-  // Called from the http server task. enqueue_cloud_record hands a decoded
-  // record to the main loop; cloud_record_captured reports whether an epoch has
-  // already been published, so the handler acks only what is safe to erase.
+  // http server task -> main loop; captured gates the record-erasing ack
   void enqueue_cloud_record(const SessionRecord &rec, uint32_t epoch);
   bool cloud_record_captured(uint32_t epoch);
-  // node wall clock as a UTC epoch for the brush's currentTime, 0 when unsynced
+  // UTC epoch for the brush's currentTime, 0 when unsynced
   int64_t cloud_now_epoch();
 #endif
 
@@ -237,8 +236,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   void apply_cloud_host();
   void clear_cloud_host();
 
-  // Writes http://<this node's IPv4>:<cloud_receiver_port> as the cloud host, so
-  // the brush uploads to a receiver on this node. Warns if no address is up yet.
+  // Writes http://<this node's IPv4>:<port> as the cloud host, so the brush
+  // uploads to this node: the web server's port with cloud_receiver on, else
+  // cloud_receiver_port. Warns if no address is up yet.
   void point_cloud_at_node();
 
 #ifdef USE_OCLEAN_BLUFI
@@ -347,9 +347,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   void ingest_session_records_(const std::vector<SessionRecord> &records, const uint8_t *newest_raw,
                                size_t newest_raw_len);
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
-  // One cloud-uploaded record through the same plausibility, dedup, watermark
-  // and persistence as a BLE ring, minus the BLE-only confirm write, enrichment
-  // wait and whole-ring republish. Runs on the main loop.
+  // one cloud record through the BLE ingest path, minus the BLE-only tail
   void ingest_cloud_record_(const SessionRecord &rec);
   void cloud_remember_(uint32_t epoch);
 #endif
@@ -560,11 +558,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   std::vector<OcleanSessionTrigger *> session_triggers_{};
 
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
-  // In-node http receiver for cloud session uploads (X Ultra 20). The server
-  // runs on its own FreeRTOS task, so records cross to the main loop through a
-  // mutex-guarded queue; cloud_captured_ gates the ack that erases the brush's
-  // copy, so only a published record is acked. RAM only: after a reboot a record
-  // is published once more, which the persisted watermark then dedups.
+  // web server task fills cloud_inbound_, the main loop drains it; cloud_captured_
+  // (RAM only) gates the record-erasing ack
   bool cloud_receiver_enabled_{false};
   Mutex cloud_mutex_;
   std::vector<SessionRecord> cloud_inbound_;

@@ -62,14 +62,16 @@ MODEL_X_PRO_ELITE = "x_pro_elite"
 MODEL_X_ULTRA_20 = "x_ultra_20"
 DEFAULT_MODEL = MODEL_X_PRO_ELITE
 
-# Port the in-node session receiver listens on. The point-cloud-at-node button
-# writes http://<node ip>:<this port> as the X Ultra 20 cloud host.
+# The port point_cloud_at_node writes into the X Ultra 20 cloud host while
+# cloud_receiver is off. With it on, the receiver shares the web server, so the
+# button takes that server's port instead.
 CONF_CLOUD_RECEIVER_PORT = "cloud_receiver_port"
 DEFAULT_CLOUD_RECEIVER_PORT = 8099
 
-# In-node http receiver for the brush's cloud session uploads. Off unless set
-# true, and the C++ and the esp_http_server dependency are not compiled in
-# otherwise (USE_OCLEAN_CLOUD_RECEIVER).
+# In-node http receiver for the brush's cloud session uploads. It reuses the
+# shared ESPHome web server (web_server_base), so a web_server must be
+# configured. Off unless set true; the C++ is not compiled in otherwise
+# (USE_OCLEAN_CLOUD_RECEIVER).
 CONF_CLOUD_RECEIVER = "cloud_receiver"
 
 # BluFi Wi-Fi provisioning is off unless this is set true, and the C++ for it is
@@ -601,30 +603,43 @@ def _warn_on_shared_default_names(config):
     return config
 
 
-def _blufi_ssid_available(full):
+def _blufi_ssid_available(config, wifi_config):
     # With wifi_provisioning on, there must be an SSID to send: the hub's
     # wifi_ssid, or a wifi: network to fall back on. A node on Ethernet has
     # neither unless wifi_ssid is set, so require it here rather than ship a
     # provision button that can only warn at runtime.
-    wifi_config = full.get("wifi")
-    for hub in full.get(DOMAIN, []):
-        if not hub.get(CONF_WIFI_PROVISIONING):
-            continue
-        ssid, _password = resolve_blufi_wifi(
-            hub.get(CONF_WIFI_SSID), hub.get(CONF_WIFI_PASSWORD), wifi_config
+    if not config.get(CONF_WIFI_PROVISIONING):
+        return
+    ssid, _password = resolve_blufi_wifi(
+        config.get(CONF_WIFI_SSID), config.get(CONF_WIFI_PASSWORD), wifi_config
+    )
+    if not ssid:
+        raise cv.Invalid(
+            f"oclean '{config[CONF_ID]}' has {CONF_WIFI_PROVISIONING}: true but no "
+            f"Wi-Fi SSID to send. Set {CONF_WIFI_SSID} on the hub; this node has "
+            f"no wifi: network to fall back on.",
+            path=[CONF_WIFI_PROVISIONING],
         )
-        if not ssid:
-            raise cv.Invalid(
-                f"oclean '{hub[CONF_ID]}' has {CONF_WIFI_PROVISIONING}: true but no "
-                f"Wi-Fi SSID to send. Set {CONF_WIFI_SSID} on the hub; this node has "
-                f"no wifi: network to fall back on."
-            )
+
+
+def _cloud_receiver_needs_web_server(config, full):
+    # The receiver reuses the shared ESPHome web server (web_server_base) rather
+    # than starting its own, so a web_server must be configured on the node.
+    if config.get(CONF_CLOUD_RECEIVER) and "web_server" not in full:
+        raise cv.Invalid(
+            f"oclean '{config[CONF_ID]}' has {CONF_CLOUD_RECEIVER}: true, which "
+            f"serves the brush uploads on the node's web server. Add a "
+            f"web_server: block (the receiver reuses it, not a second server).",
+            path=[CONF_CLOUD_RECEIVER],
+        )
 
 
 def _final_validate(config):
+    full = fv.full_config.get()
     _one_hub_per_ble_client(config)
     _warn_if_session_events_unavailable(config)
-    _blufi_ssid_available(fv.full_config.get())
+    _blufi_ssid_available(config, full.get("wifi"))
+    _cloud_receiver_needs_web_server(config, full)
     return _warn_on_shared_default_names(config)
 
 
@@ -655,11 +670,7 @@ async def to_code(config):
     )
     cg.add(var.set_cloud_receiver_port(config[CONF_CLOUD_RECEIVER_PORT]))
     if config[CONF_CLOUD_RECEIVER]:
-        # compiles the receiver in and pulls the esp_http_server idf component
-        from esphome.components.esp32 import include_builtin_idf_component
-
         cg.add_define("USE_OCLEAN_CLOUD_RECEIVER")
-        include_builtin_idf_component("esp_http_server")
         cg.add(var.set_cloud_receiver_enabled(True))
     if config[CONF_WIFI_PROVISIONING]:
         cg.add_define("USE_OCLEAN_BLUFI")

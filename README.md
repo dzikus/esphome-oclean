@@ -275,8 +275,8 @@ Set on the `oclean:` entry, not on the platforms.
 | `expose_dev_sensors` | bool | `false` | Creates the dev entities of the hub's model (see the per-platform tables) and logs the brush's GATT services and characteristics on each connect. |
 | `read_only` | bool | `false` | The brush only receives the profile's `03` read queries; the X Ultra 20's Wi-Fi check `02 34` is held back too. Every write is refused and logged: controls, clock sync, `0202`. |
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
-| `cloud_receiver_port` | int 1-65535 | `8099` | Port the `point_cloud_at_node` button puts in the host URL (`http://<node ip>:<port>`), and the port the `cloud_receiver` server listens on. X Ultra 20 only. |
-| `cloud_receiver` | bool | `false` | Runs an HTTP server on the node that receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. The server and its `esp_http_server` dependency are not compiled in unless this is true. Needs the brush pointed at the node (`point_cloud_at_node`) and able to reach it over the network. See **In-node session receiver**. |
+| `cloud_receiver_port` | int 1-65535 | `8099` | Port the `point_cloud_at_node` button puts in the host URL when `cloud_receiver` is off. With `cloud_receiver` on, the receiver rides on the web server, so the button uses the web server's port instead. X Ultra 20 only. |
+| `cloud_receiver` | bool | `false` | Receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. It does **not** start its own server: it registers a handler on the shared ESPHome web server, so a `web_server:` must be configured (validation requires it) and the uploads arrive on the web server's port. The code is not compiled in unless this is true. Needs the brush pointed at the node (`point_cloud_at_node`) and able to reach it over the network. See **In-node session receiver**. |
 | `wifi_provisioning` | bool | `false` | Enables BluFi Wi-Fi provisioning (the `provision_wifi` button). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
 | `wifi_ssid` | string | the node's `wifi:` SSID | The network `provision_wifi` joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
 | `wifi_password` | string | the node's `wifi:` password | Passphrase for `wifi_ssid`. Needs `wifi_provisioning: true`. Baked into the firmware, not an entity, so it never reaches the recorder; use `!secret`. |
@@ -431,7 +431,7 @@ program wants four steps to keep the four-quadrant guidance.
 | `capture_sessions` | Capture sessions | session download + 30 s hold | **dev**; keeps the link open so the raw record stream lands in the log |
 | `apply_cloud_host` | Apply cloud host | writes `02 33` + url | X Ultra 20 only; opt-in; sends the `cloud_host` text to the brush |
 | `clear_cloud_host` | Clear cloud host | writes `02 33 2A 00 00` | X Ultra 20 only; opt-in; reverts the brush to its firmware default server |
-| `point_cloud_at_node` | Point cloud at this node | writes `02 33` + `http://<node ip>:<port>` | X Ultra 20 only; opt-in; fills the host with this node's own IPv4 and `cloud_receiver_port` |
+| `point_cloud_at_node` | Point cloud at this node | writes `02 33` + `http://<node ip>:<port>` | X Ultra 20 only; opt-in; fills the host with this node's own IPv4 and the receiver port (the web server's port when `cloud_receiver` is on, otherwise `cloud_receiver_port`) |
 | `provision_wifi` | Provision Wi-Fi | BluFi join with the configured SSID/password | X Ultra 20 only; needs `wifi_provisioning: true` (see **Hub options**); runs the BluFi sequence over service `0xFFFF` on the next connect |
 
 ### Entities (text)
@@ -456,17 +456,22 @@ options (see **Hub options**), baked into the firmware like the node's own
 
 On X Ultra 20 firmware the brushing score and the full per-session record never
 come over BLE; the brush only uploads them to its cloud host. `cloud_receiver:
-true` runs a small HTTP server on the node that stands in for that cloud: it
-takes the brush's `UploadBrushRecord`, decodes the record, and publishes the
-same session entities a BLE download would (score, durations, timestamp). A
-record is routed to the hub whose brush MAC matches the upload, so several hubs
-on one node share one server.
+true` stands in for that cloud: it takes the brush's `UploadBrushRecord`, decodes
+the record, and publishes the same session entities a BLE download would (score,
+durations, timestamp). A record is routed to the hub whose brush MAC matches the
+upload, so several hubs on one node share it.
+
+It does not start its own HTTP server. It registers a handler on the shared
+ESPHome web server (the one `web_server` and `captive_portal` use), so a
+`web_server:` must be configured and the brush uploads to that server's port
+(80 by default). Reusing the one server avoids a second listener competing for
+the device's limited sockets.
 
 Setup is three steps: `wifi_provisioning` to join the brush to a network,
-`point_cloud_at_node` to aim its cloud host at `http://<node ip>:<cloud_receiver_port>`,
-and a route that lets the brush reach the node (the brush and the node are often
-on different VLANs). The server is HTTP only; the brush accepts a plain `http://`
-host, and the node does not serve TLS.
+`point_cloud_at_node` to aim its cloud host at the node (it fills in the web
+server's port automatically), and a route that lets the brush reach the node
+(the brush and the node are often on different VLANs). The transport is HTTP
+only; the brush accepts a plain `http://` host, and the node does not serve TLS.
 
 The brush keeps a record until the server answers "ok", then drops it and sends
 the next. So the receiver answers "ok" only after a record has been published,

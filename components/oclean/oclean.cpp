@@ -28,6 +28,9 @@
 #ifdef USE_NETWORK
 #include "esphome/components/network/util.h"
 #endif
+#ifdef USE_OCLEAN_CLOUD_RECEIVER
+#include "esphome/components/web_server_base/web_server_base.h"
+#endif
 
 namespace esphome::oclean {
 
@@ -89,8 +92,10 @@ void OcleanHub::setup() {
   // static value, so once here instead of on every poll
   esphome::oclean::OcleanHub::publish_(this->mac_text_sensor_, std::string(this->parent_->address_str()));
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
-  if (this->cloud_receiver_enabled_)
-    cloud_receiver_register(this);
+  if (this->cloud_receiver_enabled_ && web_server_base::global_web_server_base != nullptr)
+    cloud_receiver_register(this, web_server_base::global_web_server_base);
+  // idle until enqueue_cloud_record wakes it
+  this->disable_loop();
 #endif
   // BLEClient sets up later (AFTER_BLUETOOTH) and leaves itself enabled, so a
   // plain set_enabled(false) here is overridden and the client auto-connects at
@@ -1825,7 +1830,13 @@ void OcleanHub::point_cloud_at_node() {
     ESP_LOGW(TAG, "[%s] point cloud at node: no IPv4 address up yet", this->parent_->address_str());
     return;
   }
-  std::string const url = "http://" + ip + ":" + std::to_string(this->cloud_receiver_port_);
+  // with the receiver on, the port is the web server's
+  uint16_t port = this->cloud_receiver_port_;
+#ifdef USE_OCLEAN_CLOUD_RECEIVER
+  if (this->cloud_receiver_enabled_ && web_server_base::global_web_server_base != nullptr)
+    port = web_server_base::global_web_server_base->get_port();
+#endif
+  std::string const url = "http://" + ip + ":" + std::to_string(port);
   if (!this->send_command(build_set_cloud_host_command(url), "cloud-host-node"))
     return;
 #ifdef USE_TEXT
@@ -1837,29 +1848,22 @@ void OcleanHub::point_cloud_at_node() {
 #endif
 }
 
-void OcleanHub::loop() {
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
-  if (!this->cloud_receiver_enabled_)
-    return;
-  // Records arrive on the http server task; publish them here, on the main loop.
+// ack ring covers the brush store (33); a full inbound queue means a re-upload
+static constexpr size_t CLOUD_CAPTURED_MAX = 48;
+static constexpr size_t CLOUD_INBOUND_MAX = 8;
+
+void OcleanHub::loop() {
   std::vector<SessionRecord> batch;
   {
     LockGuard const guard(this->cloud_mutex_);
-    if (this->cloud_inbound_.empty())
-      return;
     batch.swap(this->cloud_inbound_);
+    // under the lock, so a record queued after the swap wakes the loop again
+    this->disable_loop();
   }
   for (const SessionRecord &rec : batch)
     this->ingest_cloud_record_(rec);
-#endif
 }
-
-#ifdef USE_OCLEAN_CLOUD_RECEIVER
-// Bounds on the cross-task buffers: the ack ring need only cover the brush store
-// (33 records); a full inbound queue means the main loop is behind, so the brush
-// keeps the record and retries.
-static constexpr size_t CLOUD_CAPTURED_MAX = 48;
-static constexpr size_t CLOUD_INBOUND_MAX = 8;
 
 void OcleanHub::enqueue_cloud_record(const SessionRecord &rec, uint32_t epoch) {
   LockGuard const guard(this->cloud_mutex_);
@@ -1872,6 +1876,7 @@ void OcleanHub::enqueue_cloud_record(const SessionRecord &rec, uint32_t epoch) {
   if (this->cloud_inbound_.size() >= CLOUD_INBOUND_MAX)
     return;
   this->cloud_inbound_.push_back(rec);
+  this->enable_loop_soon_any_context();
 }
 
 bool OcleanHub::cloud_record_captured(uint32_t epoch) {
@@ -1892,7 +1897,7 @@ int64_t OcleanHub::cloud_now_epoch() {
 #ifdef USE_TIME
   if (this->time_ != nullptr) {
     ESPTime const utc = this->time_->utcnow();
-    // Unix epoch (UTC); the brush applies its own time zone to it
+    // UTC epoch; the brush applies its own tz
     if (utc.is_valid())
       return static_cast<int64_t>(utc.timestamp);
   }
@@ -1917,9 +1922,7 @@ void OcleanHub::ingest_cloud_record_(const SessionRecord &rec) {
     this->last_session_emitted_ = plan.new_watermark;
     this->session_wm_pref_.save(&this->last_session_emitted_);
   }
-  // live entities and persistence only for a genuinely newer record; an older
-  // backlog record stays history (the event above) and must not pull the shown
-  // session back in time
+  // newer record only: a backlog record must not pull the shown session back
   if (plan.have_newest && plan.persist_newest) {
     const SessionRecord &r = plan.newest;
     PersistedSession const ps{
