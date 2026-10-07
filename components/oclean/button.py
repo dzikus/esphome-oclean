@@ -46,6 +46,15 @@ OcleanSyncTimeButton = oclean_ns.class_(
 OcleanPollNowButton = oclean_ns.class_(
     "OcleanPollNowButton", button.Button, cg.Parented.template(OcleanHub)
 )
+OcleanApplyCloudHostButton = oclean_ns.class_(
+    "OcleanApplyCloudHostButton", button.Button, cg.Parented.template(OcleanHub)
+)
+OcleanClearCloudHostButton = oclean_ns.class_(
+    "OcleanClearCloudHostButton", button.Button, cg.Parented.template(OcleanHub)
+)
+OcleanPointCloudHereButton = oclean_ns.class_(
+    "OcleanPointCloudHereButton", button.Button, cg.Parented.template(OcleanHub)
+)
 
 # Dev-gated. Requests a buffered-session download and holds the link open so
 # the record stream can be captured into the log.
@@ -66,18 +75,38 @@ DEFAULT_SYNC_TIME_NAME = "Sync clock"
 CONF_POLL_NOW = "poll_now"
 DEFAULT_POLL_NOW_NAME = "Poll now"
 
+# X Ultra 20 only, opt-in: write the staged cloud-host text, or clear it back to
+# the firmware fallback. Both write to the brush.
+CONF_APPLY_CLOUD_HOST = "apply_cloud_host"
+DEFAULT_APPLY_CLOUD_HOST_NAME = "Apply cloud host"
+CONF_CLEAR_CLOUD_HOST = "clear_cloud_host"
+DEFAULT_CLEAR_CLOUD_HOST_NAME = "Clear cloud host"
+CONF_POINT_CLOUD_AT_NODE = "point_cloud_at_node"
+DEFAULT_POINT_CLOUD_AT_NODE_NAME = "Point cloud at this node"
+
 
 _DEFAULT_NAMES = [
     (CONF_CAPTURE_SESSIONS, DEFAULT_CAPTURE_NAME),
     (CONF_RESET_HEAD, DEFAULT_RESET_HEAD_NAME),
     (CONF_SYNC_TIME, DEFAULT_SYNC_TIME_NAME),
     (CONF_POLL_NOW, DEFAULT_POLL_NOW_NAME),
+    (CONF_APPLY_CLOUD_HOST, DEFAULT_APPLY_CLOUD_HOST_NAME),
+    (CONF_CLEAR_CLOUD_HOST, DEFAULT_CLEAR_CLOUD_HOST_NAME),
+    (CONF_POINT_CLOUD_AT_NODE, DEFAULT_POINT_CLOUD_AT_NODE_NAME),
 ]
+
+_OPT_IN = frozenset(
+    {CONF_APPLY_CLOUD_HOST, CONF_CLEAR_CLOUD_HOST, CONF_POINT_CLOUD_AT_NODE}
+)
 
 
 def _inject_defaults(config):
     return inject_entity_defaults(
-        config, _DEFAULT_NAMES, hidden=frozenset({CONF_POLL_NOW}), platform="button"
+        config,
+        _DEFAULT_NAMES,
+        hidden=frozenset({CONF_POLL_NOW}),
+        opt_in=_OPT_IN,
+        platform="button",
     )
 
 
@@ -105,6 +134,21 @@ CONFIG_SCHEMA = cv.All(
                 OcleanPollNowButton,
                 icon="mdi:refresh",
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_APPLY_CLOUD_HOST): button.button_schema(
+                OcleanApplyCloudHostButton,
+                icon="mdi:cloud-upload-outline",
+                entity_category=ENTITY_CATEGORY_CONFIG,
+            ),
+            cv.Optional(CONF_CLEAR_CLOUD_HOST): button.button_schema(
+                OcleanClearCloudHostButton,
+                icon="mdi:cloud-off-outline",
+                entity_category=ENTITY_CATEGORY_CONFIG,
+            ),
+            cv.Optional(CONF_POINT_CLOUD_AT_NODE): button.button_schema(
+                OcleanPointCloudHereButton,
+                icon="mdi:cloud-sync-outline",
+                entity_category=ENTITY_CATEGORY_CONFIG,
             ),
         }
     ),
@@ -138,3 +182,9 @@ async def to_code(config):
     if sub is not None:
         btn = await button.new_button(sub)
         await cg.register_parented(btn, hub)
+
+    for key in (CONF_APPLY_CLOUD_HOST, CONF_CLEAR_CLOUD_HOST, CONF_POINT_CLOUD_AT_NODE):
+        sub = config.get(key)
+        if sub is not None:
+            btn = await button.new_button(sub)
+            await cg.register_parented(btn, hub)

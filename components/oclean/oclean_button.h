@@ -36,6 +36,25 @@ class OcleanPollNowButton : public button::Button, public Parented<OcleanHub> {
   void press_action() override { this->parent_->trigger_immediate_poll(); }
 };
 
+// Writes the staged cloud-host text to the brush (X Ultra 20).
+class OcleanApplyCloudHostButton : public button::Button, public Parented<OcleanHub> {
+ public:
+  void press_action() override { this->parent_->apply_cloud_host(); }
+};
+
+// Reverts the brush to its firmware fallback server.
+class OcleanClearCloudHostButton : public button::Button, public Parented<OcleanHub> {
+ public:
+  void press_action() override { this->parent_->clear_cloud_host(); }
+};
+
+// Points the cloud host at a receiver on this node (its own IP and the
+// configured receiver port).
+class OcleanPointCloudHereButton : public button::Button, public Parented<OcleanHub> {
+ public:
+  void press_action() override { this->parent_->point_cloud_at_node(); }
+};
+
 }  // namespace esphome::oclean
 
 #endif  // USE_ESP32 && USE_BUTTON

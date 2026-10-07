@@ -73,6 +73,7 @@ static const uint8_t V20_WRITE_OPCODES[][2] = {
     {0x02, 0x0B},  // brushing program, second frame
     {0x02, 0x30},  // voice teaching
     {0x02, 0xA0},  // retail display mode
+    {0x02, 0x33},  // cloud host upload server
 };
 
 // === UNKNOWN query sequence ===

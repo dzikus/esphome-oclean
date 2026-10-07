@@ -883,6 +883,15 @@ std::vector<std::vector<uint8_t>> build_scheme_packets(uint8_t pnum, const std::
   return packets;
 }
 
+std::vector<uint8_t> build_set_cloud_host_command(std::string_view url) {
+  // one-byte length field; clamp to the firmware limit in case called unchecked
+  url = url.substr(0, CLOUD_HOST_MAX_LEN);
+  auto const n = static_cast<uint8_t>(url.size());
+  std::vector<uint8_t> cmd = {0x02, 0x33, 0x2A, n, n};
+  cmd.insert(cmd.end(), url.begin(), url.end());
+  return cmd;
+}
+
 std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute,
                                              uint8_t second, uint8_t weekday, uint8_t tz_index) {
   // year is sent as the offset from 2000. Clamp below 2000 to 0 so the byte

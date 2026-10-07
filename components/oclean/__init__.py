@@ -62,6 +62,11 @@ MODEL_X_PRO_ELITE = "x_pro_elite"
 MODEL_X_ULTRA_20 = "x_ultra_20"
 DEFAULT_MODEL = MODEL_X_PRO_ELITE
 
+# Port the in-node session receiver listens on. The point-cloud-at-node button
+# writes http://<node ip>:<this port> as the X Ultra 20 cloud host.
+CONF_CLOUD_RECEIVER_PORT = "cloud_receiver_port"
+DEFAULT_CLOUD_RECEIVER_PORT = 8099
+
 _ZONE_KEYS = frozenset(f"gesture_zone_{i + 1}" for i in range(8))
 # session record order, bytes 19-22
 QUADRANT_POSITIONS = ("upper_left", "lower_left", "upper_right", "lower_right")
@@ -80,6 +85,11 @@ _X_ULTRA_20_FLAG_KEYS = frozenset(
     }
 )
 _HEAD_COUNTER_KEYS = frozenset({"head_used_time", "head_used_days", "head_used_times"})
+# X Ultra 20 only: cloud host and Wi-Fi provisioning, all writes to the brush.
+_X_ULTRA_20_TEXT_KEYS = frozenset({"cloud_host"})
+_X_ULTRA_20_CLOUD_BUTTON_KEYS = frozenset(
+    {"apply_cloud_host", "clear_cloud_host", "point_cloud_at_node"}
+)
 
 # Highest gear a program step may use; the firmware's motor tables end there.
 GEAR_MAX = {MODEL_X_PRO_ELITE: 41, MODEL_X_ULTRA_20: 54}
@@ -110,6 +120,8 @@ MODEL_ENTITY_SETS = {
                     "demo_mode",
                 }
             ),
+            "text": _X_ULTRA_20_TEXT_KEYS,
+            "button": _X_ULTRA_20_CLOUD_BUTTON_KEYS,
         },
         "dev": {
             "switch": frozenset({"area_reminder", "brush_pause", "brush_mode"}),
@@ -427,6 +439,9 @@ CONFIG_SCHEMA = cv.All(
                 CONF_CHARGING_INTERVAL, default="600s"
             ): _min_interval_validator(CONF_CHARGING_INTERVAL),
             cv.Optional(CONF_HOLD_CONNECTION_WHILE_DOCKED, default=True): cv.boolean,
+            cv.Optional(
+                CONF_CLOUD_RECEIVER_PORT, default=DEFAULT_CLOUD_RECEIVER_PORT
+            ): cv.port,
             cv.Optional(CONF_NAME_PREFIX): cv.All(
                 cv.string_strict, cv.Length(max=48), _validate_name_prefix
             ),
@@ -454,7 +469,7 @@ CONFIG_SCHEMA = cv.All(
     _validate_auto_sync_time,
     _validate_adaptive_poll,
     _validate_name_prefix_is_reachable,
-    cv.require_esphome_version(2026, 1, 0),
+    cv.require_esphome_version(2026, 2, 0),
 )
 
 
@@ -563,6 +578,7 @@ async def to_code(config):
     cg.add(
         var.set_hold_connection_while_docked(config[CONF_HOLD_CONNECTION_WHILE_DOCKED])
     )
+    cg.add(var.set_cloud_receiver_port(config[CONF_CLOUD_RECEIVER_PORT]))
     cg.add(var.set_model(config[CONF_MODEL]))
     cg.add(var.set_expose_dev_sensors(config[CONF_EXPOSE_DEV_SENSORS]))
     cg.add(var.set_read_only(config[CONF_READ_ONLY]))

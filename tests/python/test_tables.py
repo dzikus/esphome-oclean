@@ -20,6 +20,7 @@ import oclean.number as ocnum
 import oclean.select as ocsel
 import oclean.sensor as ocsens
 import oclean.switch as ocsw
+import oclean.text as octext
 import oclean.text_sensor as octs
 
 PLATFORMS = {
@@ -30,6 +31,7 @@ PLATFORMS = {
     "select": ocsel,
     "number": ocnum,
     "button": ocbtn,
+    "text": octext,
 }
 
 

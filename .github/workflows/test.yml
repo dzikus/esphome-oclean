@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 permissions: {}
 env:
-  ESPHOME_FLOOR: "2026.1.0"
+  ESPHOME_FLOOR: "2026.2.0"
 concurrency:
   group: tests-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

@@ -38,6 +38,10 @@
   are not built; firmware 0.0.1.6 never fills them. A fast-brushing or
   over-pressure voice flag is refused while voice prompts are off, as the brush
   would drop it.
+- X Ultra 20: an opt-in `cloud_host` text with Apply and Clear buttons sets the
+  server the brush uploads to (`0233`), or clears it back to the firmware
+  default. The firmware has no read-back, so the text shows the last value
+  written, not the brush's own.
 - The X Pro 20 (`OCLEANX20`) and the first X Ultra (`OCLEANV1*`) use the X
   Ultra 20 reply formats instead of TYPE1.
 

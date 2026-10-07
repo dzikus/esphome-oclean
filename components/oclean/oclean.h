@@ -41,6 +41,7 @@ class OcleanSchemeSelect;
 class OcleanLanguageSelect;
 class OcleanHeadMaxNumber;
 class OcleanSyncTimeButton;
+class OcleanStoredText;
 
 // Connect-poll-disconnect: the brush streams nothing live, it buffers sessions
 // and hands them over on request, so the link stays down between polls and the
@@ -177,6 +178,10 @@ class OcleanHub : public ble_client::BLEClientNode,
   }
   void set_scheme_select(OcleanSchemeSelect *s) { this->scheme_select_ = s; }
   void set_language_select(OcleanLanguageSelect *s) { this->language_select_ = s; }
+  void set_cloud_host_text(OcleanStoredText *t) { this->cloud_host_text_ = t; }
+  // port the in-node session receiver listens on; the point-at-node button
+  // writes http://<node ip>:<port> as the cloud host
+  void set_cloud_receiver_port(uint16_t p) { this->cloud_receiver_port_ = p; }
 
   // resend reprograms the brush, debounced, but only while custom is selected
   void set_custom_scheme_param(uint8_t kind, uint8_t index, uint8_t value, bool resend);
@@ -205,6 +210,15 @@ class OcleanHub : public ble_client::BLEClientNode,
   // False, with a warning, for an id past what this brush's firmware has: the
   // brush would switch to English instead.
   bool language_available(uint8_t id);
+
+  // Writes the staged cloud-host text (empty clears to the firmware fallback).
+  // X Ultra 20 only; a no-op with a warning without the text platform or entity.
+  void apply_cloud_host();
+  void clear_cloud_host();
+
+  // Writes http://<this node's IPv4>:<cloud_receiver_port> as the cloud host, so
+  // the brush uploads to a receiver on this node. Warns if no address is up yet.
+  void point_cloud_at_node();
 
  protected:
   // per-cycle flags plus the watchdog, for a link that is already up.
@@ -407,11 +421,13 @@ class OcleanHub : public ble_client::BLEClientNode,
   OcleanCommandSwitch *brush_mode_switch_{nullptr};
   OcleanSchemeSelect *scheme_select_{nullptr};
   OcleanLanguageSelect *language_select_{nullptr};
+  OcleanStoredText *cloud_host_text_{nullptr};
 
   State state_{State::IDLE};
   BrushModel model_{BrushModel::X_PRO_ELITE};
   bool expose_dev_sensors_{false};
   bool read_only_{false};
+  uint16_t cloud_receiver_port_{8099};
 
   // Handles resolved at SEARCH_CMPL for the characteristics this hub uses.
   uint16_t battery_handle_{0};

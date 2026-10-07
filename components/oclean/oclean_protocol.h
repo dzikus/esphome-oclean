@@ -518,6 +518,13 @@ uint8_t max_language_id(const char *model, size_t len);
 // one packet, or two when the program needs the 020B split
 std::vector<std::vector<uint8_t>> build_scheme_packets(uint8_t pnum, const std::vector<SchemeStep> &steps);
 
+// === X Ultra 20 cloud host (0233) ===
+// Server the brush uploads records to. Firmware cap 59 bytes, no read-back.
+// Frame: 02 33 2A [total_len][pkt_len] <ascii url>, the lengths equal for one
+// unfragmented packet; empty url writes 02 33 2A 00 00 (firmware falls back).
+static constexpr size_t CLOUD_HOST_MAX_LEN = 59;
+std::vector<uint8_t> build_set_cloud_host_command(std::string_view url);
+
 // === Set-clock (0201) ===
 //   02 01 [year-2000][month][day][hour][minute][second][weekday][tz_index]
 // Plain decimal per byte, not BCD (minute 30 -> 0x1E), device local wall-clock

@@ -714,6 +714,36 @@ void test_build_language_command() {
   TEST_ASSERT_EQUAL_UINT8_ARRAY(en_expected, en.data(), sizeof(en_expected));
 }
 
+void test_build_set_cloud_host_command() {
+  const std::string url = "http://10.0.0.5:8099";
+  auto cmd = build_set_cloud_host_command(url);
+  TEST_ASSERT_EQUAL_UINT(5 + url.size(), cmd.size());
+  TEST_ASSERT_EQUAL_UINT8(0x02, cmd[0]);
+  TEST_ASSERT_EQUAL_UINT8(0x33, cmd[1]);
+  TEST_ASSERT_EQUAL_UINT8(0x2A, cmd[2]);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(url.size()), cmd[3]);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(url.size()), cmd[4]);
+  auto *url_bytes = reinterpret_cast<const uint8_t *>(url.data());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(url_bytes, cmd.data() + 5, url.size());
+}
+
+void test_build_set_cloud_host_command_empty() {
+  // empty url writes the fallback trigger
+  auto cmd = build_set_cloud_host_command("");
+  const uint8_t expected[] = {0x02, 0x33, 0x2A, 0x00, 0x00};
+  TEST_ASSERT_EQUAL_UINT(sizeof(expected), cmd.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, cmd.data(), sizeof(expected));
+}
+
+void test_build_set_cloud_host_command_clamps_over_limit() {
+  // the one-byte length and the firmware's 59-byte store cap a longer url
+  const std::string url(80, 'a');
+  auto cmd = build_set_cloud_host_command(url);
+  TEST_ASSERT_EQUAL_UINT(5 + CLOUD_HOST_MAX_LEN, cmd.size());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CLOUD_HOST_MAX_LEN), cmd[3]);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CLOUD_HOST_MAX_LEN), cmd[4]);
+}
+
 void test_timezone_index_to_string() {
   // Wire index is 1-based into the 33-entry GMT table.
   TEST_ASSERT_EQUAL_STRING("GMT-12:00", timezone_index_to_string(1));
@@ -1546,25 +1576,27 @@ void test_command_permitted_v20_passes_only_listed_writes() {
   TEST_ASSERT_TRUE(command_permitted(false, p, voice, sizeof(voice)));
   const uint8_t head_reset[] = {0x02, 0x0F};
   TEST_ASSERT_TRUE(command_permitted(false, p, head_reset, sizeof(head_reset)));
-  // the store clear after an inline record, the program, teaching and retail
-  // writes
+  // the store clear after an inline record, the program, teaching, retail and
+  // cloud-host writes
   const uint8_t teaching[] = {0x02, 0x30, 0x01};
   const uint8_t scheme[] = {0x02, 0x06, 0x79, 0x01, 0x00, 0x2F, 0xB4, 0x00, 0x05};
   const uint8_t scheme_tail[] = {0x02, 0x0B, 0x00, 0x10, 0x1E, 0x00, 0x05};
   const uint8_t demo[] = {0x02, 0xA0, 0x01};
+  const uint8_t cloud_host[] = {0x02, 0x33, 0x2A, 0x01, 0x01, 0x68};
   TEST_ASSERT_TRUE(command_permitted(false, p, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
   TEST_ASSERT_TRUE(command_permitted(false, p, teaching, sizeof(teaching)));
   TEST_ASSERT_TRUE(command_permitted(false, p, scheme, sizeof(scheme)));
   TEST_ASSERT_TRUE(command_permitted(false, p, scheme_tail, sizeof(scheme_tail)));
   TEST_ASSERT_TRUE(command_permitted(false, p, demo, sizeof(demo)));
-  // firmware update, cloud and OTA hosts and factory reset stay out
-  const uint8_t service_url[] = {0x02, 0x33, 0x68};
+  TEST_ASSERT_TRUE(command_permitted(false, p, cloud_host, sizeof(cloud_host)));
+  // a read-only hub still refuses the cloud-host write
+  TEST_ASSERT_FALSE(command_permitted(true, p, cloud_host, sizeof(cloud_host)));
+  // firmware update, OTA host and factory reset stay out
   const uint8_t ota_url[] = {0x03, 0xA1, 0x68};
   const uint8_t factory_reset[] = {0x09, 0xED, 0xEF};
   const uint8_t clear_with_payload[] = {0x02, 0x02, 0x00};
   const uint8_t opcode_half[] = {0x02};
   TEST_ASSERT_FALSE(command_permitted(false, p, FORCE_UPDATE_CMD, sizeof(FORCE_UPDATE_CMD)));
-  TEST_ASSERT_FALSE(command_permitted(false, p, service_url, sizeof(service_url)));
   TEST_ASSERT_FALSE(command_permitted(false, p, ota_url, sizeof(ota_url)));
   TEST_ASSERT_FALSE(command_permitted(false, p, factory_reset, sizeof(factory_reset)));
   TEST_ASSERT_FALSE(command_permitted(false, p, clear_with_payload, sizeof(clear_with_payload)));
@@ -2195,6 +2227,9 @@ int main() {
   RUN_TEST(test_build_toggle_default_on_off);
   RUN_TEST(test_build_toggle_brush_mode_off_sentinel);
   RUN_TEST(test_build_language_command);
+  RUN_TEST(test_build_set_cloud_host_command);
+  RUN_TEST(test_build_set_cloud_host_command_empty);
+  RUN_TEST(test_build_set_cloud_host_command_clamps_over_limit);
   RUN_TEST(test_timezone_index_to_string);
   RUN_TEST(test_tz_index_for_offset_seconds);
   RUN_TEST(test_tz_index_offset_seconds_round_trips);

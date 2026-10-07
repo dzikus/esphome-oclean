@@ -275,6 +275,7 @@ Set on the `oclean:` entry, not on the platforms.
 | `expose_dev_sensors` | bool | `false` | Creates the dev entities of the hub's model (see the per-platform tables) and logs the brush's GATT services and characteristics on each connect. |
 | `read_only` | bool | `false` | The brush only receives the profile's `03` read queries; the X Ultra 20's Wi-Fi check `02 34` is held back too. Every write is refused and logged: controls, clock sync, `0202`. |
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
+| `cloud_receiver_port` | int 1-65535 | `8099` | Port the `point_cloud_at_node` button puts in the host URL (`http://<node ip>:<port>`). X Ultra 20 only; unused without that button. |
 
 The brushing-mode select additionally accepts `custom_modes` (a list of named
 programs); that option lives under the `select:` platform, not the hub. See
@@ -424,6 +425,22 @@ program wants four steps to keep the four-quadrant guidance.
 | `sync_time` | Sync clock | writes `02 01` + 8 bytes | created only when the hub has `time_id`; writes on press only |
 | `poll_now` | Poll now | immediate poll cycle | hidden by default; read-only on the brush |
 | `capture_sessions` | Capture sessions | session download + 30 s hold | **dev**; keeps the link open so the raw record stream lands in the log |
+| `apply_cloud_host` | Apply cloud host | writes `02 33` + url | X Ultra 20 only; opt-in; sends the `cloud_host` text to the brush |
+| `clear_cloud_host` | Clear cloud host | writes `02 33 2A 00 00` | X Ultra 20 only; opt-in; reverts the brush to its firmware default server |
+| `point_cloud_at_node` | Point cloud at this node | writes `02 33` + `http://<node ip>:<port>` | X Ultra 20 only; opt-in; fills the host with this node's own IPv4 and `cloud_receiver_port` |
+
+### Entities (text)
+
+Opt-in and X Ultra 20 only: list the key to create it.
+
+| Key | Default name | Effect | Notes |
+|---|---|---|---|
+| `cloud_host` | Cloud host | local store | the upload-server address written to the brush by `apply_cloud_host` (`02 33`); at most 59 bytes. The firmware has no read-back, so the field holds the last value written here, not the brush's own. |
+
+The brush takes `02 33` with no pairing, so treat it as a redirect, not a
+control. Point it at a server you run, and block the brush's internet on the
+router, to keep its uploads off the vendor cloud; with no Wi-Fi set the brush
+uploads nothing and this does not apply.
 
 ### Override per-entity
 
@@ -691,18 +708,20 @@ components/oclean/
   switch.py                command and voice switches + the local bluetooth switch
   number.py                head_max_minutes + 8 custom-program parameters
   select.py                scheme presets + custom modes, language table
-  button.py                capture / reset-head / sync-clock / poll-now
+  button.py                capture / reset-head / sync-clock / poll-now / cloud host
+  text.py                  cloud host (X Ultra 20, opt-in)
 
   oclean_protocol.{h,cpp}  pure C++: command table, session + settings
-                           assemblers, record decode, scheme/clock/toggle
-                           builders, adaptive-poll helpers
+                           assemblers, record decode, scheme/clock/toggle/
+                           cloud-host builders, adaptive-poll helpers
   oclean_profile.{h,cpp}   model-string to profile dispatch
   oclean.{h,cpp}           OcleanHub: BLE client node + PollingComponent +
                            poll state machine, NVS persistence
   oclean_switch.h          OcleanCommandSwitch / OcleanBleSwitch
   oclean_number.h          OcleanHeadMaxNumber / OcleanCustomParamNumber
-  oclean_button.h          the four button classes
+  oclean_button.h          the button classes
   oclean_select.h          OcleanSchemeSelect / OcleanLanguageSelect
+  oclean_text.h            OcleanStoredText
 ```
 
 `oclean_protocol.{h,cpp}` has no ESPHome dependencies and is what the

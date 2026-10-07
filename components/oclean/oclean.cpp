@@ -13,6 +13,9 @@
 #ifdef USE_NUMBER
 #include "oclean_number.h"
 #endif
+#ifdef USE_TEXT
+#include "oclean_text.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -21,6 +24,9 @@
 
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+#ifdef USE_NETWORK
+#include "esphome/components/network/util.h"
+#endif
 
 namespace esphome::oclean {
 
@@ -1753,6 +1759,56 @@ bool OcleanHub::set_voice_prompt(uint8_t index, bool on) {
   // a second toggle before the readback must build on this one, not undo it
   this->voice_prompts_[index] = on;
   return true;
+}
+
+void OcleanHub::apply_cloud_host() {
+#ifdef USE_TEXT
+  if (this->cloud_host_text_ == nullptr) {
+    ESP_LOGW(TAG, "[%s] apply cloud host: no cloud_host text configured", this->parent_->address_str());
+    return;
+  }
+  this->send_command(build_set_cloud_host_command(this->cloud_host_text_->state), "cloud-host-apply");
+#else
+  ESP_LOGW(TAG, "[%s] apply cloud host: text platform not built", this->parent_->address_str());
+#endif
+}
+
+void OcleanHub::clear_cloud_host() {
+#ifdef USE_TEXT
+  // blank the field only once the clear is queued, so it never shows empty while
+  // the brush still holds the old host
+  if (this->send_command(build_set_cloud_host_command(""), "cloud-host-clear") && this->cloud_host_text_ != nullptr)
+    this->cloud_host_text_->store_and_publish("");
+#else
+  ESP_LOGW(TAG, "[%s] clear cloud host: text platform not built", this->parent_->address_str());
+#endif
+}
+
+void OcleanHub::point_cloud_at_node() {
+#ifdef USE_NETWORK
+  std::string ip;
+  for (const auto &addr : network::get_ip_addresses()) {
+    if (addr.is_set() && addr.is_ip4()) {
+      char buf[network::IP_ADDRESS_BUFFER_SIZE];
+      addr.str_to(buf);
+      ip = buf;
+      break;
+    }
+  }
+  if (ip.empty()) {
+    ESP_LOGW(TAG, "[%s] point cloud at node: no IPv4 address up yet", this->parent_->address_str());
+    return;
+  }
+  std::string const url = "http://" + ip + ":" + std::to_string(this->cloud_receiver_port_);
+  if (!this->send_command(build_set_cloud_host_command(url), "cloud-host-node"))
+    return;
+#ifdef USE_TEXT
+  if (this->cloud_host_text_ != nullptr)
+    this->cloud_host_text_->store_and_publish(url);
+#endif
+#else
+  ESP_LOGW(TAG, "[%s] point cloud at node: firmware built without network", this->parent_->address_str());
+#endif
 }
 
 void OcleanHub::maybe_finish_poll_() {
