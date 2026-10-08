@@ -18,6 +18,10 @@ from esphome.core import CORE
 
 _LOGGER = logging.getLogger(__name__)
 
+# cv.sensitive (masked in config dumps) arrived in ESPHome 2026.6; older releases
+# validate the same values unmasked
+_sensitive = getattr(cv, "sensitive", lambda inner: inner)
+
 DOMAIN = "oclean"
 
 CODEOWNERS = ["@dzikus"]
@@ -583,12 +587,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_CLOUD_RECEIVER, default=False): cv.boolean,
             cv.Optional(CONF_CLOUD_DROP_FUTURE, default=True): cv.boolean,
             cv.Optional(CONF_WEATHER): _weather_entity,
-            cv.Optional(CONF_BIRTHDAY): cv.sensitive(_month_day),
-            cv.Optional(CONF_GENDER): cv.sensitive(_gender),
-            cv.Optional(CONF_AGE): cv.sensitive(_age),
+            cv.Optional(CONF_BIRTHDAY): _sensitive(_month_day),
+            cv.Optional(CONF_GENDER): _sensitive(_gender),
+            cv.Optional(CONF_AGE): _sensitive(_age),
             cv.Optional(CONF_WIFI_PROVISIONING, default=False): cv.boolean,
             cv.Optional(CONF_WIFI_SSID): cv.string,
-            cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
+            cv.Optional(CONF_WIFI_PASSWORD): _sensitive(cv.string),
             cv.Optional(CONF_NAME_PREFIX): cv.All(
                 cv.string_strict, cv.Length(max=48), _validate_name_prefix
             ),
