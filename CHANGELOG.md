@@ -49,6 +49,15 @@
   options (baked into the firmware, falling back to the node's own `wifi:`), not
   entities, so a Wi-Fi password never reaches the recorder. A `provision_wifi`
   button runs the join.
+- X Ultra 20: `weather: <weather entity>` answers the brush's weather request
+  through the session receiver, so its clock page shows the Home Assistant
+  condition, Today/Tomorrow and the day's low and high. The forecast needs the
+  node allowed to perform Home Assistant actions; without that the brush gets
+  the current condition and temperature.
+- X Ultra 20: birthday greeting buttons. Apply writes the `birthday` hub option
+  as the greeting date (`0211`) with the `gender` and `age` options, Clear
+  unsets it. All three are yaml options, not entities, so none of them reaches
+  the recorder; use `!secret`.
 - The ESPHome floor is now 2026.2.0 (the point-at-node button formats the
   node's own IP through the current network API).
 - The X Pro 20 (`OCLEANX20`) and the first X Ultra (`OCLEANV1*`) use the X
