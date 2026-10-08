@@ -304,6 +304,8 @@ programs); that option lives under the `select:` platform, not the hub. See
 
 Dock-aware adaptive polling is always on: the hub polls at `charging_interval`
 while the brush is docked and at `update_interval` while it is off the dock.
+The hub checks every `charging_interval`, so the off-dock gap is
+`update_interval` rounded to the nearest multiple of it.
 Dock presence (not the charge phase) selects the cadence, so a fully charged
 brush still on the dock keeps the fast cadence. With several hubs on one node
 the first poll of hub N is deferred by N * 90 s after boot so the cycles do not

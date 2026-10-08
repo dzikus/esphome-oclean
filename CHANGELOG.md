@@ -25,6 +25,10 @@
   next round.
 - Record packets that follow a count=0 header during a session log at debug
   level instead of a warning.
+- Polls come at the configured interval. The cadence counts from the moment
+  the brush connects, seconds after the check that started the poll, so each
+  poll used to slip one check: about 70 min off the dock and 20 min on it with
+  the defaults.
 - X Ultra 20 support (`model: x_ultra_20`): status, settings, clock, voice
   prompts, auto mode, holiday reminder, language and the other setting writes.
 - X Ultra 20: the record its count=0 reply carries, the oldest in its store,

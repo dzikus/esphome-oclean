@@ -1571,23 +1571,40 @@ void test_coverage_percent_zero_duration_is_nan() {
 // === Charging-aware adaptive poll cadence ===
 
 void test_poll_is_due_charging_uses_fast_interval() {
-  // On the dock the fast (charging) interval applies: not due before it, due at
-  // or after it, regardless of the longer battery interval.
+  // On the dock the fast (charging) interval applies, less half a tick (ticks
+  // come every charging interval), regardless of the longer battery interval.
   const uint32_t charging_ms = 600000;   // 10 min
   const uint32_t battery_ms = 14400000;  // 4 h
-  TEST_ASSERT_FALSE(poll_is_due(599999, true, charging_ms, battery_ms));
+  TEST_ASSERT_FALSE(poll_is_due(299999, true, charging_ms, battery_ms));
+  TEST_ASSERT_TRUE(poll_is_due(300000, true, charging_ms, battery_ms));
   TEST_ASSERT_TRUE(poll_is_due(600000, true, charging_ms, battery_ms));
-  TEST_ASSERT_TRUE(poll_is_due(700000, true, charging_ms, battery_ms));
 }
 
 void test_poll_is_due_off_dock_uses_slow_interval() {
   // Off the dock the slow (battery) interval applies: a gap that would already
-  // be due on the dock is still skipped, until the battery interval elapses.
+  // be due on the dock is still skipped, until the battery interval less half a
+  // tick elapses.
   const uint32_t charging_ms = 600000;
   const uint32_t battery_ms = 14400000;
   TEST_ASSERT_FALSE(poll_is_due(600000, false, charging_ms, battery_ms));
-  TEST_ASSERT_FALSE(poll_is_due(14399999, false, charging_ms, battery_ms));
-  TEST_ASSERT_TRUE(poll_is_due(14400000, false, charging_ms, battery_ms));
+  TEST_ASSERT_FALSE(poll_is_due(14099999, false, charging_ms, battery_ms));
+  TEST_ASSERT_TRUE(poll_is_due(14100000, false, charging_ms, battery_ms));
+  TEST_ASSERT_TRUE(poll_is_due(UINT32_MAX, false, charging_ms, battery_ms));
+}
+
+void test_plan_poll_tick_open_stamp_does_not_slip_a_tick() {
+  // The cadence restarts at OPEN, seconds after the tick that started the poll,
+  // so the tick one interval later sees a gap a little short of the interval.
+  // It must poll, not leave it to the tick after (70 min instead of 60).
+  PollTickState s = ready_tick_state();
+  s.last_poll_ms = s.now_ms - s.battery_interval_ms + 5000;
+  TEST_ASSERT_EQUAL(PollAction::POLL, plan_poll_tick(s).action);
+  s.docked = true;
+  s.last_poll_ms = s.now_ms - s.charging_interval_ms + 5000;
+  TEST_ASSERT_EQUAL(PollAction::POLL, plan_poll_tick(s).action);
+  // a poll stamped just under half a tick ago still holds the next one off
+  s.last_poll_ms = s.now_ms - (s.charging_interval_ms / 2 - 1);
+  TEST_ASSERT_EQUAL(PollAction::SKIP_NOT_DUE, plan_poll_tick(s).action);
 }
 
 // === Runtime profile selection ===
@@ -2610,6 +2627,7 @@ int main() {
   RUN_TEST(test_plan_poll_tick_off_dock_waits_for_slow_interval);
   RUN_TEST(test_plan_poll_tick_boot_stagger_defers_once);
   RUN_TEST(test_plan_poll_tick_pending_poll_bypasses_cadence);
+  RUN_TEST(test_plan_poll_tick_open_stamp_does_not_slip_a_tick);
   RUN_TEST(test_plan_ingest_sorts_new_records_oldest_first);
   RUN_TEST(test_plan_ingest_skips_at_or_below_watermark);
   RUN_TEST(test_plan_ingest_future_record_never_moves_watermark);

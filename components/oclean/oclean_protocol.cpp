@@ -388,7 +388,11 @@ uint32_t shift_epoch_back(uint32_t epoch, int64_t shift_s) {
 }
 
 bool poll_is_due(uint32_t since_ms, bool docked, uint32_t charging_interval_ms, uint32_t battery_interval_ms) {
-  return since_ms >= (docked ? charging_interval_ms : battery_interval_ms);
+  // ticks come every charging interval and the cadence restarts at OPEN, seconds
+  // after its tick: without half a tick of slack each poll would slip one tick
+  uint32_t const interval = docked ? charging_interval_ms : battery_interval_ms;
+  uint32_t const slack = charging_interval_ms / 2;
+  return since_ms >= (interval > slack ? interval - slack : 0);
 }
 
 bool should_hold_link(bool hold_option, bool ble_enabled, bool docked, bool round_status_seen) {
