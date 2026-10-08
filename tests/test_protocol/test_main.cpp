@@ -869,6 +869,19 @@ void test_sync_fingerprint() {
   TEST_ASSERT_EQUAL_UINT32(0x462A7C27U, sync_fingerprint(0, SyncSlot::BIRTHDAY, nullptr, 0));
 }
 
+void test_sync_attempt_due() {
+  uint32_t const fp = 0x1234;
+  // confirmed: never again
+  TEST_ASSERT_FALSE(sync_attempt_due(fp, fp, fp, SYNC_RETRY_MS, true));
+  // not tried since boot, or the value changed: now
+  TEST_ASSERT_TRUE(sync_attempt_due(fp, 0, 0, 0, false));
+  TEST_ASSERT_TRUE(sync_attempt_due(fp, 0x9999, 0x9999, 0, false));
+  // tried and still unconfirmed: once a day with retry, never without
+  TEST_ASSERT_FALSE(sync_attempt_due(fp, 0, fp, SYNC_RETRY_MS - 1, true));
+  TEST_ASSERT_TRUE(sync_attempt_due(fp, 0, fp, SYNC_RETRY_MS, true));
+  TEST_ASSERT_FALSE(sync_attempt_due(fp, 0, fp, SYNC_RETRY_MS, false));
+}
+
 void test_cloud_host_matches() {
   // the brush leaves the port out of the Host header for 80
   TEST_ASSERT_TRUE(cloud_host_matches("192.0.2.10", "http://192.0.2.10:80"));
@@ -2564,6 +2577,7 @@ int main() {
   RUN_TEST(test_parse_mac_u64);
   RUN_TEST(test_build_birthday_command);
   RUN_TEST(test_sync_fingerprint);
+  RUN_TEST(test_sync_attempt_due);
   RUN_TEST(test_cloud_host_matches);
   RUN_TEST(test_brush_weather_code);
   RUN_TEST(test_parse_iso8601_epoch);

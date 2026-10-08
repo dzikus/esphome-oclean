@@ -137,16 +137,23 @@ void OcleanHub::dump_config() {
   auto confirmed = [this](SyncSlot slot) {
     return this->synced_.fp[static_cast<size_t>(slot)] != 0 ? "confirmed by the brush" : "not confirmed yet";
   };
-  if (this->birthday_month_ != BIRTHDAY_UNSET)
+  bool keeps = this->birthday_month_ != BIRTHDAY_UNSET;
+  if (keeps)
     ESP_LOGCONFIG(TAG, "  Birthday greeting: set, %s", confirmed(SyncSlot::BIRTHDAY));
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
-  if (this->cloud_receiver_enabled_)
+  if (this->cloud_receiver_enabled_) {
+    keeps = true;
     ESP_LOGCONFIG(TAG, "  Cloud host: this node, %s", confirmed(SyncSlot::CLOUD_HOST));
+  }
 #endif
 #ifdef USE_OCLEAN_BLUFI
-  if (!this->blufi_ssid_.empty())
+  if (!this->blufi_ssid_.empty()) {
+    keeps = true;
     ESP_LOGCONFIG(TAG, "  Wi-Fi: '%s', %s", this->blufi_ssid_.c_str(), confirmed(SyncSlot::WIFI));
+  }
 #endif
+  if (keeps)
+    ESP_LOGCONFIG(TAG, "  Retry unconfirmed values: %s", this->retry_unconfirmed_ ? "daily" : "once per boot");
   // Active protocol profile: the default until the first poll reads the DIS
   // model string and selects the per-device profile.
   ESP_LOGCONFIG(TAG, "  Profile: %s (confidence %u)", this->profile_->name, (unsigned)this->profile_->confidence);
@@ -1751,7 +1758,7 @@ bool OcleanHub::handle_status_reply_(const uint8_t *data, size_t len) {
   // The flag sits in the brush's NVS, so 0 means its Wi-Fi is gone (a factory
   // reset): what the hub confirmed no longer holds, provision again.
   if (data[0] == 0x02 && data[1] == 0x34 && !on && this->synced_.fp[static_cast<size_t>(SyncSlot::WIFI)] != 0) {
-    this->blufi_tried_fp_ = 0;
+    this->sync_attempt_fp_[static_cast<size_t>(SyncSlot::WIFI)] = 0;
     this->store_synced_(SyncSlot::WIFI, 0, "Wi-Fi");
   }
 #endif
@@ -1843,6 +1850,18 @@ void OcleanHub::store_synced_(SyncSlot slot, uint32_t fp, const char *what) {
   }
 }
 
+bool OcleanHub::sync_due_(SyncSlot slot, uint32_t fp) const {
+  auto const i = static_cast<size_t>(slot);
+  return sync_attempt_due(fp, this->synced_.fp[i], this->sync_attempt_fp_[i], millis() - this->sync_attempt_ms_[i],
+                          this->retry_unconfirmed_);
+}
+
+void OcleanHub::note_sync_attempt_(SyncSlot slot, uint32_t fp) {
+  auto const i = static_cast<size_t>(slot);
+  this->sync_attempt_fp_[i] = fp;
+  this->sync_attempt_ms_[i] = millis();
+}
+
 void OcleanHub::queue_value_sync_() {
   this->sync_sent_ = {};
   if (this->read_only_ || !this->ble_user_enabled_ || !kept_values_permitted(*this->profile_))
@@ -1850,7 +1869,7 @@ void OcleanHub::queue_value_sync_() {
   // pushed straight into this round's queue: send_command would kick the link
   auto queue = [this](SyncSlot slot, uint32_t fp, std::vector<uint8_t> bytes, const char *name) {
     auto const i = static_cast<size_t>(slot);
-    if (fp == this->synced_.fp[i] || (slot == SyncSlot::CLOUD_HOST && fp == this->cloud_host_written_fp_))
+    if (!this->sync_due_(slot, fp))
       return;
     if (!command_permitted(this->read_only_, *this->profile_, bytes.data(), bytes.size())) {
       this->log_refusal_(name, bytes.data(), bytes.size());
@@ -1862,6 +1881,7 @@ void OcleanHub::queue_value_sync_() {
              name);
     this->pending_writes_.push_back(PendingWrite{.bytes = std::move(bytes), .name = name});
     this->sync_sent_[i] = fp;
+    this->note_sync_attempt_(slot, fp);
   };
   if (this->birthday_month_ != BIRTHDAY_UNSET) {
     std::vector<uint8_t> frame =
@@ -1895,7 +1915,6 @@ bool OcleanHub::handle_value_sync_ack_(const uint8_t *data, size_t len) {
     this->store_synced_(SyncSlot::BIRTHDAY, fp, "birthday greeting");
   } else {
     // stored on the brush; the next request it sends here confirms it is used
-    this->cloud_host_written_fp_ = fp;
     ESP_LOGI(TAG, "[%s] cloud host written, waiting for the brush's next upload", this->parent_->address_str());
   }
   return true;
@@ -1964,17 +1983,18 @@ void OcleanHub::process_cloud_request_(const std::string &host) {
   std::string const url = node_cloud_url_();
   if (url.empty())
     return;
-  this->cloud_host_written_fp_ = 0;
+  auto const i = static_cast<size_t>(SyncSlot::CLOUD_HOST);
   if (cloud_host_matches(host, url)) {
     uint32_t const fp =
         this->value_fingerprint_(SyncSlot::CLOUD_HOST, reinterpret_cast<const uint8_t *>(url.data()), url.size());
-    if (fp != this->synced_.fp[static_cast<size_t>(SyncSlot::CLOUD_HOST)])
+    if (fp != this->synced_.fp[i])
       this->store_synced_(SyncSlot::CLOUD_HOST, fp, "cloud host");
     return;
   }
   ESP_LOGW(TAG, "[%s] the brush uploads to host %s, not %s; writing this node next round", this->parent_->address_str(),
            host.c_str(), url.c_str());
-  if (this->synced_.fp[static_cast<size_t>(SyncSlot::CLOUD_HOST)] != 0)
+  this->sync_attempt_fp_[i] = 0;
+  if (this->synced_.fp[i] != 0)
     this->store_synced_(SyncSlot::CLOUD_HOST, 0, "cloud host");
 }
 
@@ -2227,9 +2247,9 @@ bool OcleanHub::wifi_sync_due_() {
   payload += this->blufi_password_;
   uint32_t const fp =
       this->value_fingerprint_(SyncSlot::WIFI, reinterpret_cast<const uint8_t *>(payload.data()), payload.size());
-  if (fp == this->synced_.fp[static_cast<size_t>(SyncSlot::WIFI)] || fp == this->blufi_tried_fp_)
+  if (!this->sync_due_(SyncSlot::WIFI, fp))
     return false;
-  this->blufi_tried_fp_ = fp;
+  this->note_sync_attempt_(SyncSlot::WIFI, fp);
   this->blufi_pending_fp_ = fp;
   ESP_LOGI(TAG, "[%s] Wi-Fi not confirmed by the brush, provisioning it over BluFi", this->parent_->address_str());
   return true;

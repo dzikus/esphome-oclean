@@ -582,6 +582,11 @@ static constexpr size_t SYNC_SLOTS = 3;
 // FNV-1a over the MAC, the slot and the payload; never 0, which stands for
 // nothing confirmed
 uint32_t sync_fingerprint(uint64_t mac, SyncSlot slot, const uint8_t *payload, size_t len);
+// A value the brush has not confirmed goes out once per boot (and when it
+// changes), then again every SYNC_RETRY_MS while still unconfirmed if retry is
+// on. attempted_fp is the value last sent, 0 for none since boot.
+static constexpr uint32_t SYNC_RETRY_MS = 24U * 3600U * 1000U;
+bool sync_attempt_due(uint32_t fp, uint32_t confirmed_fp, uint32_t attempted_fp, uint32_t ms_since_attempt, bool retry);
 
 // === Cloud session receiver (UploadBrushRecord body) ===
 // The brush posts a flat JSON object whose string values carry no escapes or

@@ -197,6 +197,7 @@ class OcleanHub : public ble_client::BLEClientNode,
     this->user_gender_ = gender;
     this->user_age_ = age;
   }
+  void set_retry_unconfirmed(bool en) { this->retry_unconfirmed_ = en; }
 #ifdef USE_OCLEAN_BLUFI
   // Baked provisioning credentials (hub yaml or the node's own wifi:), not
   // entities, so a Wi-Fi password never reaches the Home Assistant recorder.
@@ -346,8 +347,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   // keeps the Wi-Fi password frame out of the log.
   bool write_blufi_frame_(const std::vector<uint8_t> &frame, const char *name, bool redact = false);
   void handle_blufi_notify_(const uint8_t *data, size_t len);
-  // true, and the attempt recorded, when the yaml Wi-Fi is not confirmed and has
-  // not been tried since boot: a wrong password must not reprovision every cycle
+  // true, and the attempt recorded, when the yaml Wi-Fi is not confirmed and is
+  // due (sync_due_): a wrong password must not reprovision every cycle
   bool wifi_sync_due_();
 #endif
   // Staggered: Write With Response allows one outstanding write. Returns the ms
@@ -359,6 +360,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   // brush confirmed (NVS, never an entity) and writes only on a mismatch.
   uint32_t value_fingerprint_(SyncSlot slot, const uint8_t *payload, size_t len) const;
   void store_synced_(SyncSlot slot, uint32_t fp, const char *what);
+  // sync_attempt_due for this slot; note_sync_attempt_ records a send
+  bool sync_due_(SyncSlot slot, uint32_t fp) const;
+  void note_sync_attempt_(SyncSlot slot, uint32_t fp);
   // queues the 0211 and 0233 writes the brush has not confirmed; once per round
   void queue_value_sync_();
   bool handle_value_sync_ack_(const uint8_t *data, size_t len);
@@ -511,9 +515,10 @@ class OcleanHub : public ble_client::BLEClientNode,
   esphome::ESPPreferenceObject synced_pref_;
   // fingerprint of a write sent this round, until its ack
   std::array<uint32_t, SYNC_SLOTS> sync_sent_{};
-  // a cloud host the brush acked but no request has confirmed yet: not written
-  // again before a reboot or a request naming another host
-  uint32_t cloud_host_written_fp_{0};
+  // the value last sent per slot and when (millis), for the daily retry
+  std::array<uint32_t, SYNC_SLOTS> sync_attempt_fp_{};
+  std::array<uint32_t, SYNC_SLOTS> sync_attempt_ms_{};
+  bool retry_unconfirmed_{true};
 
   State state_{State::IDLE};
   BrushModel model_{BrushModel::X_PRO_ELITE};
@@ -652,10 +657,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   std::string blufi_ssid_{};
   std::string blufi_password_{};
   uint8_t blufi_seq_{0};
-  // fingerprint of the credentials tried this boot, and of the run awaiting
-  // the brush's connected report or its next request to the receiver (docked,
-  // it stores the network but joins only on its next wake)
-  uint32_t blufi_tried_fp_{0};
+  // fingerprint of the run awaiting the brush's connected report or its next
+  // request to the receiver (docked, it stores the network but may join only on
+  // its next wake)
   uint32_t blufi_pending_fp_{0};
 #endif
   // Reassembles the *B# record stream that arrives on the session notify

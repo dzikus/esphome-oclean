@@ -50,8 +50,9 @@
   (`0211`) on the brush's ack, the cloud host (`0233`, this node's address with
   `cloud_receiver: true`) on the `Host` header of the brush's next request, the
   Wi-Fi on the brush's BluFi connected report or its first request after the
-  join. A hidden, read-only `cloud_host` text sensor shows the host the brush
-  really uploads to.
+  join. A value still unconfirmed is sent again once a day
+  (`retry_unconfirmed`, on by default). A hidden, read-only `cloud_host` text
+  sensor shows the host the brush really uploads to.
 - X Ultra 20: an X Ultra 20 hub option fails validation on an `x_pro_elite`
   hub, and the birthday frame, the cloud host and the Wi-Fi go only to a brush
   that reports an X Ultra 20 family model.

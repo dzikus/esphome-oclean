@@ -954,6 +954,15 @@ uint32_t sync_fingerprint(uint64_t mac, SyncSlot slot, const uint8_t *payload, s
   return h != 0 ? h : 1;
 }
 
+bool sync_attempt_due(uint32_t fp, uint32_t confirmed_fp, uint32_t attempted_fp, uint32_t ms_since_attempt,
+                      bool retry) {
+  if (fp == confirmed_fp)
+    return false;
+  if (fp != attempted_fp)
+    return true;
+  return retry && ms_since_attempt >= SYNC_RETRY_MS;
+}
+
 std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute,
                                              uint8_t second, uint8_t weekday, uint8_t tz_index) {
   // year is sent as the offset from 2000. Clamp below 2000 to 0 so the byte

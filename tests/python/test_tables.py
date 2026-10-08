@@ -375,6 +375,7 @@ class BirthdayOption(unittest.TestCase):
 X_ULTRA_20_DEFAULTS = {
     oc.CONF_CLOUD_RECEIVER: False,
     oc.CONF_CLOUD_DROP_FUTURE: True,
+    oc.CONF_RETRY_UNCONFIRMED: True,
     oc.CONF_WIFI_PROVISIONING: False,
 }
 
@@ -389,6 +390,7 @@ class XUltra20Options(unittest.TestCase):
         (oc.CONF_BIRTHDAY, "03-07"),
         (oc.CONF_GENDER, "female"),
         (oc.CONF_AGE, 9),
+        (oc.CONF_RETRY_UNCONFIRMED, True),
         (oc.CONF_WIFI_PROVISIONING, True),
         (oc.CONF_WIFI_SSID, "home"),
         (oc.CONF_WIFI_PASSWORD, "secret"),

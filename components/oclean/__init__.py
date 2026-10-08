@@ -94,6 +94,10 @@ _gender = cv.enum(GENDERS, lower=True)
 _age = cv.int_range(min=3, max=18)
 _DAYS_IN_MONTH = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
+# A kept value (birthday, cloud host, Wi-Fi) the brush has not confirmed goes
+# out once per boot; with this on, again once a day while still unconfirmed.
+CONF_RETRY_UNCONFIRMED = "retry_unconfirmed"
+
 # With this true the hub keeps the brush on the Wi-Fi below over BluFi. Off by
 # default, and the C++ for it is not compiled in otherwise (USE_OCLEAN_BLUFI).
 CONF_WIFI_PROVISIONING = "wifi_provisioning"
@@ -484,6 +488,7 @@ _X_ULTRA_20_OPTIONS = (
     CONF_BIRTHDAY,
     CONF_GENDER,
     CONF_AGE,
+    CONF_RETRY_UNCONFIRMED,
     CONF_WIFI_PROVISIONING,
     CONF_WIFI_SSID,
     CONF_WIFI_PASSWORD,
@@ -491,6 +496,7 @@ _X_ULTRA_20_OPTIONS = (
 _X_ULTRA_20_DEFAULTS = {
     CONF_CLOUD_RECEIVER: False,
     CONF_CLOUD_DROP_FUTURE: True,
+    CONF_RETRY_UNCONFIRMED: True,
     CONF_WIFI_PROVISIONING: False,
 }
 
@@ -596,6 +602,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BIRTHDAY): cv.sensitive(_month_day),
             cv.Optional(CONF_GENDER): cv.sensitive(_gender),
             cv.Optional(CONF_AGE): cv.sensitive(_age),
+            cv.Optional(CONF_RETRY_UNCONFIRMED): cv.boolean,
             cv.Optional(CONF_WIFI_PROVISIONING): cv.boolean,
             cv.Optional(CONF_WIFI_SSID): cv.string,
             cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
@@ -814,6 +821,7 @@ async def to_code(config):
     if CONF_GENDER in config or CONF_AGE in config:
         gender = GENDERS[config.get(CONF_GENDER, DEFAULT_GENDER)]
         cg.add(var.set_user_profile(gender, config.get(CONF_AGE, DEFAULT_AGE)))
+    cg.add(var.set_retry_unconfirmed(config[CONF_RETRY_UNCONFIRMED]))
     if config[CONF_WIFI_PROVISIONING]:
         cg.add_define("USE_OCLEAN_BLUFI")
         blufi_ssid, blufi_password = resolve_blufi_wifi(

@@ -281,6 +281,7 @@ Set on the `oclean:` entry, not on the platforms.
 | `birthday` | `MM-DD` | unset | Birthday greeting date the hub keeps on the brush (see **Values kept on the brush**): on every wake that day the brush shows its birthday screen with the date, whether or not the holiday greetings are on. A yaml option baked into the firmware, never an entity, so the date stays out of the Home Assistant recorder; use `!secret`. X Ultra 20 only. |
 | `gender` | `unknown`, `male`, `female` | `unknown` | Goes in the same frame as the date. Baked in like `birthday`, never an entity; use `!secret`. The brush stores it and shows nothing of it. X Ultra 20 only. |
 | `age` | int 3-18 | `18` | Goes in the same frame. 3-18 is the app's range, where any adult is 18. Baked in, never an entity; use `!secret`. The brush stores it and shows nothing of it. X Ultra 20 only. |
+| `retry_unconfirmed` | bool | `true` | A value the hub keeps on the brush (birthday greeting, cloud host, Wi-Fi) that the brush has not confirmed goes out once per boot; with this on, again once a day while it stays unconfirmed. See **Values kept on the brush**. |
 | `wifi_provisioning` | bool | `false` | The hub keeps the brush on the Wi-Fi below over BluFi (see **Values kept on the brush**). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
 | `wifi_ssid` | string | the node's `wifi:` SSID | The network the hub joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
 | `wifi_password` | string | the node's `wifi:` password | Passphrase for `wifi_ssid`. Needs `wifi_provisioning: true`. Baked into the firmware, not an entity, so it never reaches the recorder; use `!secret`. |
@@ -456,10 +457,12 @@ them only to a brush that reports an X Ultra 20 family model, so a wrong
 
 A request counts for a brush by the MAC in its record upload; requests that
 carry no MAC count only while one X Ultra 20 hub shares the receiver, so two
-brushes never confirm each other. A value goes out on the first link after it
-changes. A cloud host the brush has acked is not written again before a reboot
-while the hub waits for the next upload (after a brushing) to confirm it, and
-a Wi-Fi join is tried once per boot. `read_only: true` writes none of them. The
+brushes never confirm each other. A value the brush has not confirmed goes out
+on the first link after boot or after it changes, and again once a day while it
+stays unconfirmed (`retry_unconfirmed`, on by default; off: once per boot). A
+cloud host is confirmed by the brush's next upload, after a brushing, so it is
+written again a day later only if no upload came in between.
+`read_only: true` writes none of them. The
 Oclean app sends its own account's birthday on every connection and the hub
 cannot see that, so after the app has been used the hub keeps its stale
 confirmation until the yaml value changes.
