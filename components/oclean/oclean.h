@@ -27,6 +27,13 @@
 #include "oclean_profile.h"
 #include "oclean_protocol.h"
 
+#ifdef USE_OCLEAN_WEATHER
+#include "esphome/core/string_ref.h"
+namespace esphome::api {
+class ActionResponse;
+}  // namespace esphome::api
+#endif
+
 namespace esphome::oclean {
 
 namespace espbt = esphome::esp32_ble_tracker;
@@ -207,6 +214,14 @@ class OcleanHub : public ble_client::BLEClientNode,
   // node local time as "YYYYMMDDHHMMSS" for the brush's currentTime (firmware
   // parses the digits, not an epoch), empty when the node clock is unset
   std::string cloud_current_time();
+#ifdef USE_OCLEAN_WEATHER
+  // Home Assistant weather entity behind the brush's WeatherKit answer: its
+  // state and temperature by subscription, the daily forecast by action
+  void set_weather_entity(const std::string &entity_id) { this->weather_entity_ = entity_id; }
+  bool weather_enabled() const { return !this->weather_entity_.empty(); }
+  // web server task side: the reply body from the latest snapshot
+  std::string cloud_weather_reply();
+#endif
 #endif
 
   // resend reprograms the brush, debounced, but only while custom is selected
@@ -356,6 +371,14 @@ class OcleanHub : public ble_client::BLEClientNode,
   // one cloud record through the BLE ingest path, minus the BLE-only tail
   void ingest_cloud_record_(const SessionRecord &rec);
   void cloud_remember_(uint32_t epoch);
+#ifdef USE_OCLEAN_WEATHER
+  void weather_on_state_(StringRef state);
+  void weather_on_temperature_(StringRef value);
+  void weather_tick_();
+  void weather_request_forecast_();
+  void weather_on_forecast_(const api::ActionResponse &response);
+  int64_t node_utc_offset_s_();
+#endif
 #endif
   // an inline record of a profile whose inline heads a stored session
   void ingest_inline_session_(const SessionRecord &inl);
@@ -571,6 +594,19 @@ class OcleanHub : public ble_client::BLEClientNode,
   Mutex cloud_mutex_;
   std::vector<SessionRecord> cloud_inbound_;
   std::vector<uint32_t> cloud_captured_;
+#ifdef USE_OCLEAN_WEATHER
+  std::string weather_entity_;
+  // main loop writes, the web server task copies, both under cloud_mutex_
+  WeatherSnapshot weather_{};
+  std::string weather_unmapped_;  // last condition warned about
+  uint32_t weather_next_ask_ms_{0};
+  bool weather_ha_connected_{false};
+  bool weather_waiting_{false};
+  // the API server keeps a response callback until an answer consumes it and
+  // has no way to drop one, so one stays registered and every request reuses it
+  bool weather_callback_armed_{false};
+  bool weather_refusal_warned_{false};
+#endif
 #endif
 
   // reset each query round

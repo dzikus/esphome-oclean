@@ -65,6 +65,8 @@ class OcleanCloudReceiver : public AsyncWebHandler {
       }
     } else if (std::strstr(uri, "OTAUpGrade") != nullptr || std::strstr(uri, "GetOTACounterMode") != nullptr) {
       request->send(200, "application/json", R"({"state":false})");
+    } else if (std::strstr(uri, "WeatherKit") != nullptr) {
+      this->handle_weather_(request);
     } else {
       request->send(200, "application/json", "{}");
     }
@@ -126,6 +128,22 @@ class OcleanCloudReceiver : public AsyncWebHandler {
     }
     hub->enqueue_cloud_record(rec, epoch);
     request->send(200, "application/json", KEEP);
+  }
+
+  // the request body is empty, no MAC to route by: the one hub with weather
+  // answers, and without one the brush keeps its loading animation
+  void handle_weather_(AsyncWebServerRequest *request) {
+#ifdef USE_OCLEAN_WEATHER
+    for (OcleanHub *hub : this->hubs_) {
+      if (hub->weather_enabled()) {
+        std::string const js = hub->cloud_weather_reply();
+        ESP_LOGD(CLOUD_TAG, "weather: reply %s", js.c_str());
+        request->send(200, "application/json", js.c_str());
+        return;
+      }
+    }
+#endif
+    request->send(200, "application/json", "{}");
   }
 
   std::vector<OcleanHub *> hubs_;

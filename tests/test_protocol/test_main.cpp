@@ -836,6 +836,129 @@ void test_parse_mac_u64() {
   TEST_ASSERT_FALSE(parse_mac_u64("zz:bb:cc:dd:ee:01", &v));
 }
 
+void test_brush_weather_code() {
+  // every Home Assistant condition lands on one of the brush's seven icons
+  TEST_ASSERT_EQUAL_UINT8(2, static_cast<uint8_t>(brush_weather_code("sunny")));
+  TEST_ASSERT_EQUAL_UINT8(2, static_cast<uint8_t>(brush_weather_code("clear-night")));
+  TEST_ASSERT_EQUAL_UINT8(4, static_cast<uint8_t>(brush_weather_code("partlycloudy")));
+  TEST_ASSERT_EQUAL_UINT8(4, static_cast<uint8_t>(brush_weather_code("cloudy")));
+  TEST_ASSERT_EQUAL_UINT8(4, static_cast<uint8_t>(brush_weather_code("fog")));
+  TEST_ASSERT_EQUAL_UINT8(5, static_cast<uint8_t>(brush_weather_code("rainy")));
+  TEST_ASSERT_EQUAL_UINT8(5, static_cast<uint8_t>(brush_weather_code("pouring")));
+  TEST_ASSERT_EQUAL_UINT8(6, static_cast<uint8_t>(brush_weather_code("lightning")));
+  TEST_ASSERT_EQUAL_UINT8(6, static_cast<uint8_t>(brush_weather_code("lightning-rainy")));
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<uint8_t>(brush_weather_code("snowy")));
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<uint8_t>(brush_weather_code("snowy-rainy")));
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<uint8_t>(brush_weather_code("hail")));
+  TEST_ASSERT_EQUAL_UINT8(3, static_cast<uint8_t>(brush_weather_code("windy")));
+  TEST_ASSERT_EQUAL_UINT8(3, static_cast<uint8_t>(brush_weather_code("windy-variant")));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<uint8_t>(brush_weather_code("exceptional")));
+  TEST_ASSERT_TRUE(brush_weather_code("unavailable") == BrushWeather::NONE);
+  TEST_ASSERT_TRUE(brush_weather_code("") == BrushWeather::NONE);
+  TEST_ASSERT_TRUE(brush_weather_code("Sunny") == BrushWeather::NONE);
+}
+
+void test_parse_iso8601_epoch() {
+  int64_t const noon = civil_to_epoch(2026, 10, 8, 12, 0, 0);
+  int64_t v = 0;
+  TEST_ASSERT_TRUE(parse_iso8601_epoch("2026-10-08T12:00:00+00:00", &v));
+  TEST_ASSERT_EQUAL_INT64(noon, v);
+  TEST_ASSERT_TRUE(parse_iso8601_epoch("2026-10-08T12:00:00Z", &v));
+  TEST_ASSERT_EQUAL_INT64(noon, v);
+  TEST_ASSERT_TRUE(parse_iso8601_epoch("2026-10-08T14:00:00+02:00", &v));
+  TEST_ASSERT_EQUAL_INT64(noon, v);
+  TEST_ASSERT_TRUE(parse_iso8601_epoch("2026-10-08T07:00:00-0500", &v));
+  TEST_ASSERT_EQUAL_INT64(noon, v);
+  TEST_ASSERT_TRUE(parse_iso8601_epoch("2026-10-08T12:00:00.250000+00:00", &v));
+  TEST_ASSERT_EQUAL_INT64(noon, v);
+  // no seconds and no offset: UTC
+  TEST_ASSERT_TRUE(parse_iso8601_epoch("2026-10-08 12:00", &v));
+  TEST_ASSERT_EQUAL_INT64(noon, v);
+  TEST_ASSERT_FALSE(parse_iso8601_epoch("2026-10-08", &v));
+  TEST_ASSERT_FALSE(parse_iso8601_epoch("2026-13-08T12:00:00Z", &v));
+  TEST_ASSERT_FALSE(parse_iso8601_epoch("2026-10-08T12:00:00X", &v));
+  TEST_ASSERT_FALSE(parse_iso8601_epoch("not a date at all", &v));
+}
+
+static WeatherSnapshot two_day_forecast(int32_t today) {
+  WeatherSnapshot s;
+  s.current_code = BrushWeather::RAIN;
+  s.current_temp = 11.4F;
+  s.days[0] = WeatherDay{.local_day = today, .code = BrushWeather::CLOUDY, .high = 15.6F, .low = 7.2F};
+  s.days[1] = WeatherDay{.local_day = today + 1, .code = BrushWeather::SUNNY, .high = 18.0F, .low = -2.5F};
+  s.day_count = 2;
+  return s;
+}
+
+void test_pick_weather_today_then_tomorrow() {
+  int32_t const today = 20734;
+  WeatherSnapshot const s = two_day_forecast(today);
+  WeatherPick morning = pick_weather(s, today, 7);
+  TEST_ASSERT_TRUE(morning.valid);
+  TEST_ASSERT_FALSE(morning.tomorrow);
+  TEST_ASSERT_TRUE(morning.code == BrushWeather::CLOUDY);
+  TEST_ASSERT_EQUAL_INT(16, morning.high);
+  TEST_ASSERT_EQUAL_INT(7, morning.low);
+  // the evening reply carries tomorrow, rounded half away from zero
+  WeatherPick evening = pick_weather(s, today, WEATHER_TOMORROW_FROM_HOUR);
+  TEST_ASSERT_TRUE(evening.tomorrow);
+  TEST_ASSERT_TRUE(evening.code == BrushWeather::SUNNY);
+  TEST_ASSERT_EQUAL_INT(18, evening.high);
+  TEST_ASSERT_EQUAL_INT(-3, evening.low);
+  // a forecast from yesterday: its second day is today
+  WeatherPick stale = pick_weather(s, today + 1, 9);
+  TEST_ASSERT_TRUE(stale.valid);
+  TEST_ASSERT_FALSE(stale.tomorrow);
+  TEST_ASSERT_TRUE(stale.code == BrushWeather::SUNNY);
+}
+
+void test_pick_weather_falls_back() {
+  int32_t const today = 20734;
+  WeatherSnapshot s = two_day_forecast(today);
+  // only tomorrow left (a provider that already dropped today): shown as tomorrow
+  s.days[0] = s.days[1];
+  s.day_count = 1;
+  WeatherPick only_tomorrow = pick_weather(s, today, 9);
+  TEST_ASSERT_TRUE(only_tomorrow.tomorrow);
+  // no forecast day matches: the current condition, its temperature both bounds
+  WeatherPick current = pick_weather(s, today + 5, 9);
+  TEST_ASSERT_TRUE(current.valid);
+  TEST_ASSERT_FALSE(current.tomorrow);
+  TEST_ASSERT_TRUE(current.code == BrushWeather::RAIN);
+  TEST_ASSERT_EQUAL_INT(11, current.high);
+  TEST_ASSERT_EQUAL_INT(11, current.low);
+  // nothing to draw without a current temperature
+  s.current_temp = NAN;
+  TEST_ASSERT_FALSE(pick_weather(s, today + 5, 9).valid);
+  // two digits at most
+  WeatherSnapshot hot;
+  hot.current_code = BrushWeather::SUNNY;
+  hot.current_temp = 123.0F;
+  TEST_ASSERT_EQUAL_INT(99, pick_weather(hot, 0, 12).high);
+  hot.current_temp = -140.0F;
+  TEST_ASSERT_EQUAL_INT(-99, pick_weather(hot, 0, 12).low);
+}
+
+void test_build_weather_reply() {
+  WeatherPick pick;
+  pick.valid = true;
+  pick.code = BrushWeather::STORM;
+  pick.tomorrow = true;
+  pick.high = 21;
+  pick.low = -4;
+  TEST_ASSERT_EQUAL_STRING(R"({"state":true,"data":{"conditionCode":"6","todayOrTomorrow":"1",)"
+                           R"("temperatureMax":"21","temperatureMin":"-4","presentTime":"07:05"}})",
+                           build_weather_reply(pick, "07:05").c_str());
+  // presentTime only when it fits the firmware's 8 bytes and is plain digits
+  TEST_ASSERT_EQUAL_STRING(R"({"state":true,"data":{"conditionCode":"6","todayOrTomorrow":"1",)"
+                           R"("temperatureMax":"21","temperatureMin":"-4"}})",
+                           build_weather_reply(pick, "07:05:30:1").c_str());
+  TEST_ASSERT_EQUAL_STRING(R"({"state":true,"data":{"conditionCode":"6","todayOrTomorrow":"1",)"
+                           R"("temperatureMax":"21","temperatureMin":"-4"}})",
+                           build_weather_reply(pick, "7\"5").c_str());
+  TEST_ASSERT_EQUAL_STRING(R"({"state":false})", build_weather_reply(WeatherPick{}, "07:05").c_str());
+}
+
 void test_decode_cloud_brushdata_record() {
   // the full v20 record the cloud body carries, length prefix included: the
   // score at [28] is the datum BLE on this firmware never hands over
@@ -2380,6 +2503,11 @@ int main() {
   RUN_TEST(test_cloud_body_field);
   RUN_TEST(test_parse_hex_bytes);
   RUN_TEST(test_parse_mac_u64);
+  RUN_TEST(test_brush_weather_code);
+  RUN_TEST(test_parse_iso8601_epoch);
+  RUN_TEST(test_pick_weather_today_then_tomorrow);
+  RUN_TEST(test_pick_weather_falls_back);
+  RUN_TEST(test_build_weather_reply);
   RUN_TEST(test_decode_cloud_brushdata_record);
   RUN_TEST(test_decode_v20_record_zones_real);
   RUN_TEST(test_timezone_index_to_string);

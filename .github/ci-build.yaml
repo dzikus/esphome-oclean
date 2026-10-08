@@ -84,6 +84,10 @@ oclean:
     # Compiles the in-node session receiver (USE_OCLEAN_CLOUD_RECEIVER) on the
     # web_server above.
     cloud_receiver: true
+    # Compiles the weather answer (USE_OCLEAN_WEATHER): entity subscription and
+    # the forecast action with its response.
+    weather: weather.forecast_home
+    time_id: ci_time
 
 # Every entity platform auto-creates its full entity set, so a bare platform
 # block compiles every entity codegen path (dev-gated rows included via

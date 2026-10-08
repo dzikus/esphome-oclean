@@ -325,5 +325,49 @@ class CloudReceiverWebServer(unittest.TestCase):
         self._check(False, False)
 
 
+class WeatherOption(unittest.TestCase):
+    def test_takes_a_weather_entity(self):
+        self.assertEqual(
+            oc._weather_entity("weather.forecast_home"), "weather.forecast_home"
+        )
+
+    def test_refuses_another_domain(self):
+        with self.assertRaises(cv.Invalid):
+            oc._weather_entity("sensor.outside_temperature")
+
+    def test_needs_the_receiver_and_a_clock(self):
+        hub = {oc.CONF_WEATHER: "weather.home", oc.CONF_CLOUD_RECEIVER: True}
+        with self.assertRaises(cv.Invalid):
+            oc._validate_weather(hub)
+        hub[oc.CONF_TIME_ID] = "ha_time"
+        self.assertEqual(oc._validate_weather(hub), hub)
+        hub[oc.CONF_CLOUD_RECEIVER] = False
+        with self.assertRaises(cv.Invalid):
+            oc._validate_weather(hub)
+
+    def test_unset_needs_nothing(self):
+        self.assertEqual(oc._validate_weather({}), {})
+
+
+class WeatherApiAndOneHub(unittest.TestCase):
+    # The entity comes over the native API and the brush request names no brush.
+    def test_needs_api(self):
+        hub = {oc.CONF_ID: "x20", oc.CONF_WEATHER: "weather.home"}
+        with self.assertRaises(cv.Invalid):
+            oc._weather_needs_api_and_one_hub(hub, {oc.DOMAIN: [hub]})
+        oc._weather_needs_api_and_one_hub(hub, {oc.DOMAIN: [hub], "api": {}})
+
+    def test_second_weather_hub_fails(self):
+        first = {oc.CONF_ID: "x20", oc.CONF_WEATHER: "weather.home"}
+        second = {oc.CONF_ID: "x20b", oc.CONF_WEATHER: "weather.home"}
+        full = {oc.DOMAIN: [first, second], "api": {}}
+        oc._weather_needs_api_and_one_hub(first, full)
+        with self.assertRaises(cv.Invalid):
+            oc._weather_needs_api_and_one_hub(second, full)
+
+    def test_hub_without_weather_needs_nothing(self):
+        oc._weather_needs_api_and_one_hub({oc.CONF_ID: "elite"}, {oc.DOMAIN: []})
+
+
 if __name__ == "__main__":
     unittest.main()

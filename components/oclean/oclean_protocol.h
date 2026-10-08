@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -573,6 +574,67 @@ bool parse_hex_bytes(std::string_view hex, std::vector<uint8_t> *out);
 // tolerated) to the uint64 an ESPHome BLE address holds, most significant byte
 // first. False unless exactly six octets.
 bool parse_mac_u64(std::string_view mac, uint64_t *out);
+
+// === X Ultra 20 weather (WeatherKit reply) ===
+// The brush posts an empty body to .../WeatherKit each time it joins Wi-Fi and
+// draws the answer on its clock page: an icon, a Today/Tomorrow banner and
+// "low ~ high". Its codes, by the icon each one draws:
+enum class BrushWeather : uint8_t {
+  SNOW = 0,
+  DUST = 1,  // orange wind lines with dots
+  SUNNY = 2,
+  WINDY = 3,
+  CLOUDY = 4,  // sun behind a cloud
+  RAIN = 5,
+  STORM = 6,  // cloud, lightning and rain
+  NONE = 0xFF,
+};
+
+// Home Assistant weather condition to the closest icon; NONE for anything else,
+// "unavailable" included.
+BrushWeather brush_weather_code(std::string_view condition);
+
+// "2026-10-08T12:00:00+02:00" (Z, fractional seconds, or no offset = UTC) to a
+// Unix epoch. False unless it starts with a full date and time.
+bool parse_iso8601_epoch(std::string_view text, int64_t *out);
+
+// one forecast day, keyed by the local calendar day (local civil epoch / 86400)
+struct WeatherDay {
+  int32_t local_day{0};
+  BrushWeather code{BrushWeather::NONE};
+  float high{0};
+  float low{0};
+};
+
+static constexpr size_t WEATHER_DAYS_MAX = 3;
+struct WeatherSnapshot {
+  BrushWeather current_code{BrushWeather::NONE};
+  float current_temp{NAN};
+  std::array<WeatherDay, WEATHER_DAYS_MAX> days{};
+  uint8_t day_count{0};
+};
+
+// from this local hour the reply carries tomorrow's forecast
+static constexpr uint8_t WEATHER_TOMORROW_FROM_HOUR = 18;
+
+struct WeatherPick {
+  bool valid{false};
+  bool tomorrow{false};
+  BrushWeather code{BrushWeather::NONE};
+  int high{0};
+  int low{0};
+};
+
+// Today's forecast, tomorrow's from WEATHER_TOMORROW_FROM_HOUR, either one when
+// the other is missing. Without a forecast day, the current condition with the
+// current temperature as both bounds. Invalid when there is nothing to draw.
+WeatherPick pick_weather(const WeatherSnapshot &s, int32_t local_day, uint8_t local_hour);
+
+// Every value goes out as a JSON string: the firmware reads cJSON's valuestring,
+// so a number would make it dereference null. Temperatures clamp to the two
+// digits the page draws; hhmm lands in an 8-byte buffer and is left out unless
+// it fits. An invalid pick answers {"state":false}: clock, dashes and a "?".
+std::string build_weather_reply(const WeatherPick &pick, std::string_view hhmm);
 
 // === Set-clock (0201) ===
 //   02 01 [year-2000][month][day][hour][minute][second][weekday][tz_index]

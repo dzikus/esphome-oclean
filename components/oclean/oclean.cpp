@@ -31,6 +31,9 @@
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
 #include "esphome/components/web_server_base/web_server_base.h"
 #endif
+#ifdef USE_OCLEAN_WEATHER
+#include "esphome/components/api/homeassistant_service.h"
+#endif
 
 namespace esphome::oclean {
 
@@ -96,6 +99,13 @@ void OcleanHub::setup() {
     cloud_receiver_register(this, web_server_base::global_web_server_base);
   // idle until enqueue_cloud_record wakes it
   this->disable_loop();
+#ifdef USE_OCLEAN_WEATHER
+  if (this->weather_enabled()) {
+    this->subscribe_homeassistant_state(&OcleanHub::weather_on_state_, this->weather_entity_);
+    this->subscribe_homeassistant_state(&OcleanHub::weather_on_temperature_, this->weather_entity_, "temperature");
+    this->set_interval("weather_tick", 10000, [this]() { this->weather_tick_(); });
+  }
+#endif
 #endif
   // BLEClient sets up later (AFTER_BLUETOOTH) and leaves itself enabled, so a
   // plain set_enabled(false) here is overridden and the client auto-connects at
@@ -119,6 +129,10 @@ void OcleanHub::dump_config() {
   ESP_LOGCONFIG(TAG, "  Model: %s", brush_model_key(this->model_));
   ESP_LOGCONFIG(TAG, "  Expose dev sensors: %s", YESNO(this->expose_dev_sensors_));
   ESP_LOGCONFIG(TAG, "  Read-only: %s", YESNO(this->read_only_));
+#ifdef USE_OCLEAN_WEATHER
+  if (this->weather_enabled())
+    ESP_LOGCONFIG(TAG, "  Weather: %s", this->weather_entity_.c_str());
+#endif
   // Active protocol profile: the default until the first poll reads the DIS
   // model string and selects the per-device profile.
   ESP_LOGCONFIG(TAG, "  Profile: %s (confidence %u)", this->profile_->name, (unsigned)this->profile_->confidence);
@@ -1913,6 +1927,164 @@ std::string OcleanHub::cloud_current_time() {
 #endif
   return {};
 }
+
+#ifdef USE_OCLEAN_WEATHER
+// far above the ids ESPHome's own homeassistant.action calls count up from 1
+static constexpr uint32_t WEATHER_CALL_ID = 0x0C1EA700;
+// Home Assistant takes actions only once it has subscribed to them, a moment
+// after it connects
+static constexpr uint32_t WEATHER_FIRST_ASK_DELAY_MS = 10000;
+static constexpr uint32_t WEATHER_REFRESH_MS = 30 * 60 * 1000;
+static constexpr uint32_t WEATHER_REPLY_TIMEOUT_MS = 30000;
+// An action the device may not perform gets no answer at all. Granting the
+// permission reloads the integration, and the new session asks again at once.
+static constexpr uint32_t WEATHER_REFUSED_RETRY_MS = 6 * 3600 * 1000;
+
+// Home Assistant, not just any API client (a log viewer drops the action, which
+// would read as a refusal); the call was renamed after the 2026.2 floor
+template <typename Server>
+static bool home_assistant_connected(Server *server) {
+  if constexpr (requires { server->is_connected_with_state_subscription(); }) {
+    return server->is_connected_with_state_subscription();
+  } else {
+    return server->is_connected(true);
+  }
+}
+
+std::string OcleanHub::cloud_weather_reply() {
+  WeatherSnapshot snap;
+  {
+    LockGuard const guard(this->cloud_mutex_);
+    snap = this->weather_;
+  }
+  int64_t const local = this->local_now_epoch_();
+  int32_t day = 0;
+  uint8_t hour = 0;
+  char hhmm[8] = "";
+  if (local > 0) {
+    day = static_cast<int32_t>(local / 86400);
+    hour = static_cast<uint8_t>((local / 3600) % 24);
+    snprintf(hhmm, sizeof(hhmm), "%02u:%02u", static_cast<unsigned>(hour), static_cast<unsigned>((local / 60) % 60));
+  }
+  return build_weather_reply(pick_weather(snap, day, hour), hhmm);
+}
+
+int64_t OcleanHub::node_utc_offset_s_() {
+#ifdef USE_TIME
+  if (this->time_ != nullptr) {
+    ESPTime const local = this->time_->now();
+    ESPTime const utc = this->time_->utcnow();
+    if (local.is_valid() && utc.is_valid())
+      return epoch_of(local) - epoch_of(utc);
+  }
+#endif
+  return 0;
+}
+
+void OcleanHub::weather_on_state_(StringRef state) {
+  std::string_view const condition(state.c_str(), state.size());
+  BrushWeather const code = brush_weather_code(condition);
+  if (code == BrushWeather::NONE && condition != "unavailable" && condition != "unknown" &&
+      this->weather_unmapped_ != condition) {
+    this->weather_unmapped_ = condition;
+    ESP_LOGW(TAG, "[%s] weather condition '%s' has no brush icon", this->parent_->address_str(), state.c_str());
+  }
+  LockGuard const guard(this->cloud_mutex_);
+  this->weather_.current_code = code;
+}
+
+void OcleanHub::weather_on_temperature_(StringRef value) {
+  float const temp = parse_number<float>(value.str()).value_or(NAN);
+  LockGuard const guard(this->cloud_mutex_);
+  this->weather_.current_temp = temp;
+}
+
+void OcleanHub::weather_tick_() {
+  bool const connected = api::global_api_server != nullptr && home_assistant_connected(api::global_api_server);
+  uint32_t const now = millis();
+  if (connected && !this->weather_ha_connected_)
+    this->weather_next_ask_ms_ = now + WEATHER_FIRST_ASK_DELAY_MS;
+  this->weather_ha_connected_ = connected;
+  if (connected && !this->weather_waiting_ && static_cast<int32_t>(now - this->weather_next_ask_ms_) >= 0)
+    this->weather_request_forecast_();
+}
+
+void OcleanHub::weather_request_forecast_() {
+  if (!this->weather_callback_armed_) {
+    api::global_api_server->register_action_response_callback(
+        WEATHER_CALL_ID, [this](const api::ActionResponse &response) { this->weather_on_forecast_(response); });
+    this->weather_callback_armed_ = true;
+  }
+  api::HomeassistantActionRequest req;
+  req.service = StringRef("weather.get_forecasts");
+  req.data.init(2);
+  auto &entity = req.data.emplace_back();
+  entity.key = StringRef("entity_id");
+  entity.value = StringRef(this->weather_entity_);
+  auto &type = req.data.emplace_back();
+  type.key = StringRef("type");
+  type.value = StringRef("daily");
+  req.call_id = WEATHER_CALL_ID;
+  req.wants_response = true;
+  api::global_api_server->send_homeassistant_action(req);
+  this->weather_waiting_ = true;
+  this->set_timeout("weather_wait", WEATHER_REPLY_TIMEOUT_MS, [this]() {
+    this->weather_waiting_ = false;
+    this->weather_next_ask_ms_ = millis() + WEATHER_REFUSED_RETRY_MS;
+    if (!this->weather_refusal_warned_) {
+      this->weather_refusal_warned_ = true;
+      ESP_LOGW(TAG,
+               "[%s] no forecast from Home Assistant: allow this device to perform Home Assistant actions "
+               "(ESPHome integration, device options). Answering with the current weather meanwhile",
+               this->parent_->address_str());
+    }
+  });
+}
+
+void OcleanHub::weather_on_forecast_(const api::ActionResponse &response) {
+  // the answer consumed the registration
+  this->weather_callback_armed_ = false;
+  this->weather_waiting_ = false;
+  this->cancel_timeout("weather_wait");
+  this->weather_next_ask_ms_ = millis() + WEATHER_REFRESH_MS;
+  if (!response.is_success()) {
+    ESP_LOGW(TAG, "[%s] weather forecast failed: %s", this->parent_->address_str(),
+             response.get_error_message().c_str());
+    return;
+  }
+  this->weather_refusal_warned_ = false;
+  // {"response": {"<entity>": {"forecast": [{"datetime", "condition", "temperature", "templow", ...}]}}}
+  JsonArrayConst const list =
+      response.get_json()["response"][this->weather_entity_.c_str()]["forecast"].as<JsonArrayConst>();
+  int64_t const offset = this->node_utc_offset_s_();
+  std::array<WeatherDay, WEATHER_DAYS_MAX> days{};
+  uint8_t count = 0;
+  for (JsonObjectConst const entry : list) {
+    if (count >= days.size())
+      break;
+    int64_t epoch = 0;
+    BrushWeather const code = brush_weather_code(entry["condition"] | "");
+    float const high = entry["temperature"] | NAN;
+    float const low = entry["templow"] | NAN;
+    if (!parse_iso8601_epoch(entry["datetime"] | "", &epoch) || code == BrushWeather::NONE || !std::isfinite(high) ||
+        !std::isfinite(low))
+      continue;
+    days[count++] =
+        WeatherDay{.local_day = static_cast<int32_t>((epoch + offset) / 86400), .code = code, .high = high, .low = low};
+  }
+  {
+    LockGuard const guard(this->cloud_mutex_);
+    this->weather_.days = days;
+    this->weather_.day_count = count;
+  }
+  if (count == 0) {
+    ESP_LOGW(TAG, "[%s] weather forecast had no usable day", this->parent_->address_str());
+    return;
+  }
+  ESP_LOGD(TAG, "[%s] weather forecast: %u days, first code %u %.0f..%.0f", this->parent_->address_str(),
+           static_cast<unsigned>(count), static_cast<unsigned>(days[0].code), days[0].low, days[0].high);
+}
+#endif  // USE_OCLEAN_WEATHER
 
 void OcleanHub::ingest_cloud_record_(const SessionRecord &rec) {
   uint32_t const epoch = session_record_epoch(rec);

@@ -79,6 +79,12 @@ CONF_CLOUD_RECEIVER = "cloud_receiver"
 # inspection. Never published either way.
 CONF_CLOUD_DROP_FUTURE = "cloud_drop_future"
 
+# Home Assistant weather entity the cloud receiver answers the X Ultra 20's
+# WeatherKit request from (USE_OCLEAN_WEATHER). State and temperature come by
+# state subscription; the daily forecast by the weather.get_forecasts action,
+# which Home Assistant performs only for a device allowed to perform actions.
+CONF_WEATHER = "weather"
+
 # BluFi Wi-Fi provisioning is off unless this is set true, and the C++ for it is
 # not compiled in otherwise (USE_OCLEAN_BLUFI).
 CONF_WIFI_PROVISIONING = "wifi_provisioning"
@@ -442,6 +448,31 @@ def _validate_blufi_wifi(config):
     return config
 
 
+def _weather_entity(value):
+    value = cv.entity_id(value)
+    if not value.startswith("weather."):
+        raise cv.Invalid(f"{CONF_WEATHER} takes a weather.* entity, not '{value}'")
+    return value
+
+
+def _validate_weather(config):
+    if CONF_WEATHER not in config:
+        return config
+    if not config.get(CONF_CLOUD_RECEIVER):
+        raise cv.Invalid(
+            f"{CONF_WEATHER} is answered by the cloud receiver; set "
+            f"{CONF_CLOUD_RECEIVER}: true",
+            path=[CONF_WEATHER],
+        )
+    if CONF_TIME_ID not in config:
+        raise cv.Invalid(
+            f"{CONF_WEATHER} needs {CONF_TIME_ID}: the answer picks today's or "
+            f"tomorrow's forecast by the node's local date",
+            path=[CONF_WEATHER],
+        )
+    return config
+
+
 def _validate_adaptive_poll(config):
     # Copy before mutating: the validator may run against a shared dict.
     config = dict(config)
@@ -499,6 +530,7 @@ CONFIG_SCHEMA = cv.All(
             ): cv.port,
             cv.Optional(CONF_CLOUD_RECEIVER, default=False): cv.boolean,
             cv.Optional(CONF_CLOUD_DROP_FUTURE, default=True): cv.boolean,
+            cv.Optional(CONF_WEATHER): _weather_entity,
             cv.Optional(CONF_WIFI_PROVISIONING, default=False): cv.boolean,
             cv.Optional(CONF_WIFI_SSID): cv.string,
             cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
@@ -530,6 +562,7 @@ CONFIG_SCHEMA = cv.All(
     _validate_adaptive_poll,
     _validate_name_prefix_is_reachable,
     _validate_blufi_wifi,
+    _validate_weather,
     cv.require_esphome_version(2026, 2, 0),
 )
 
@@ -639,12 +672,35 @@ def _cloud_receiver_needs_web_server(config, full):
         )
 
 
+def _weather_needs_api_and_one_hub(config, full):
+    # The entity comes from Home Assistant over the native API, and the brush's
+    # weather request carries no MAC, so a single hub can answer it.
+    if CONF_WEATHER not in config:
+        return
+    if "api" not in full:
+        raise cv.Invalid(
+            f"oclean '{config[CONF_ID]}' has {CONF_WEATHER}, which reads the entity "
+            f"from Home Assistant: add an api: block",
+            path=[CONF_WEATHER],
+        )
+    for hub in full.get(DOMAIN, []):
+        if str(hub[CONF_ID]) == str(config[CONF_ID]):
+            return
+        if CONF_WEATHER in hub:
+            raise cv.Invalid(
+                f"oclean '{hub[CONF_ID]}' already answers the brush weather request; "
+                f"it names no brush, so only one hub can carry {CONF_WEATHER}",
+                path=[CONF_WEATHER],
+            )
+
+
 def _final_validate(config):
     full = fv.full_config.get()
     _one_hub_per_ble_client(config)
     _warn_if_session_events_unavailable(config)
     _blufi_ssid_available(config, full.get("wifi"))
     _cloud_receiver_needs_web_server(config, full)
+    _weather_needs_api_and_one_hub(config, full)
     return _warn_on_shared_default_names(config)
 
 
@@ -678,6 +734,15 @@ async def to_code(config):
         cg.add_define("USE_OCLEAN_CLOUD_RECEIVER")
         cg.add(var.set_cloud_receiver_enabled(True))
         cg.add(var.set_cloud_drop_future_enabled(config[CONF_CLOUD_DROP_FUTURE]))
+    if (weather := config.get(CONF_WEATHER)) is not None:
+        # the API parts a homeassistant sensor and a homeassistant.action with
+        # capture_response would enable; json comes with the web server
+        cg.add_define("USE_OCLEAN_WEATHER")
+        cg.add_define("USE_API_HOMEASSISTANT_STATES")
+        cg.add_define("USE_API_HOMEASSISTANT_SERVICES")
+        cg.add_define("USE_API_HOMEASSISTANT_ACTION_RESPONSES")
+        cg.add_define("USE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON")
+        cg.add(var.set_weather_entity(weather))
     if config[CONF_WIFI_PROVISIONING]:
         cg.add_define("USE_OCLEAN_BLUFI")
         blufi_ssid, blufi_password = resolve_blufi_wifi(

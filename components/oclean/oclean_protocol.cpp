@@ -1013,4 +1013,149 @@ bool parse_mac_u64(std::string_view mac, uint64_t *out) {
   return true;
 }
 
+BrushWeather brush_weather_code(std::string_view condition) {
+  // the brush has no fog, overcast or night icon, so those take the nearest one
+  static constexpr struct {
+    std::string_view name;
+    BrushWeather code;
+  } MAP[] = {
+      {.name = "sunny", .code = BrushWeather::SUNNY},
+      {.name = "clear-night", .code = BrushWeather::SUNNY},
+      {.name = "partlycloudy", .code = BrushWeather::CLOUDY},
+      {.name = "cloudy", .code = BrushWeather::CLOUDY},
+      {.name = "fog", .code = BrushWeather::CLOUDY},
+      {.name = "rainy", .code = BrushWeather::RAIN},
+      {.name = "pouring", .code = BrushWeather::RAIN},
+      {.name = "lightning", .code = BrushWeather::STORM},
+      {.name = "lightning-rainy", .code = BrushWeather::STORM},
+      {.name = "snowy", .code = BrushWeather::SNOW},
+      {.name = "snowy-rainy", .code = BrushWeather::SNOW},
+      {.name = "hail", .code = BrushWeather::SNOW},
+      {.name = "windy", .code = BrushWeather::WINDY},
+      {.name = "windy-variant", .code = BrushWeather::WINDY},
+      {.name = "exceptional", .code = BrushWeather::DUST},
+  };
+  for (const auto &entry : MAP) {
+    if (entry.name == condition)
+      return entry.code;
+  }
+  return BrushWeather::NONE;
+}
+
+static bool iso_digits(std::string_view text, size_t pos, size_t n, int *out) {
+  if (pos + n > text.size())
+    return false;
+  int v = 0;
+  for (size_t i = pos; i < pos + n; i++) {
+    if (text[i] < '0' || text[i] > '9')
+      return false;
+    v = (v * 10) + (text[i] - '0');
+  }
+  *out = v;
+  return true;
+}
+
+bool parse_iso8601_epoch(std::string_view text, int64_t *out) {
+  // "YYYY-MM-DDTHH:MM" is the shortest form taken
+  if (out == nullptr || text.size() < 16)
+    return false;
+  int year = 0;
+  int month = 0;
+  int day = 0;
+  int hour = 0;
+  int minute = 0;
+  int second = 0;
+  if (!iso_digits(text, 0, 4, &year) || text[4] != '-' || !iso_digits(text, 5, 2, &month) || text[7] != '-' ||
+      !iso_digits(text, 8, 2, &day) || (text[10] != 'T' && text[10] != ' ') || !iso_digits(text, 11, 2, &hour) ||
+      text[13] != ':' || !iso_digits(text, 14, 2, &minute))
+    return false;
+  size_t pos = 16;
+  if (pos < text.size() && text[pos] == ':') {
+    if (!iso_digits(text, pos + 1, 2, &second))
+      return false;
+    pos += 3;
+  }
+  if (pos < text.size() && text[pos] == '.') {
+    pos++;
+    while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
+      pos++;
+  }
+  int64_t offset = 0;
+  if (pos < text.size() && text[pos] != 'Z') {
+    char const sign = text[pos];
+    int off_h = 0;
+    int off_m = 0;
+    if ((sign != '+' && sign != '-') || !iso_digits(text, pos + 1, 2, &off_h))
+      return false;
+    size_t mpos = pos + 3;
+    if (mpos < text.size() && text[mpos] == ':')
+      mpos++;
+    if (mpos < text.size() && !iso_digits(text, mpos, 2, &off_m))
+      return false;
+    offset = (static_cast<int64_t>(off_h) * 3600) + (static_cast<int64_t>(off_m) * 60);
+    if (sign == '-')
+      offset = -offset;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 60)
+    return false;
+  *out = civil_to_epoch(static_cast<uint16_t>(year), static_cast<uint8_t>(month), static_cast<uint8_t>(day),
+                        static_cast<uint8_t>(hour), static_cast<uint8_t>(minute), static_cast<uint8_t>(second)) -
+         offset;
+  return true;
+}
+
+// two digits and a sign is all the page lays out
+static int weather_degrees(float value) {
+  return std::clamp(static_cast<int>(std::lround(value)), -99, 99);
+}
+
+WeatherPick pick_weather(const WeatherSnapshot &s, int32_t local_day, uint8_t local_hour) {
+  const WeatherDay *today = nullptr;
+  const WeatherDay *tomorrow = nullptr;
+  for (size_t i = 0; i < s.day_count && i < s.days.size(); i++) {
+    if (s.days[i].local_day == local_day) {
+      today = &s.days[i];
+    } else if (s.days[i].local_day == local_day + 1) {
+      tomorrow = &s.days[i];
+    }
+  }
+  const WeatherDay *day = local_hour >= WEATHER_TOMORROW_FROM_HOUR ? (tomorrow != nullptr ? tomorrow : today)
+                                                                   : (today != nullptr ? today : tomorrow);
+  WeatherPick pick;
+  if (day != nullptr) {
+    pick.valid = true;
+    pick.tomorrow = day == tomorrow;
+    pick.code = day->code;
+    pick.high = weather_degrees(day->high);
+    pick.low = weather_degrees(day->low);
+  } else if (s.current_code != BrushWeather::NONE && std::isfinite(s.current_temp)) {
+    pick.valid = true;
+    pick.code = s.current_code;
+    pick.high = weather_degrees(s.current_temp);
+    pick.low = pick.high;
+  }
+  return pick;
+}
+
+std::string build_weather_reply(const WeatherPick &pick, std::string_view hhmm) {
+  if (!pick.valid || pick.code == BrushWeather::NONE)
+    return R"({"state":false})";
+  char buf[160];
+  int const n = snprintf(buf, sizeof(buf),
+                         R"({"state":true,"data":{"conditionCode":"%u","todayOrTomorrow":"%u",)"
+                         R"("temperatureMax":"%d","temperatureMin":"%d")",
+                         static_cast<unsigned>(pick.code), pick.tomorrow ? 1U : 0U, pick.high, pick.low);
+  std::string out(buf, static_cast<size_t>(std::clamp(n, 0, static_cast<int>(sizeof(buf)) - 1)));
+  // the firmware strcpy()s it into 8 bytes; digits and colons only, so no escaping
+  bool const time_fits = !hhmm.empty() && hhmm.size() < 8 &&
+                         std::ranges::all_of(hhmm, [](char c) { return (c >= '0' && c <= '9') || c == ':'; });
+  if (time_fits) {
+    out += R"(,"presentTime":")";
+    out.append(hhmm);
+    out += '"';
+  }
+  out += "}}";
+  return out;
+}
+
 }  // namespace esphome::oclean

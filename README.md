@@ -277,6 +277,7 @@ Set on the `oclean:` entry, not on the platforms.
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
 | `cloud_receiver_port` | int 1-65535 | `8099` | Port the `point_cloud_at_node` button puts in the host URL when `cloud_receiver` is off. With `cloud_receiver` on, the receiver rides on the web server, so the button uses the web server's port instead. X Ultra 20 only. |
 | `cloud_receiver` | bool | `false` | Receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. It does **not** start its own server: it registers a handler on the shared ESPHome web server, so a `web_server:` must be configured (validation requires it) and the uploads arrive on the web server's port. The code is not compiled in unless this is true. Needs the brush pointed at the node (`point_cloud_at_node`) and able to reach it over the network. See **In-node session receiver**. |
+| `weather` | `weather.*` entity id | unset | Answers the brush's weather request from this Home Assistant weather entity, so its clock page shows an icon, Today/Tomorrow and the day's low and high. Needs `cloud_receiver: true`, `time_id` and an `api:` block; one hub per node. The forecast needs the device to be allowed to perform Home Assistant actions; without that it shows the current condition and temperature. X Ultra 20 only. See **Weather on the brush**. |
 | `wifi_provisioning` | bool | `false` | Enables BluFi Wi-Fi provisioning (the `provision_wifi` button). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
 | `wifi_ssid` | string | the node's `wifi:` SSID | The network `provision_wifi` joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
 | `wifi_password` | string | the node's `wifi:` password | Passphrase for `wifi_ssid`. Needs `wifi_provisioning: true`. Baked into the firmware, not an entity, so it never reaches the recorder; use `!secret`. |
@@ -479,6 +480,47 @@ and answers "keep it" the first time it sees one; the brush re-sends it on its
 next upload and that copy is acked. A record is thus never dropped before it is
 in Home Assistant, at the cost of one extra upload per record. The brush's clock
 is answered from the node's clock, so it also corrects over Wi-Fi.
+
+### Weather on the brush
+
+The X Ultra 20 has a clock page (swipe right from a mode page) with a weather
+icon, a Today/Tomorrow banner and the day's low and high. The brush fetches it
+from its cloud host each time it joins Wi-Fi, so with `cloud_receiver` the
+node answers that request too. Name a weather entity and the hub does the rest;
+Home Assistant needs no template sensors:
+
+```yaml
+oclean:
+  - id: oclean_x20
+    model: x_ultra_20
+    cloud_receiver: true
+    time_id: ha_time
+    weather: weather.forecast_home
+```
+
+- The condition and the current temperature come from the entity over the
+  native API state subscription, with no setting on the Home Assistant side.
+- The daily forecast comes from the `weather.get_forecasts` action. Home
+  Assistant performs actions only for a device allowed to: Settings, Devices &
+  services, ESPHome, the node, Configure, "Allow the device to perform Home
+  Assistant actions". Without it the brush gets the current condition with the
+  current temperature as both numbers, and the log says so once.
+- Until 18:00 the brush gets today's forecast, from 18:00 tomorrow's (banner
+  "Tomorrow"). Temperatures go in the entity's unit, rounded, two digits at most.
+- The brush has seven icons, so Home Assistant conditions map onto the closest:
+
+| Home Assistant condition | Brush icon |
+|---|---|
+| `sunny`, `clear-night` | sun |
+| `partlycloudy`, `cloudy`, `fog` | sun behind a cloud |
+| `rainy`, `pouring` | rain |
+| `lightning`, `lightning-rainy` | thunderstorm |
+| `snowy`, `snowy-rainy`, `hail` | snow |
+| `windy`, `windy-variant` | wind |
+| `exceptional` | dust |
+
+The brush fetches the weather only when it connects, which on battery is after
+a brushing, so the page shows what was current then.
 
 ### Override per-entity
 
@@ -752,12 +794,13 @@ components/oclean/
   oclean_protocol.{h,cpp}  pure C++: command table, session + settings
                            assemblers, record decode, scheme/clock/toggle/
                            cloud-host/blufi builders, cloud-upload body
-                           parsing, adaptive-poll helpers
+                           parsing, weather mapping and reply, adaptive-poll
+                           helpers
   oclean_profile.{h,cpp}   model-string to profile dispatch
   oclean.{h,cpp}           OcleanHub: BLE client node + PollingComponent +
                            poll state machine, NVS persistence
-  oclean_cloud_receiver.{h,cpp}  in-node http session receiver (X Ultra 20,
-                           opt-in via cloud_receiver)
+  oclean_cloud_receiver.{h,cpp}  in-node http session receiver and weather
+                           answer (X Ultra 20, opt-in via cloud_receiver)
   oclean_switch.h          OcleanCommandSwitch / OcleanBleSwitch
   oclean_number.h          OcleanHeadMaxNumber / OcleanCustomParamNumber
   oclean_button.h          the button classes
