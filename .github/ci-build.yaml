@@ -88,7 +88,7 @@ oclean:
     # the forecast action with its response.
     weather: weather.forecast_home
     time_id: ci_time
-    # Compiles the birthday greeting write (apply_birthday below).
+    # Compiles the birthday greeting the hub keeps on the brush.
     birthday: "02-29"
     gender: female
     age: 9
@@ -113,6 +113,9 @@ binary_sensor:
 text_sensor:
   - platform: oclean
     oclean_id: hub_test
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
 
 switch:
   - platform: oclean
@@ -161,17 +164,3 @@ button:
   - platform: oclean
     oclean_id: hub_second
     device_id: dev_second
-    # X Ultra 20 only, opt-in: exercise the cloud-host, provisioning and
-    # birthday codegen.
-    apply_cloud_host:
-    clear_cloud_host:
-    point_cloud_at_node:
-    provision_wifi:
-    apply_birthday:
-    clear_birthday:
-
-text:
-  - platform: oclean
-    oclean_id: hub_second
-    device_id: dev_second
-    cloud_host:

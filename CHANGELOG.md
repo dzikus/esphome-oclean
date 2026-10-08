@@ -38,17 +38,22 @@
   are not built; firmware 0.0.1.6 never fills them. A fast-brushing or
   over-pressure voice flag is refused while voice prompts are off, as the brush
   would drop it.
-- X Ultra 20: an opt-in `cloud_host` text with Apply, Clear and Point-at-node
-  buttons sets the server the brush uploads to (`0233`), clears it back to the
-  firmware default, or points it at a receiver on this node
-  (`http://<node ip>:<cloud_receiver_port>`). The firmware has no read-back, so
-  the text shows the last value written, not the brush's own.
-- X Ultra 20: Wi-Fi provisioning over BluFi (service `0xFFFF`, unencrypted
-  variant). Enabled per hub with `wifi_provisioning: true`; the code is not
-  compiled in otherwise. Credentials are the `wifi_ssid` / `wifi_password` hub
-  options (baked into the firmware, falling back to the node's own `wifi:`), not
-  entities, so a Wi-Fi password never reaches the recorder. A `provision_wifi`
-  button runs the join.
+- X Ultra 20: Wi-Fi over BluFi (service `0xFFFF`, unencrypted variant). With
+  `wifi_provisioning: true` the hub keeps the brush on the `wifi_ssid` /
+  `wifi_password` hub options (baked into the firmware, falling back to the
+  node's own `wifi:`), not entities, so a Wi-Fi password never reaches the
+  recorder. The code is not compiled in otherwise.
+- X Ultra 20: the birthday greeting, the cloud host and the Wi-Fi come from the
+  yaml with no button. None can be read back over BLE, so the hub keeps a
+  fingerprint of what the brush confirmed in the node's flash (never an
+  entity) and writes only when it no longer matches: the birthday frame
+  (`0211`) on the brush's ack, the cloud host (`0233`, this node's address with
+  `cloud_receiver: true`) on the `Host` header of the brush's next request, the
+  Wi-Fi on the brush's BluFi connected report. A hidden, read-only `cloud_host`
+  text sensor shows the host the brush really uploads to.
+- X Ultra 20: an X Ultra 20 hub option fails validation on an `x_pro_elite`
+  hub, and the birthday frame, the cloud host and the Wi-Fi go only to a brush
+  that reports an X Ultra 20 family model.
 - X Ultra 20: `cloud_receiver: true` takes the brush's cloud session uploads
   on the node's web server and publishes them as the session entities: score,
   durations, timestamp and, from the full record, the eight `gesture_zone`
@@ -65,16 +70,15 @@
   condition, Today/Tomorrow and the day's low and high. The forecast needs the
   node allowed to perform Home Assistant actions; without that the brush gets
   the current condition and temperature.
-- X Ultra 20: birthday greeting buttons. Apply writes the `birthday` hub option
-  as the greeting date (`0211`) with the `gender` and `age` options, Clear
-  unsets it. All three are yaml options, not entities, so none of them reaches
-  the recorder; use `!secret`.
+- X Ultra 20: birthday greeting. The `birthday` hub option is the greeting date
+  (`0211`), sent with the `gender` and `age` options; on every wake that day the
+  brush shows its birthday screen. All three are yaml options, not entities, so
+  none of them reaches the recorder; use `!secret`.
 - The ESPHome floor is now 2026.6.0: the hub options that hold a secret
   (`wifi_password`, `birthday`, `gender`, `age`) are marked sensitive with
   `cv.sensitive` (2026.6.0), the session receiver registers on the web server
   outside its login, which the brush could not answer (2026.3.0), and the
-  point-at-node button formats the node's own IP through the network API of
-  2026.2.0.
+  cloud host takes the node's own IP from the network API of 2026.2.0.
 - The X Pro 20 (`OCLEANX20`) and the first X Ultra (`OCLEANV1*`) use the X
   Ultra 20 reply formats instead of TYPE1.
 

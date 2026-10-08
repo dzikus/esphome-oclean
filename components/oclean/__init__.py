@@ -62,16 +62,11 @@ MODEL_X_PRO_ELITE = "x_pro_elite"
 MODEL_X_ULTRA_20 = "x_ultra_20"
 DEFAULT_MODEL = MODEL_X_PRO_ELITE
 
-# The port point_cloud_at_node writes into the X Ultra 20 cloud host while
-# cloud_receiver is off. With it on, the receiver shares the web server, so the
-# button takes that server's port instead.
-CONF_CLOUD_RECEIVER_PORT = "cloud_receiver_port"
-DEFAULT_CLOUD_RECEIVER_PORT = 8099
-
 # In-node http receiver for the brush's cloud session uploads. It reuses the
 # shared ESPHome web server (web_server_base), so a web_server must be
 # configured. Off unless set true; the C++ is not compiled in otherwise
-# (USE_OCLEAN_CLOUD_RECEIVER).
+# (USE_OCLEAN_CLOUD_RECEIVER). With it on the hub also keeps the brush's cloud
+# host (0233) pointed at this node.
 CONF_CLOUD_RECEIVER = "cloud_receiver"
 # A record dated implausibly far in the future comes from a brush whose clock has
 # not been corrected yet. On (default) the receiver acks it so the brush erases it
@@ -85,10 +80,10 @@ CONF_CLOUD_DROP_FUTURE = "cloud_drop_future"
 # which Home Assistant performs only for a device allowed to perform actions.
 CONF_WEATHER = "weather"
 
-# "MM-DD" the apply_birthday button writes as the X Ultra 20 birthday greeting
-# date, with gender and age in the same frame. Yaml options baked into the
-# firmware, not entities, so none of it reaches the Home Assistant recorder; use
-# !secret. Gender codes and the 3-18 age range are what the app sends.
+# "MM-DD" the hub keeps as the X Ultra 20 birthday greeting date, with gender
+# and age in the same frame (0211). Yaml options baked into the firmware, not
+# entities, so none of it reaches the Home Assistant recorder; use !secret.
+# Gender codes and the 3-18 age range are what the app sends.
 CONF_BIRTHDAY = "birthday"
 CONF_GENDER = "gender"
 CONF_AGE = "age"
@@ -99,12 +94,12 @@ _gender = cv.enum(GENDERS, lower=True)
 _age = cv.int_range(min=3, max=18)
 _DAYS_IN_MONTH = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
-# BluFi Wi-Fi provisioning is off unless this is set true, and the C++ for it is
-# not compiled in otherwise (USE_OCLEAN_BLUFI).
+# With this true the hub keeps the brush on the Wi-Fi below over BluFi. Off by
+# default, and the C++ for it is not compiled in otherwise (USE_OCLEAN_BLUFI).
 CONF_WIFI_PROVISIONING = "wifi_provisioning"
-# Wi-Fi credentials the provision button sends to the brush over BluFi. Kept in
-# yaml (baked into the firmware), not as entities, so a password never reaches
-# the Home Assistant recorder. Left unset they fall back to the node's own wifi:.
+# Wi-Fi credentials the hub sends to the brush over BluFi. Kept in yaml (baked
+# into the firmware), not as entities, so a password never reaches the Home
+# Assistant recorder. Left unset they fall back to the node's own wifi:.
 CONF_WIFI_SSID = "wifi_ssid"
 CONF_WIFI_PASSWORD = "wifi_password"
 
@@ -137,18 +132,8 @@ _X_ULTRA_20_FLAG_KEYS = frozenset(
     }
 )
 _HEAD_COUNTER_KEYS = frozenset({"head_used_time", "head_used_days", "head_used_times"})
-# X Ultra 20 only: cloud host text and the write buttons.
-_X_ULTRA_20_TEXT_KEYS = frozenset({"cloud_host"})
-_X_ULTRA_20_WRITE_BUTTON_KEYS = frozenset(
-    {
-        "apply_cloud_host",
-        "clear_cloud_host",
-        "point_cloud_at_node",
-        "provision_wifi",
-        "apply_birthday",
-        "clear_birthday",
-    }
-)
+# X Ultra 20 only: the cloud host the brush uploads to, read from its requests.
+_X_ULTRA_20_TEXT_SENSOR_KEYS = frozenset({"cloud_host"})
 
 # Highest gear a program step may use; the firmware's motor tables end there.
 GEAR_MAX = {MODEL_X_PRO_ELITE: 41, MODEL_X_ULTRA_20: 54}
@@ -179,8 +164,7 @@ MODEL_ENTITY_SETS = {
                     "demo_mode",
                 }
             ),
-            "text": _X_ULTRA_20_TEXT_KEYS,
-            "button": _X_ULTRA_20_WRITE_BUTTON_KEYS,
+            "text_sensor": _X_ULTRA_20_TEXT_SENSOR_KEYS,
         },
         "dev": {
             "switch": frozenset({"area_reminder", "brush_pause", "brush_mode"}),
@@ -489,14 +473,41 @@ def _month_day(value):
     return f"{m:02d}-{d:02d}"
 
 
-def _validate_birthday(config):
-    for key in (CONF_BIRTHDAY, CONF_GENDER, CONF_AGE):
-        if key in config and config[CONF_MODEL] != MODEL_X_ULTRA_20:
-            raise cv.Invalid(
-                f"{key} goes to the birthday greeting, which only the "
-                f"{MODEL_X_ULTRA_20} shows",
-                path=[key],
-            )
+# Options only an x_ultra_20 hub has a use for. Elsewhere they do nothing at
+# best, and cloud_receiver would queue the 0233 cloud host write to a brush
+# whose profile passes every write. None has a schema default, so a key present
+# here was written in the yaml; the defaults are filled in afterwards.
+_X_ULTRA_20_OPTIONS = (
+    CONF_CLOUD_RECEIVER,
+    CONF_CLOUD_DROP_FUTURE,
+    CONF_WEATHER,
+    CONF_BIRTHDAY,
+    CONF_GENDER,
+    CONF_AGE,
+    CONF_WIFI_PROVISIONING,
+    CONF_WIFI_SSID,
+    CONF_WIFI_PASSWORD,
+)
+_X_ULTRA_20_DEFAULTS = {
+    CONF_CLOUD_RECEIVER: False,
+    CONF_CLOUD_DROP_FUTURE: True,
+    CONF_WIFI_PROVISIONING: False,
+}
+
+
+def _validate_x_ultra_20_options(config):
+    if config[CONF_MODEL] != MODEL_X_ULTRA_20:
+        for key in _X_ULTRA_20_OPTIONS:
+            if key in config:
+                raise cv.Invalid(
+                    f"{key} is an {MODEL_X_ULTRA_20} option and this hub has "
+                    f"model: {config[CONF_MODEL]}",
+                    path=[key],
+                )
+    # Copy before mutating: the validator may run against a shared dict.
+    config = dict(config)
+    for key, value in _X_ULTRA_20_DEFAULTS.items():
+        config.setdefault(key, value)
     return config
 
 
@@ -577,16 +588,15 @@ CONFIG_SCHEMA = cv.All(
                 CONF_CHARGING_INTERVAL, default="600s"
             ): _min_interval_validator(CONF_CHARGING_INTERVAL),
             cv.Optional(CONF_HOLD_CONNECTION_WHILE_DOCKED, default=True): cv.boolean,
-            cv.Optional(
-                CONF_CLOUD_RECEIVER_PORT, default=DEFAULT_CLOUD_RECEIVER_PORT
-            ): cv.port,
-            cv.Optional(CONF_CLOUD_RECEIVER, default=False): cv.boolean,
-            cv.Optional(CONF_CLOUD_DROP_FUTURE, default=True): cv.boolean,
+            # No schema default on the x_ultra_20 options:
+            # _validate_x_ultra_20_options fills them in.
+            cv.Optional(CONF_CLOUD_RECEIVER): cv.boolean,
+            cv.Optional(CONF_CLOUD_DROP_FUTURE): cv.boolean,
             cv.Optional(CONF_WEATHER): _weather_entity,
             cv.Optional(CONF_BIRTHDAY): cv.sensitive(_month_day),
             cv.Optional(CONF_GENDER): cv.sensitive(_gender),
             cv.Optional(CONF_AGE): cv.sensitive(_age),
-            cv.Optional(CONF_WIFI_PROVISIONING, default=False): cv.boolean,
+            cv.Optional(CONF_WIFI_PROVISIONING): cv.boolean,
             cv.Optional(CONF_WIFI_SSID): cv.string,
             cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
             cv.Optional(CONF_NAME_PREFIX): cv.All(
@@ -616,9 +626,9 @@ CONFIG_SCHEMA = cv.All(
     _validate_auto_sync_time,
     _validate_adaptive_poll,
     _validate_name_prefix_is_reachable,
+    _validate_x_ultra_20_options,
     _validate_blufi_wifi,
     _validate_weather,
-    _validate_birthday,
     cv.require_esphome_version(2026, 2, 0),
 )
 
@@ -701,7 +711,7 @@ def _blufi_ssid_available(config, wifi_config):
     # With wifi_provisioning on, there must be an SSID to send: the hub's
     # wifi_ssid, or a wifi: network to fall back on. A node on Ethernet has
     # neither unless wifi_ssid is set, so require it here rather than ship a
-    # provision button that can only warn at runtime.
+    # hub that can only warn at runtime.
     if not config.get(CONF_WIFI_PROVISIONING):
         return
     ssid, _password = resolve_blufi_wifi(
@@ -785,7 +795,6 @@ async def to_code(config):
     cg.add(
         var.set_hold_connection_while_docked(config[CONF_HOLD_CONNECTION_WHILE_DOCKED])
     )
-    cg.add(var.set_cloud_receiver_port(config[CONF_CLOUD_RECEIVER_PORT]))
     if config[CONF_CLOUD_RECEIVER]:
         cg.add_define("USE_OCLEAN_CLOUD_RECEIVER")
         cg.add(var.set_cloud_receiver_enabled(True))

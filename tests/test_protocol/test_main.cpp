@@ -854,6 +854,32 @@ void test_build_birthday_command() {
   TEST_ASSERT_EQUAL_UINT8(3, build_birthday_command(0, 1, 3, 7)[3]);
 }
 
+void test_sync_fingerprint() {
+  const uint8_t a[] = {0x02, 0x11, 0x00, 0x12, 0x03, 0x07};
+  const uint8_t b[] = {0x02, 0x11, 0x00, 0x12, 0x03, 0x08};
+  uint64_t const mac = 0xAABBCCDDEEFFULL;
+  uint32_t const fp = sync_fingerprint(mac, SyncSlot::BIRTHDAY, a, sizeof(a));
+  TEST_ASSERT_NOT_EQUAL(0, fp);
+  TEST_ASSERT_EQUAL_UINT32(fp, sync_fingerprint(mac, SyncSlot::BIRTHDAY, a, sizeof(a)));
+  // another value, slot or brush has to be written again
+  TEST_ASSERT_NOT_EQUAL(fp, sync_fingerprint(mac, SyncSlot::BIRTHDAY, b, sizeof(b)));
+  TEST_ASSERT_NOT_EQUAL(fp, sync_fingerprint(mac, SyncSlot::CLOUD_HOST, a, sizeof(a)));
+  TEST_ASSERT_NOT_EQUAL(fp, sync_fingerprint(mac + 1, SyncSlot::BIRTHDAY, a, sizeof(a)));
+  // pinned: a stored fingerprint has to match after a rebuild
+  TEST_ASSERT_EQUAL_UINT32(0x462A7C27U, sync_fingerprint(0, SyncSlot::BIRTHDAY, nullptr, 0));
+}
+
+void test_cloud_host_matches() {
+  // the brush leaves the port out of the Host header for 80
+  TEST_ASSERT_TRUE(cloud_host_matches("192.0.2.10", "http://192.0.2.10:80"));
+  TEST_ASSERT_TRUE(cloud_host_matches("192.0.2.10:80", "http://192.0.2.10:80"));
+  TEST_ASSERT_TRUE(cloud_host_matches("192.0.2.10:8099", "http://192.0.2.10:8099"));
+  TEST_ASSERT_FALSE(cloud_host_matches("192.0.2.10", "http://192.0.2.10:8099"));
+  TEST_ASSERT_FALSE(cloud_host_matches("192.0.2.11", "http://192.0.2.10:80"));
+  TEST_ASSERT_FALSE(cloud_host_matches("", "http://192.0.2.10:80"));
+  TEST_ASSERT_FALSE(cloud_host_matches("192.0.2.10", "192.0.2.10:80"));
+}
+
 void test_brush_weather_code() {
   // every Home Assistant condition lands on one of the brush's seven icons
   TEST_ASSERT_EQUAL_UINT8(2, static_cast<uint8_t>(brush_weather_code("sunny")));
@@ -1827,6 +1853,18 @@ void test_clock_write_permitted() {
   TEST_ASSERT_FALSE(clock_write_permitted(true, PROFILE_TYPE_V20));
 }
 
+void test_kept_values_only_on_the_x_ultra_20_family() {
+  TEST_ASSERT_TRUE(kept_values_permitted(PROFILE_TYPE_V20));
+  TEST_ASSERT_TRUE(kept_values_permitted(PROFILE_TYPE_V20_FAMILY));
+  // TYPE1 lets the cloud host frame through like any write: only this gate
+  // keeps it off an X Pro Elite
+  std::vector<uint8_t> const host = build_set_cloud_host_command("http://192.0.2.10:80");
+  TEST_ASSERT_TRUE(command_permitted(false, PROFILE_TYPE1, host.data(), host.size()));
+  TEST_ASSERT_FALSE(kept_values_permitted(PROFILE_TYPE1));
+  TEST_ASSERT_FALSE(kept_values_permitted(PROFILE_TYPE_Z1));
+  TEST_ASSERT_FALSE(kept_values_permitted(PROFILE_UNKNOWN));
+}
+
 static const uint8_t STATUS_CMD[] = {0x03, 0x03};
 static const uint8_t SETTINGS_CMD[] = {0x03, 0x02, 0x01};
 static const uint8_t DOWNLOAD_CMD[] = {0x03, 0x07};
@@ -2525,6 +2563,8 @@ int main() {
   RUN_TEST(test_parse_hex_bytes);
   RUN_TEST(test_parse_mac_u64);
   RUN_TEST(test_build_birthday_command);
+  RUN_TEST(test_sync_fingerprint);
+  RUN_TEST(test_cloud_host_matches);
   RUN_TEST(test_brush_weather_code);
   RUN_TEST(test_parse_iso8601_epoch);
   RUN_TEST(test_pick_weather_today_then_tomorrow);
@@ -2600,6 +2640,7 @@ int main() {
   RUN_TEST(test_profile_entity_model);
   RUN_TEST(test_validated_profiles_keep_writes_and_cccd_skip);
   RUN_TEST(test_clock_write_permitted);
+  RUN_TEST(test_kept_values_only_on_the_x_ultra_20_family);
   RUN_TEST(test_command_permitted_read_only_allows_only_profile_reads);
   RUN_TEST(test_command_permitted_v20_passes_only_listed_writes);
   RUN_TEST(test_command_permitted_v20_extra_reads);

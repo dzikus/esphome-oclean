@@ -45,6 +45,7 @@ class OcleanCloudReceiver : public AsyncWebHandler {
     httpd_req_t *r = *request;
     const char *uri = (r != nullptr) ? r->uri : "";
     ESP_LOGD(CLOUD_TAG, "request %s", uri);
+    this->note_host_(request);
     if (std::strstr(uri, "UploadBrushRecord") != nullptr) {
       this->handle_upload_(request);
     } else if (std::strstr(uri, "UploadingMacWiFi") != nullptr) {
@@ -80,6 +81,21 @@ class OcleanCloudReceiver : public AsyncWebHandler {
         return hub;
     }
     return nullptr;
+  }
+
+  // The Host header is the cloud host the brush has stored. A record names its
+  // brush; any other request counts only when one brush shares the receiver.
+  void note_host_(AsyncWebServerRequest *request) {
+    auto host = request->get_header("Host");
+    if (!host.has_value())
+      return;
+    OcleanHub *hub = this->hubs_.size() == 1 ? this->hubs_.front() : nullptr;
+    std::string mac_text;
+    uint64_t mac = 0;
+    if (cloud_body_field(this->body_.data(), this->body_.size(), "mac", &mac_text) && parse_mac_u64(mac_text, &mac))
+      hub = this->find_hub_(mac);
+    if (hub != nullptr)
+      hub->note_cloud_host(host.value());
   }
 
   // "ok" erases the brush's record, so ack only what was published: keep on the

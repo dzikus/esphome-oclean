@@ -534,6 +534,9 @@ std::vector<std::vector<uint8_t>> build_scheme_packets(uint8_t pnum, const std::
 // unfragmented packet; empty url writes 02 33 2A 00 00 (firmware falls back).
 static constexpr size_t CLOUD_HOST_MAX_LEN = 59;
 std::vector<uint8_t> build_set_cloud_host_command(std::string_view url);
+// The Host header of a request the brush sent is the host it has stored: host
+// alone for port 80, host:port otherwise. True when it names the http:// url.
+bool cloud_host_matches(std::string_view host_header, std::string_view url);
 
 // === Birthday greeting (0211) ===
 // 02 11 [gender][age][month][day]. On every wake on that day the X Ultra 20
@@ -568,6 +571,17 @@ std::vector<uint8_t> build_blufi_frame(uint8_t frame_type, uint8_t subtype, cons
 // A Wi-Fi connection report (data subtype 15): opmode and the station state
 // (0 = connected) from the frame's data field. False for any other frame.
 bool parse_blufi_wifi_status(const uint8_t *data, size_t len, uint8_t *opmode, uint8_t *sta_state);
+
+// === Values the hub keeps on the brush from its yaml ===
+// The birthday frame (0211), the cloud host (0233) and the BluFi Wi-Fi
+// credentials cannot be read back. The hub stores a fingerprint of what the
+// brush confirmed and writes again only when it changes: another yaml value,
+// another node address, another brush.
+enum class SyncSlot : uint8_t { BIRTHDAY = 0, CLOUD_HOST = 1, WIFI = 2 };
+static constexpr size_t SYNC_SLOTS = 3;
+// FNV-1a over the MAC, the slot and the payload; never 0, which stands for
+// nothing confirmed
+uint32_t sync_fingerprint(uint64_t mac, SyncSlot slot, const uint8_t *payload, size_t len);
 
 // === Cloud session receiver (UploadBrushRecord body) ===
 // The brush posts a flat JSON object whose string values carry no escapes or

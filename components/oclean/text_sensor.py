@@ -17,7 +17,15 @@ from . import (
 # rarely needs on the dashboard; created but disabled by default in Home
 # Assistant, same as the connected sensor.
 HIDDEN_TEXT_SENSOR_KEYS = frozenset(
-    {"model", "hw_revision", "sw_version", "mac_address", "last_seen", "timezone"}
+    {
+        "model",
+        "hw_revision",
+        "sw_version",
+        "mac_address",
+        "last_seen",
+        "timezone",
+        "cloud_host",
+    }
 )
 
 DEPENDENCIES = ["oclean"]
@@ -107,6 +115,15 @@ TEXT_SENSORS = [
         "mdi:bluetooth",
         ENTITY_CATEGORY_DIAGNOSTIC,
         "MAC address",
+        None,
+    ),
+    # X Ultra 20: the host the brush uploads to, read from its own requests
+    (
+        "cloud_host",
+        "set_cloud_host_text_sensor",
+        "mdi:cloud-check-outline",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Cloud host",
         None,
     ),
 ]

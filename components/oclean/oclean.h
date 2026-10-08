@@ -49,7 +49,6 @@ class OcleanSchemeSelect;
 class OcleanLanguageSelect;
 class OcleanHeadMaxNumber;
 class OcleanSyncTimeButton;
-class OcleanStoredText;
 
 // Connect-poll-disconnect: the brush streams nothing live, it buffers sessions
 // and hands them over on request, so the link stays down between polls and the
@@ -188,7 +187,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   }
   void set_scheme_select(OcleanSchemeSelect *s) { this->scheme_select_ = s; }
   void set_language_select(OcleanLanguageSelect *s) { this->language_select_ = s; }
-  void set_cloud_host_text(OcleanStoredText *t) { this->cloud_host_text_ = t; }
+  void set_cloud_host_text_sensor(text_sensor::TextSensor *s) { this->cloud_host_text_sensor_ = s; }
   // baked from yaml (secrets), never entities, so they stay out of the recorder
   void set_birthday(uint8_t month, uint8_t day) {
     this->birthday_month_ = month;
@@ -204,9 +203,6 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_blufi_ssid(const std::string &s) { this->blufi_ssid_ = s; }
   void set_blufi_password(const std::string &s) { this->blufi_password_ = s; }
 #endif
-  // the port point_cloud_at_node writes while cloud_receiver is off; with it on,
-  // the receiver shares the web server and its port
-  void set_cloud_receiver_port(uint16_t p) { this->cloud_receiver_port_ = p; }
 
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
   void set_cloud_receiver_enabled(bool en) { this->cloud_receiver_enabled_ = en; }
@@ -223,6 +219,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   // node local time as "YYYYMMDDHHMMSS" for the brush's currentTime (firmware
   // parses the digits, not an epoch), empty when the node clock is unset
   std::string cloud_current_time();
+  // web server task: the Host header of a request from this brush, which is
+  // the cloud host it has stored (0233 has no read-back over BLE)
+  void note_cloud_host(const std::string &host);
 #ifdef USE_OCLEAN_WEATHER
   // Home Assistant weather entity behind the brush's WeatherKit answer: its
   // state and temperature by subscription, the daily forecast by action
@@ -260,28 +259,6 @@ class OcleanHub : public ble_client::BLEClientNode,
   // False, with a warning, for an id past what this brush's firmware has: the
   // brush would switch to English instead.
   bool language_available(uint8_t id);
-
-  // Writes the staged cloud-host text (empty clears to the firmware fallback).
-  // X Ultra 20 only; a no-op with a warning without the text platform or entity.
-  void apply_cloud_host();
-  void clear_cloud_host();
-
-  // Writes the configured birthday as the brush's greeting date, or the unset
-  // date. X Ultra 20 only, like the cloud host.
-  void apply_birthday();
-  void clear_birthday();
-
-  // Writes http://<this node's IPv4>:<port> as the cloud host, so the brush
-  // uploads to this node: the web server's port with cloud_receiver on, else
-  // cloud_receiver_port. Warns if no address is up yet.
-  void point_cloud_at_node();
-
-#ifdef USE_OCLEAN_BLUFI
-  // Provisions the brush onto Wi-Fi over BluFi with the configured SSID and
-  // password. X Ultra 20 only; brings the link up if down, then runs the
-  // frame sequence.
-  void provision_wifi();
-#endif
 
  protected:
   // per-cycle flags plus the watchdog, for a link that is already up.
@@ -369,10 +346,24 @@ class OcleanHub : public ble_client::BLEClientNode,
   // keeps the Wi-Fi password frame out of the log.
   bool write_blufi_frame_(const std::vector<uint8_t> &frame, const char *name, bool redact = false);
   void handle_blufi_notify_(const uint8_t *data, size_t len);
+  // true, and the attempt recorded, when the yaml Wi-Fi is not confirmed and has
+  // not been tried since boot: a wrong password must not reprovision every cycle
+  bool wifi_sync_due_();
 #endif
   // Staggered: Write With Response allows one outstanding write. Returns the ms
   // offset at which the read queries may start without colliding.
   uint32_t flush_pending_writes_();
+
+  // === Values kept on the brush from the yaml (0211, 0233, BluFi) ===
+  // None can be read back over BLE, so the hub stores a fingerprint of what the
+  // brush confirmed (NVS, never an entity) and writes only on a mismatch.
+  uint32_t value_fingerprint_(SyncSlot slot, const uint8_t *payload, size_t len) const;
+  void store_synced_(SyncSlot slot, uint32_t fp, const char *what);
+  // queues the 0211 and 0233 writes the brush has not confirmed; once per round
+  void queue_value_sync_();
+  bool handle_value_sync_ack_(const uint8_t *data, size_t len);
+  // http://<this node's IPv4>:<web server port>, empty until an address is up
+  static std::string node_cloud_url_();
 
   void handle_dis_read_(uint16_t uuid16, const uint8_t *data, size_t len);
   void handle_battery_(const uint8_t *data, size_t len);
@@ -508,17 +499,26 @@ class OcleanHub : public ble_client::BLEClientNode,
   OcleanCommandSwitch *brush_mode_switch_{nullptr};
   OcleanSchemeSelect *scheme_select_{nullptr};
   OcleanLanguageSelect *language_select_{nullptr};
-  OcleanStoredText *cloud_host_text_{nullptr};
+  text_sensor::TextSensor *cloud_host_text_sensor_{nullptr};
   uint8_t birthday_month_{BIRTHDAY_UNSET};
   uint8_t birthday_day_{BIRTHDAY_UNSET};
   uint8_t user_gender_{USER_GENDER_DEFAULT};
   uint8_t user_age_{USER_AGE_DEFAULT};
+  struct SyncedValues {
+    std::array<uint32_t, SYNC_SLOTS> fp;
+  };
+  SyncedValues synced_{};
+  esphome::ESPPreferenceObject synced_pref_;
+  // fingerprint of a write sent this round, until its ack
+  std::array<uint32_t, SYNC_SLOTS> sync_sent_{};
+  // a cloud host the brush acked but no request has confirmed yet: not written
+  // again before a reboot or a request naming another host
+  uint32_t cloud_host_written_fp_{0};
 
   State state_{State::IDLE};
   BrushModel model_{BrushModel::X_PRO_ELITE};
   bool expose_dev_sensors_{false};
   bool read_only_{false};
-  uint16_t cloud_receiver_port_{8099};
 
   // Handles resolved at SEARCH_CMPL for the characteristics this hub uses.
   uint16_t battery_handle_{0};
@@ -612,6 +612,12 @@ class OcleanHub : public ble_client::BLEClientNode,
   Mutex cloud_mutex_;
   std::vector<SessionRecord> cloud_inbound_;
   std::vector<uint32_t> cloud_captured_;
+  // Host header of the brush's latest request, handed to the main loop
+  std::string cloud_host_seen_;
+  bool cloud_host_fresh_{false};
+  // the main loop's side: what the read-only entity last showed
+  std::string cloud_host_shown_;
+  void process_cloud_host_(const std::string &host);
 #ifdef USE_OCLEAN_WEATHER
   std::string weather_entity_;
   // main loop writes, the web server task copies, both under cloud_mutex_
@@ -642,12 +648,13 @@ class OcleanHub : public ble_client::BLEClientNode,
   bool capture_active_{false};
 
 #ifdef USE_OCLEAN_BLUFI
-  // BluFi provisioning. The credentials are baked from yaml at build time; the
-  // armed flag is consumed at the start of the provisioning cycle.
-  bool blufi_provision_armed_{false};
   std::string blufi_ssid_{};
   std::string blufi_password_{};
   uint8_t blufi_seq_{0};
+  // fingerprint of the credentials tried this boot, and of the run awaiting
+  // the brush's connected report
+  uint32_t blufi_tried_fp_{0};
+  uint32_t blufi_pending_fp_{0};
 #endif
   // Reassembles the *B# record stream that arrives on the session notify
   // characteristic during a capture window.

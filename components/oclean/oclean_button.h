@@ -36,45 +36,6 @@ class OcleanPollNowButton : public button::Button, public Parented<OcleanHub> {
   void press_action() override { this->parent_->trigger_immediate_poll(); }
 };
 
-// Writes the staged cloud-host text to the brush (X Ultra 20).
-class OcleanApplyCloudHostButton : public button::Button, public Parented<OcleanHub> {
- public:
-  void press_action() override { this->parent_->apply_cloud_host(); }
-};
-
-// Reverts the brush to its firmware fallback server.
-class OcleanClearCloudHostButton : public button::Button, public Parented<OcleanHub> {
- public:
-  void press_action() override { this->parent_->clear_cloud_host(); }
-};
-
-// Writes the staged MM-DD as the birthday greeting date (X Ultra 20).
-class OcleanApplyBirthdayButton : public button::Button, public Parented<OcleanHub> {
- public:
-  void press_action() override { this->parent_->apply_birthday(); }
-};
-
-// Unsets the birthday greeting date.
-class OcleanClearBirthdayButton : public button::Button, public Parented<OcleanHub> {
- public:
-  void press_action() override { this->parent_->clear_birthday(); }
-};
-
-// Points the cloud host at this node: its IPv4 and the receiver port.
-class OcleanPointCloudHereButton : public button::Button, public Parented<OcleanHub> {
- public:
-  void press_action() override { this->parent_->point_cloud_at_node(); }
-};
-
-// Provisions the brush onto Wi-Fi over BluFi with the configured SSID and
-// password. Compiled only with wifi_provisioning: true.
-#ifdef USE_OCLEAN_BLUFI
-class OcleanProvisionWifiButton : public button::Button, public Parented<OcleanHub> {
- public:
-  void press_action() override { this->parent_->provision_wifi(); }
-};
-#endif
-
 }  // namespace esphome::oclean
 
 #endif  // USE_ESP32 && USE_BUTTON

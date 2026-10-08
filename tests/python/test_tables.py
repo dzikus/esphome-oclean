@@ -21,7 +21,6 @@ import oclean.number as ocnum
 import oclean.select as ocsel
 import oclean.sensor as ocsens
 import oclean.switch as ocsw
-import oclean.text as octext
 import oclean.text_sensor as octs
 
 PLATFORMS = {
@@ -32,7 +31,6 @@ PLATFORMS = {
     "select": ocsel,
     "number": ocnum,
     "button": ocbtn,
-    "text": octext,
 }
 
 
@@ -373,21 +371,50 @@ class BirthdayOption(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(cv.Invalid):
                 oc.parse_month_day(value)
 
-    def test_x_ultra_20_only(self):
-        x20 = {oc.CONF_MODEL: oc.MODEL_X_ULTRA_20, oc.CONF_BIRTHDAY: "03-07"}
-        self.assertEqual(oc._validate_birthday(x20), x20)
-        for key, value in (
-            (oc.CONF_BIRTHDAY, "03-07"),
-            (oc.CONF_GENDER, "female"),
-            (oc.CONF_AGE, 9),
-        ):
+
+X_ULTRA_20_DEFAULTS = {
+    oc.CONF_CLOUD_RECEIVER: False,
+    oc.CONF_CLOUD_DROP_FUTURE: True,
+    oc.CONF_WIFI_PROVISIONING: False,
+}
+
+
+class XUltra20Options(unittest.TestCase):
+    # on an X Pro Elite hub cloud_receiver would queue the 0233 cloud host write
+    WRITTEN = (
+        (oc.CONF_CLOUD_RECEIVER, True),
+        (oc.CONF_CLOUD_RECEIVER, False),
+        (oc.CONF_CLOUD_DROP_FUTURE, True),
+        (oc.CONF_WEATHER, "weather.home"),
+        (oc.CONF_BIRTHDAY, "03-07"),
+        (oc.CONF_GENDER, "female"),
+        (oc.CONF_AGE, 9),
+        (oc.CONF_WIFI_PROVISIONING, True),
+        (oc.CONF_WIFI_SSID, "home"),
+        (oc.CONF_WIFI_PASSWORD, "secret"),
+    )
+
+    def test_refused_on_the_x_pro_elite(self):
+        for key, value in self.WRITTEN:
             elite = {oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE, key: value}
-            with self.subTest(key=key), self.assertRaises(cv.Invalid):
-                oc._validate_birthday(elite)
-        self.assertEqual(
-            oc._validate_birthday({oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE}),
-            {oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE},
-        )
+            with self.subTest(key=key), self.assertRaises(cv.Invalid) as caught:
+                oc._validate_x_ultra_20_options(elite)
+            self.assertIn(key, str(caught.exception))
+
+    def test_taken_on_the_x_ultra_20(self):
+        for key, value in self.WRITTEN:
+            x20 = {oc.CONF_MODEL: oc.MODEL_X_ULTRA_20, key: value}
+            with self.subTest(key=key):
+                self.assertEqual(oc._validate_x_ultra_20_options(x20)[key], value)
+
+    def test_defaults_filled_on_both_models(self):
+        for model in (oc.MODEL_X_PRO_ELITE, oc.MODEL_X_ULTRA_20):
+            out = oc._validate_x_ultra_20_options({oc.CONF_MODEL: model})
+            with self.subTest(model=model):
+                self.assertEqual(
+                    {k: out[k] for k in X_ULTRA_20_DEFAULTS}, X_ULTRA_20_DEFAULTS
+                )
+                self.assertNotIn(oc.CONF_WEATHER, out)
 
 
 class UserProfileOptions(unittest.TestCase):

@@ -275,15 +275,14 @@ Set on the `oclean:` entry, not on the platforms.
 | `expose_dev_sensors` | bool | `false` | Creates the dev entities of the hub's model (see the per-platform tables) and logs the brush's GATT services and characteristics on each connect. |
 | `read_only` | bool | `false` | The brush only receives the profile's `03` read queries; the X Ultra 20's Wi-Fi check `02 34` is held back too. Every write is refused and logged: controls, clock sync, `0202`. |
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
-| `cloud_receiver_port` | int 1-65535 | `8099` | Port the `point_cloud_at_node` button puts in the host URL when `cloud_receiver` is off. With `cloud_receiver` on, the receiver rides on the web server, so the button uses the web server's port instead. X Ultra 20 only. |
-| `cloud_receiver` | bool | `false` | Receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. It does **not** start its own server: it registers a handler on the shared ESPHome web server, so a `web_server:` must be configured (validation requires it) and the uploads arrive on the web server's port. The code is not compiled in unless this is true. Needs the brush pointed at the node (`point_cloud_at_node`) and able to reach it over the network. See **In-node session receiver**. |
+| `cloud_receiver` | bool | `false` | Receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. It does **not** start its own server: it registers a handler on the shared ESPHome web server, so a `web_server:` must be configured (validation requires it) and the uploads arrive on the web server's port. The code is not compiled in unless this is true. The hub points the brush's cloud host at this node itself (see **Values kept on the brush**); the brush has to be able to reach the node over the network. See **In-node session receiver**. |
 | `cloud_drop_future` | bool | `true` | What the receiver does with an upload dated implausibly far in the future, which comes from a brush whose clock was not corrected yet. `true` acks it, so the brush erases it instead of re-uploading it on every connect; `false` leaves it on the brush. Never published either way. Only matters with `cloud_receiver: true`. X Ultra 20 only. |
 | `weather` | `weather.*` entity id | unset | Answers the brush's weather request from this Home Assistant weather entity, so its clock page shows an icon, Today/Tomorrow and the day's low and high. Needs `cloud_receiver: true`, `time_id` and an `api:` block; one hub per node. The forecast needs the device to be allowed to perform Home Assistant actions; without that it shows the current condition and temperature. X Ultra 20 only. See **Weather on the brush**. |
-| `birthday` | `MM-DD` | unset | Date the `apply_birthday` button writes as the birthday greeting. A yaml option baked into the firmware, never an entity, so the date stays out of the Home Assistant recorder; use `!secret`. X Ultra 20 only. |
-| `gender` | `unknown`, `male`, `female` | `unknown` | Goes in the same frame as the date, from both birthday buttons. Baked in like `birthday`, never an entity; use `!secret`. The brush stores it and shows nothing of it. X Ultra 20 only. |
+| `birthday` | `MM-DD` | unset | Birthday greeting date the hub keeps on the brush (see **Values kept on the brush**): on every wake that day the brush shows its birthday screen with the date, whether or not the holiday greetings are on. A yaml option baked into the firmware, never an entity, so the date stays out of the Home Assistant recorder; use `!secret`. X Ultra 20 only. |
+| `gender` | `unknown`, `male`, `female` | `unknown` | Goes in the same frame as the date. Baked in like `birthday`, never an entity; use `!secret`. The brush stores it and shows nothing of it. X Ultra 20 only. |
 | `age` | int 3-18 | `18` | Goes in the same frame. 3-18 is the app's range, where any adult is 18. Baked in, never an entity; use `!secret`. The brush stores it and shows nothing of it. X Ultra 20 only. |
-| `wifi_provisioning` | bool | `false` | Enables BluFi Wi-Fi provisioning (the `provision_wifi` button). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
-| `wifi_ssid` | string | the node's `wifi:` SSID | The network `provision_wifi` joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
+| `wifi_provisioning` | bool | `false` | The hub keeps the brush on the Wi-Fi below over BluFi (see **Values kept on the brush**). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
+| `wifi_ssid` | string | the node's `wifi:` SSID | The network the hub joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
 | `wifi_password` | string | the node's `wifi:` password | Passphrase for `wifi_ssid`. Needs `wifi_provisioning: true`. Baked into the firmware, not an entity, so it never reaches the recorder; use `!secret`. |
 
 The brushing-mode select additionally accepts `custom_modes` (a list of named
@@ -357,6 +356,7 @@ validation.
 | `sw_version` | Software version | DIS 0x2A28 | hidden |
 | `mac_address` | MAC address | BLE | hidden |
 | `model` | Model | DIS 0x2A24 | hidden; the raw model id that drives profile selection |
+| `cloud_host` | Cloud host | `Host` header of the brush's requests | hidden, read-only; X Ultra 20 only; the host the brush uploads to, as read from its own requests to the receiver (see **Values kept on the brush**) |
 
 ### Entities (switch)
 
@@ -434,29 +434,38 @@ program wants four steps to keep the four-quadrant guidance.
 | `sync_time` | Sync clock | writes `02 01` + 8 bytes | created only when the hub has `time_id`; writes on press only |
 | `poll_now` | Poll now | immediate poll cycle | hidden by default; read-only on the brush |
 | `capture_sessions` | Capture sessions | session download + 30 s hold | **dev**; keeps the link open so the raw record stream lands in the log |
-| `apply_cloud_host` | Apply cloud host | writes `02 33` + url | X Ultra 20 only; opt-in; sends the `cloud_host` text to the brush |
-| `clear_cloud_host` | Clear cloud host | writes `02 33 2A 00 00` | X Ultra 20 only; opt-in; reverts the brush to its firmware default server |
-| `point_cloud_at_node` | Point cloud at this node | writes `02 33` + `http://<node ip>:<port>` | X Ultra 20 only; opt-in; fills the host with this node's own IPv4 and the receiver port (the web server's port when `cloud_receiver` is on, otherwise `cloud_receiver_port`) |
-| `provision_wifi` | Provision Wi-Fi | BluFi join with the configured SSID/password | X Ultra 20 only; needs `wifi_provisioning: true` (see **Hub options**); runs the BluFi sequence over service `0xFFFF` on the next connect |
-| `apply_birthday` | Apply birthday greeting | writes `02 11 <gender> <age> <month> <day>` | X Ultra 20 only; opt-in; needs the hub's `birthday` option and sends it as the greeting date. On every wake that day the brush shows its birthday screen with the date, whether or not the holiday greetings are on. Gender and age come from the hub's `gender` and `age` options (0 unknown, 1 male, 2 female; 18 unless set) and overwrite the brush's own; its firmware stores them only. |
-| `clear_birthday` | Clear birthday greeting | writes `02 11 <gender> <age> FF FF` | X Ultra 20 only; opt-in; a date that never matches, the brush's unset state |
 
-### Entities (text)
+### Values kept on the brush
 
-Opt-in and X Ultra 20 only: list the key to create it.
+On the X Ultra 20 the hub keeps three things on the brush from its yaml, with no
+button: the birthday greeting (`birthday`, `gender`, `age`), the cloud host
+(with `cloud_receiver: true`, this node's own address) and the Wi-Fi (with
+`wifi_provisioning: true`). None of them is an entity, so none reaches the Home
+Assistant recorder, and the brush cannot report any of them back over BLE. The
+hub therefore keeps a fingerprint of what the brush confirmed in the node's
+flash (the brush MAC is part of it) and writes again only when it no longer
+matches: another yaml value, another node address, another brush. It writes
+them only to a brush that reports an X Ultra 20 family model, so a wrong
+`model:` never sends them to an X Pro Elite.
 
-| Key | Default name | Effect | Notes |
-|---|---|---|---|
-| `cloud_host` | Cloud host | local store | the upload-server address written to the brush by `apply_cloud_host` (`02 33`); at most 59 bytes. The firmware has no read-back, so the field holds the last value written here, not the brush's own. |
+| Value | Written | Confirmed by |
+|---|---|---|
+| birthday greeting | `02 11 <gender> <age> <month> <day>` | the brush's `02 11 4F 4B` |
+| cloud host | `02 33` + `http://<node IPv4>:<web server port>` | the next request the brush sends to the receiver, whose `Host` header is the host the brush has stored |
+| Wi-Fi | BluFi join over service `0xFFFF` | the brush's BluFi report that it is connected; a `02 34` reply of 0 (no Wi-Fi stored, e.g. after a factory reset) makes the hub provision again |
+
+A value goes out on the first link after it changes. A cloud host the brush has
+acked is not written again before a reboot while the hub waits for the next
+upload (after a brushing) to confirm it, and a Wi-Fi join that does not
+connect is tried once per boot. `read_only: true` writes none of them. The
+Oclean app sends its own account's birthday on every connection and the hub
+cannot see that, so after the app has been used the hub keeps its stale
+confirmation until the yaml value changes.
+
 The brush takes `02 33` with no pairing, so treat it as a redirect, not a
-control. Point it at a server you run, and block the brush's internet on the
-router, to keep its uploads off the vendor cloud; with no Wi-Fi set the brush
-uploads nothing and this does not apply.
-
-Wi-Fi provisioning credentials are **not** entities: a password would be kept
-in the Home Assistant recorder. They are the `wifi_ssid` and `wifi_password` hub
-options (see **Hub options**), baked into the firmware like the node's own
-`wifi:`; `provision_wifi` is a button, which has no recorded state.
+control: block the brush's internet on the router to keep its uploads off the
+vendor cloud. The hub points it at this node's own IPv4; a brush that reaches
+the node only through another address (a NAT on a router) is not supported.
 
 ### In-node session receiver
 
@@ -473,11 +482,11 @@ ESPHome web server (the one `web_server` and `captive_portal` use), so a
 (80 by default). Reusing the one server avoids a second listener competing for
 the device's limited sockets.
 
-Setup is three steps: `wifi_provisioning` to join the brush to a network,
-`point_cloud_at_node` to aim its cloud host at the node (it fills in the web
-server's port automatically), and a route that lets the brush reach the node
-(the brush and the node are often on different VLANs). The transport is HTTP
-only; the brush accepts a plain `http://` host, and the node does not serve TLS.
+The hub joins the brush to a network (`wifi_provisioning`) and points its cloud
+host at the node by itself (see **Values kept on the brush**); what is left is a
+route that lets the brush reach the node (the brush and the node are often on
+different VLANs). The transport is HTTP only; the brush accepts a plain
+`http://` host, and the node does not serve TLS.
 
 The brush keeps a record until the server answers "ok", then drops it and sends
 the next. So the receiver answers "ok" only after a record has been published,

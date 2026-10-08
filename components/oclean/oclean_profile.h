@@ -107,6 +107,11 @@ bool clock_write_permitted(bool read_only, const OcleanProfile &profile);
 
 bool command_permitted(bool read_only, const OcleanProfile &profile, const uint8_t *bytes, size_t len);
 
+// The birthday frame, the cloud host and the BluFi Wi-Fi exist on the X Ultra 20
+// family only, and TYPE1 or an unknown profile passes any write, so the model
+// the brush reports gates them, not the opcode.
+bool kept_values_permitted(const OcleanProfile &profile);
+
 // the query answered by the settings transfer; nullptr when the profile reads none
 const ProfileCmd *settings_query(const OcleanProfile &profile);
 

@@ -895,6 +895,26 @@ std::vector<uint8_t> build_set_cloud_host_command(std::string_view url) {
   return cmd;
 }
 
+static void split_host_port(std::string_view hp, std::string_view *host, std::string_view *port) {
+  size_t const colon = hp.rfind(':');
+  *host = hp.substr(0, colon);
+  *port = colon == std::string_view::npos ? std::string_view("80") : hp.substr(colon + 1);
+}
+
+bool cloud_host_matches(std::string_view host_header, std::string_view url) {
+  static constexpr std::string_view SCHEME = "http://";
+  if (host_header.empty() || !url.starts_with(SCHEME))
+    return false;
+  url.remove_prefix(SCHEME.size());
+  std::string_view seen_host;
+  std::string_view seen_port;
+  std::string_view want_host;
+  std::string_view want_port;
+  split_host_port(host_header, &seen_host, &seen_port);
+  split_host_port(url, &want_host, &want_port);
+  return seen_host == want_host && seen_port == want_port;
+}
+
 std::vector<uint8_t> build_blufi_frame(uint8_t frame_type, uint8_t subtype, const uint8_t *data, size_t data_len,
                                        uint8_t seq) {
   uint8_t const type_byte = static_cast<uint8_t>(((subtype & 0x3F) << 2) | (frame_type & 0x03));
@@ -916,6 +936,22 @@ bool parse_blufi_wifi_status(const uint8_t *data, size_t len, uint8_t *opmode, u
   *opmode = data[4];
   *sta_state = data[5];
   return true;
+}
+
+uint32_t sync_fingerprint(uint64_t mac, SyncSlot slot, const uint8_t *payload, size_t len) {
+  static constexpr uint32_t FNV_OFFSET = 2166136261U;
+  static constexpr uint32_t FNV_PRIME = 16777619U;
+  uint32_t h = FNV_OFFSET;
+  auto mix = [&h](uint8_t b) {
+    h ^= b;
+    h *= FNV_PRIME;
+  };
+  for (unsigned i = 0; i < 6; i++)
+    mix(static_cast<uint8_t>(mac >> (8 * i)));
+  mix(static_cast<uint8_t>(slot));
+  for (size_t i = 0; i < len; i++)
+    mix(payload[i]);
+  return h != 0 ? h : 1;
 }
 
 std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute,

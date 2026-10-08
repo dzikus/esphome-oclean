@@ -55,10 +55,9 @@ static const ProfileCmd V20_QUERY_CMDS[] = {
      .name = "WIFI_CONFIG"},
 };
 
-// The first nine were acknowledged by the brush and read back from the settings
-// buffer; the program, teaching, retail and birthday writes are known from the
-// firmware image only. 0206 and 0230 move the brush off the mode picked on its
-// screen, with no way back over BLE; 02A0 keeps it awake on battery.
+// 0233 and 0211 have no read-back. 0206 moves the brush off the mode picked on
+// its screen, with no way back over BLE; 02A0 keeps it awake on battery, and on
+// the dock it is acked without the retail mode coming on.
 static const uint8_t V20_WRITE_OPCODES[][2] = {
     {0x02, 0x0D},  // area reminder
     {0x02, 0x12},  // over-pressure alert
@@ -259,6 +258,10 @@ const OcleanProfile *profile_for_model(const char *model, size_t len) {
 
 bool clock_write_permitted(bool read_only, const OcleanProfile &profile) {
   return !read_only && (profile.allows_writes || profile.allows_clock_write);
+}
+
+bool kept_values_permitted(const OcleanProfile &profile) {
+  return profile.entity_model == BrushModel::X_ULTRA_20;
 }
 
 static constexpr uint8_t READ_CATEGORY = 0x03;
