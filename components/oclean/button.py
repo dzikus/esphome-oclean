@@ -61,7 +61,7 @@ DEFAULT_RESET_HEAD_NAME = "Reset brush head"
 CONF_SYNC_TIME = "sync_time"
 DEFAULT_SYNC_TIME_NAME = "Sync clock"
 
-# Always created but disabled by default in Home Assistant. Forces an
+# X Pro Elite only, disabled by default in Home Assistant. Forces an
 # immediate full poll cycle (read-only on the brush).
 CONF_POLL_NOW = "poll_now"
 DEFAULT_POLL_NOW_NAME = "Poll now"

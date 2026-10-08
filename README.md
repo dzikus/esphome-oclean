@@ -124,7 +124,10 @@ silently dropped by the brush.
 ### What it exposes per brush
 
 The entity set follows the hub's `model:` option, so each brush gets only the
-entities it has data or an opcode for. Counts below are with the default
+entities it has data or an opcode for. A row whose only source is a hub option
+is built only with that option (on the X Ultra 20: `cloud_receiver` for the
+score, the zones and the cloud host, `birthday` for birthday written); naming
+it in yaml without the option fails validation. Counts below are with the default
 `expose_dev_sensors: false`, which leaves out the dev entities: rows with no
 observable effect on that brush, and the session-capture button. Several
 entities are created with `disabled_by_default: true`, so they stay hidden in
@@ -149,23 +152,29 @@ X Pro Elite (`model: x_pro_elite`, the default):
 
 X Ultra 20 (`model: x_ultra_20`):
 
-- 10 sensors: battery, battery voltage, last-session score / duration / valid
-  duration / coverage, device mode, mode number, running state, clock drift
-  (mode number, running state and clock drift hidden). No zone sensors: its
-  12-zone record is not mapped yet. No brush-head counters: firmware 0.0.1.6
-  never counts head use.
-- 6 binary sensors: charging, docked, BLE connected (hidden), Wi-Fi
-  provisioned, zone guidance, auto update.
-- 9 text sensors, as above.
-- 11 switches: over-pressure alert, raise to wake, voice on zone change (the
-  `area_reminder` key), auto mode, holiday reminder, voice teaching, retail
-  display mode, voice prompts, voice on fast brushing, voice on over-pressure,
-  bluetooth.
+- 9 sensors: battery, battery voltage, last-session duration / valid duration
+  / coverage, device mode, mode number, running state, clock drift (mode
+  number, running state and clock drift hidden). With `cloud_receiver: true`
+  also the last-session score and the 8 per-zone gesture values, which reach
+  the node only in the brush's cloud upload. No quadrant sensors: the record's
+  12-zone map and quadrants are not decoded. No brush-head counters: firmware
+  0.0.1.6 never counts head use.
+- 5 binary sensors: charging, docked, BLE connected (hidden), Wi-Fi
+  provisioned, zone guidance; with `birthday` on the hub also birthday written
+  (hidden).
+- 9 text sensors, as above; with `cloud_receiver: true` also cloud host
+  (hidden).
+- 10 switches: raise to wake, voice on zone change (the `area_reminder` key),
+  auto mode, holiday reminder, voice teaching, retail display mode, voice
+  prompts, voice on fast brushing, voice on over-pressure, bluetooth. No
+  over-pressure alert: firmware 0.0.1.6 stores its flag (`02 12`) and reads it
+  nowhere else; the pressure prompt is the voice switch.
 - 8 numbers: custom-program step parameters.
 - 2 selects: brushing mode, language (the `device_language` key, which also
   sets the voice prompt language).
-- 2 buttons: sync clock (needs `time_id`), poll now (hidden). 1 dev button:
-  capture sessions.
+- No buttons: BLE never hands over the stored sessions, and every Wi-Fi
+  connection sets the brush clock from the time answer (the session receiver
+  answers with the node's time), over any BLE clock write.
 
 On the X Ultra 20 the brushing-mode select shows the mode picked on the screen
 ("Screen mode 1" .. "Screen mode 5") or "Voice teaching", and writes only
@@ -307,11 +316,11 @@ naming a model exist only on hubs with that `model:`.
 |---|---|---|---|
 | `battery` | Battery | battery characteristic / STATUS | percent, diagnostic |
 | `battery_voltage` | Battery voltage | STATUS bytes 3-4 BE | volts from the millivolt reading, diagnostic; a reading outside 2-5 V is not published |
-| `last_session_score` | Score | session record byte 33 | 0-100; the no-score sentinel (0xFF) and the score 1 the firmware gives a void session (14 s or less of brushing, or 85% or more of it without motion) read as unknown |
+| `last_session_score` | Score | session record byte 33 | 0-100; the no-score sentinel (0xFF) and the score 1 the firmware gives a void session (14 s or less of brushing, or 85% or more of it without motion) read as unknown. On the X Ultra 20 only the cloud record carries it, so it is built only with `cloud_receiver: true` |
 | `last_session_duration` | Duration | session record bytes 7-8 BE | seconds |
 | `last_session_valid_duration` | Valid duration | session record bytes 9-10 BE | seconds counted as effective |
 | `last_session_coverage` | Coverage | derived | valid / duration, percent |
-| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | Elite record bytes 23-30; X Ultra 20 gestureArray bytes 20-27 | per-region values, 1-4 upper / 5-8 lower, outer/inner per side. On the X Ultra 20 only the full cloud record carries them (the inline BLE record does not), so they fill only via `cloud_receiver`. |
+| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | Elite record bytes 23-30; X Ultra 20 gestureArray bytes 20-27 | per-region values, 1-4 upper / 5-8 lower, outer/inner per side. On the X Ultra 20 only the full cloud record carries them (the inline BLE record does not), so they are built only with `cloud_receiver: true`. |
 | `quadrant_upper_left`, `quadrant_lower_left`, `quadrant_upper_right`, `quadrant_lower_right` | Quadrant upper left .. Quadrant lower right | session record bytes 19-22 | X Pro Elite only; hidden; percent of the session per quadrant, summing to 100; each is about the sum of its two zones, rounded on the brush |
 | `head_used_days` | Brush head used days | settings buffer 27-28 BE | X Pro Elite only; days with brushing since head reset |
 | `head_used_times` | Brush head sessions | settings buffer 29-30 BE | X Pro Elite only; valid sessions since head reset |
@@ -332,15 +341,17 @@ NVS per hub and re-published on boot.
 | `docked` | Docked | STATUS byte 2 == 0x01 or 0x03 | on the dock, charging or fully charged |
 | `connected` | BLE connected | link state | hidden; off almost always by design (the link is up only seconds per poll); use Last seen for freshness |
 | `wifi_configured` | Wi-Fi provisioned | `02 34` reply | X Ultra 20 only; off means no SSID is stored, and without one the brush never starts Wi-Fi |
+| `birthday_written` | Birthday written | the brush's `02 11` ack | X Ultra 20 only, built when the hub has `birthday`; hidden; on once the brush has taken the yaml birthday, gender and age (one write), off again after any of them changes until the brush takes the new value |
 | `area_guidance` | Zone guidance | `03 16` reply | X Ultra 20 only |
-| `auto_update` | Auto update | settings buffer 3 | X Ultra 20 only |
 
 The X Pro Elite firmware keeps no setting in settings bytes 3, 4, 8-10 and 13:
 constant zero, copies of bytes 0 and 1, a flag nothing writes, and a pause flag
 cleared at the start of every session. The keys that read them (`fill_brush`,
 `auto_mode`, `volume_enabled`, `calendar_enabled`, `splash_prevent` and the
 `volume_index` sensor) are built on no model, nor is `network`: nothing in the
-X Ultra 20 firmware writes its byte. `voice_teaching` and `demo_mode` are
+X Ultra 20 firmware writes its byte. Nor is `auto_update`: the X Ultra 20 keeps
+the flag of byte 3 (`02 32`), but no update path in its firmware reads it.
+`voice_teaching` and `demo_mode` are
 switches on the X Ultra 20. A yaml that lists one of these binary sensors fails
 validation.
 
@@ -357,7 +368,7 @@ validation.
 | `sw_version` | Software version | DIS 0x2A28 | hidden |
 | `mac_address` | MAC address | BLE | hidden |
 | `model` | Model | DIS 0x2A24 | hidden; the raw model id that drives profile selection |
-| `cloud_host` | Cloud host | `Host` header of the brush's requests | hidden, read-only; X Ultra 20 only; the host the brush uploads to, as read from its own requests to the receiver (see **Values kept on the brush**) |
+| `cloud_host` | Cloud host | `Host` header of the brush's requests | hidden, read-only; X Ultra 20 only, built with `cloud_receiver: true`; the host the brush uploads to, as read from its own requests to the receiver (see **Values kept on the brush**) |
 
 ### Entities (switch)
 
@@ -367,7 +378,7 @@ boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 
 | Key | Default name | Write | Notes |
 |---|---|---|---|
-| `over_pressure` | Over-pressure alert | `02 12` + 01/00 | readback at settings buffer 22 |
+| `over_pressure` | Over-pressure alert | `02 12` + 01/00 | X Pro Elite only; readback at settings buffer 22 |
 | `raise_wake` | Raise to wake | `02 23` + 01/00 | readback at settings buffer 2 |
 | `bluetooth` | Bluetooth | local only | master switch for the BLE link; OFF drops pending writes and tears the link down; `RESTORE_DEFAULT_ON` so a reboot never leaves the brush silently unreachable |
 | `area_reminder` | Area reminder | `02 0D` + 01/00 | **dev** on the X Pro Elite, where it has no observable effect. On the X Ultra 20 it is named Voice on zone change: it picks the cue at each 30 s zone change, a short motor stutter when off and a spoken prompt when on (only with voice prompts on); readback at settings buffer 23 |
@@ -432,9 +443,9 @@ program wants four steps to keep the four-quadrant guidance.
 | Key | Default name | Effect | Notes |
 |---|---|---|---|
 | `reset_head` | Reset brush head | writes `02 0F` | X Pro Elite only; irreversible: zeroes the brush-head usage counters |
-| `sync_time` | Sync clock | writes `02 01` + 8 bytes | created only when the hub has `time_id`; writes on press only |
-| `poll_now` | Poll now | immediate poll cycle | hidden by default; read-only on the brush |
-| `capture_sessions` | Capture sessions | session download + 30 s hold | **dev**; keeps the link open so the raw record stream lands in the log |
+| `sync_time` | Sync clock | writes `02 01` + 8 bytes | X Pro Elite only; created only when the hub has `time_id`; writes on press only |
+| `poll_now` | Poll now | immediate poll cycle | X Pro Elite only; hidden by default; read-only on the brush |
+| `capture_sessions` | Capture sessions | session download + 30 s hold | **dev**, X Pro Elite only (the X Ultra 20 download never streams); keeps the link open so the raw record stream lands in the log |
 
 ### Values kept on the brush
 
@@ -462,7 +473,9 @@ on the first link after boot or after it changes, and again once a day while it
 stays unconfirmed (`retry_unconfirmed`, on by default; off: once per boot). A
 cloud host is confirmed by the brush's next upload, after a brushing, so it is
 written again a day later only if no upload came in between.
-`read_only: true` writes none of them. The
+`read_only: true` writes none of them. Birthday written, Cloud host and Wi-Fi
+provisioned show the state in Home Assistant, and the node's config log says for
+each value whether the brush confirmed the current one (never the value). The
 Oclean app sends its own account's birthday on every connection and the hub
 cannot see that, so after the app has been used the hub keeps its stale
 confirmation until the yaml value changes.

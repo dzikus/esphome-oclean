@@ -156,6 +156,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_network_binary_sensor(binary_sensor::BinarySensor *s) { this->network_binary_sensor_ = s; }
   void set_voice_teaching_binary_sensor(binary_sensor::BinarySensor *s) { this->voice_teaching_binary_sensor_ = s; }
   void set_wifi_configured_binary_sensor(binary_sensor::BinarySensor *s) { this->wifi_configured_binary_sensor_ = s; }
+  void set_birthday_written_binary_sensor(binary_sensor::BinarySensor *s) { this->birthday_written_binary_sensor_ = s; }
   void set_area_guidance_binary_sensor(binary_sensor::BinarySensor *s) { this->area_guidance_binary_sensor_ = s; }
   void set_demo_mode_binary_sensor(binary_sensor::BinarySensor *s) { this->demo_mode_binary_sensor_ = s; }
   void set_device_mode_sensor(sensor::Sensor *s) { this->device_mode_sensor_ = s; }
@@ -359,6 +360,11 @@ class OcleanHub : public ble_client::BLEClientNode,
   // None can be read back over BLE, so the hub stores a fingerprint of what the
   // brush confirmed (NVS, never an entity) and writes only on a mismatch.
   uint32_t value_fingerprint_(SyncSlot slot, const uint8_t *payload, size_t len) const;
+  // of the yaml value as it would be written now; 0 when there is none (unset,
+  // or no node address yet)
+  uint32_t yaml_value_fingerprint_(SyncSlot slot) const;
+  // the brush confirmed the yaml value as it is now, not an earlier one
+  bool value_confirmed_(SyncSlot slot) const;
   void store_synced_(SyncSlot slot, uint32_t fp, const char *what);
   // sync_attempt_due for this slot; note_sync_attempt_ records a send
   bool sync_due_(SyncSlot slot, uint32_t fp) const;
@@ -478,6 +484,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   binary_sensor::BinarySensor *network_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *voice_teaching_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *wifi_configured_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *birthday_written_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *area_guidance_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *demo_mode_binary_sensor_{nullptr};
   sensor::Sensor *device_mode_sensor_{nullptr};

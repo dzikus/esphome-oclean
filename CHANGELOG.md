@@ -52,7 +52,9 @@
   Wi-Fi on the brush's BluFi connected report or its first request after the
   join. A value still unconfirmed is sent again once a day
   (`retry_unconfirmed`, on by default). A hidden, read-only `cloud_host` text
-  sensor shows the host the brush really uploads to.
+  sensor shows the host the brush really uploads to, and a hidden
+  `birthday_written` binary sensor (built when the hub has `birthday`) whether
+  the brush took the current birthday, gender and age.
 - X Ultra 20: an X Ultra 20 hub option fails validation on an `x_pro_elite`
   hub, and the birthday frame, the cloud host and the Wi-Fi go only to a brush
   that reports an X Ultra 20 family model.
@@ -72,6 +74,14 @@
   condition, Today/Tomorrow and the day's low and high. The forecast needs the
   node allowed to perform Home Assistant actions; without that the brush gets
   the current condition and temperature.
+- X Ultra 20: a row whose only source is a hub option is built only with it:
+  the score and the eight zones (cloud record only) and `cloud_host` with
+  `cloud_receiver: true`, `birthday_written` with `birthday`. Not built: the
+  buttons (BLE never hands over the stored sessions, and every Wi-Fi
+  connection sets the brush clock from the time answer, over any BLE clock
+  write), the `auto_update` binary sensor and the `over_pressure` switch
+  (nothing in firmware 0.0.1.6 reads either flag; the pressure prompt is
+  `voice_pressure`).
 - X Ultra 20: birthday greeting. The `birthday` hub option is the greeting date
   (`0211`), sent with the `gender` and `age` options; on every wake that day the
   brush shows its birthday screen. All three are yaml options, not entities, so

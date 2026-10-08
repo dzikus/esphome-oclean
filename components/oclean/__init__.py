@@ -122,6 +122,7 @@ def resolve_blufi_wifi(hub_ssid, hub_password, wifi_config):
 # session record order, bytes 19-22
 QUADRANT_POSITIONS = ("upper_left", "lower_left", "upper_right", "lower_right")
 _QUADRANT_KEYS = frozenset(f"quadrant_{position}" for position in QUADRANT_POSITIONS)
+_ZONE_KEYS = frozenset(f"gesture_zone_{i}" for i in range(1, 9))
 _X_PRO_ELITE_FLAG_KEYS = frozenset(
     {"volume_enabled", "calendar_enabled", "splash_prevent", "fill_brush"}
 )
@@ -144,7 +145,8 @@ GEAR_MAX = {MODEL_X_PRO_ELITE: 41, MODEL_X_ULTRA_20: 54}
 
 # Per model and platform. "unavailable": rows the model has no data or opcode
 # for, never built. "dev": rows with no observable effect on that brush, built
-# only with expose_dev_sensors. Every other row is built on every model.
+# only with expose_dev_sensors. "needs": rows fed only through a hub option,
+# built only when the hub sets it. Every other row is built on every model.
 MODEL_ENTITY_SETS = {
     # Settings bytes 3, 4, 8-10 and 13 hold no setting in the firmware: constant
     # zero, copies of bytes 0 and 1, a flag nothing writes, and a pause flag the
@@ -156,7 +158,7 @@ MODEL_ENTITY_SETS = {
             ),
             "binary_sensor": _X_ULTRA_20_FLAG_KEYS
             | _X_PRO_ELITE_FLAG_KEYS
-            | {"auto_mode"},
+            | {"auto_mode", "birthday_written"},
             "switch": frozenset(
                 {
                     "auto_mode",
@@ -178,22 +180,36 @@ MODEL_ENTITY_SETS = {
     # Settings bytes 0, 1, 3, 8-10 and 13 hold other fields on this brush, its
     # app family has no 0222 / 0209 setter, and the 12-zone map and quadrants of
     # its record are not decoded. Nothing in firmware 0.0.1.6 writes byte 1 or
-    # counts head use, so the network flag and the head counters stay zero.
-    # Voice teaching and the retail mode are switches here. The eight zones come
-    # from the full record only, which BLE never hands over (cloud_receiver).
+    # counts head use, so the network flag and the head counters stay zero, and
+    # nothing reads the auto-update flag of byte 3 or the over-pressure flag of
+    # 0212: no update path checks the first, and the pressure voice follows the
+    # 0231 voice flags alone.
+    # Voice teaching and the retail mode are switches here. The download never
+    # streams (count=0 and the head of a stored record), so there is no record
+    # stream to capture, and the score and the eight zones come only from the
+    # full record of the brush's cloud upload. No buttons either: BLE never
+    # hands over the stored sessions, and every Wi-Fi connection sets the clock
+    # from the time answer, over any BLE clock write.
     MODEL_X_ULTRA_20: {
         "unavailable": {
             "sensor": frozenset({"device_theme", "volume_index"})
             | _QUADRANT_KEYS
             | _HEAD_COUNTER_KEYS,
             "binary_sensor": _X_PRO_ELITE_FLAG_KEYS
-            | {"auto_mode", "network", "voice_teaching", "demo_mode"},
-            "switch": frozenset({"brush_pause", "brush_mode"}),
+            | {"auto_mode", "auto_update", "network", "voice_teaching", "demo_mode"},
+            "switch": frozenset({"brush_pause", "brush_mode", "over_pressure"}),
             "number": frozenset({"head_max_minutes"}),
-            "button": frozenset({"reset_head"}),
+            "button": frozenset(
+                {"reset_head", "capture_sessions", "sync_time", "poll_now"}
+            ),
         },
-        "dev": {
-            "button": frozenset({"capture_sessions"}),
+        "dev": {},
+        "needs": {
+            "sensor": dict.fromkeys(
+                _ZONE_KEYS | {"last_session_score"}, CONF_CLOUD_RECEIVER
+            ),
+            "text_sensor": {"cloud_host": CONF_CLOUD_RECEIVER},
+            "binary_sensor": {"birthday_written": CONF_BIRTHDAY},
         },
     },
 }
@@ -244,6 +260,7 @@ HIDDEN_BINARY_SENSOR_KEYS = frozenset(
     {
         "connected",
         "auto_mode",
+        "birthday_written",
     }
 )
 
@@ -348,6 +365,15 @@ def raw_hub_model(hub_id):
     return model if model in MODEL_ENTITY_SETS else DEFAULT_MODEL
 
 
+def raw_hub_option_set(hub_id, option):
+    # Raw for the same reason as the model; true for a boolean that is on and for
+    # any other value present (a birthday).
+    value = (_raw_hub(hub_id) or {}).get(option)
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "false", "no", "off", "disable")
+    return value is not None and value is not False
+
+
 def inject_entity_defaults(
     config, rows, hidden=frozenset(), opt_in=frozenset(), platform=None
 ):
@@ -361,6 +387,7 @@ def inject_entity_defaults(
     prefix = entity_name_prefix(hub_id)
     model = raw_hub_model(hub_id)
     unavailable = MODEL_ENTITY_SETS[model]["unavailable"].get(platform, frozenset())
+    needs = MODEL_ENTITY_SETS[model].get("needs", {}).get(platform, {})
     overrides = MODEL_ENTITY_DEFAULTS.get(model, {}).get(platform, {})
     for key, default_name in rows:
         want = config.get(key, ...)
@@ -378,6 +405,17 @@ def inject_entity_defaults(
                 raise cv.Invalid(
                     f"'{key}' does not exist on model: {model}. Remove it from "
                     f"this {platform} block. {hint}",
+                    path=[key],
+                )
+            config.pop(key, None)
+            continue
+        option = needs.get(key)
+        if option is not None and not raw_hub_option_set(hub_id, option):
+            if want is not ... and want is not False:
+                raise cv.Invalid(
+                    f"'{key}' on model: {model} gets its value only through "
+                    f"the hub's '{option}'. Set it on the hub or remove the key "
+                    f"from this {platform} block.",
                     path=[key],
                 )
             config.pop(key, None)

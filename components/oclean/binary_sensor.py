@@ -23,9 +23,10 @@ CODEOWNERS = ["@dzikus"]
 # charging is published from the STATUS (0303) response byte 2: 0x01 means on the
 # dock / charging, 0x02 means off the dock. Every row the hub's model has is
 # auto-created so the entities appear without listing them in the yaml.
-# volume_enabled, calendar_enabled, splash_prevent, fill_brush, auto_mode and
-# network hold no setting on any supported model, and voice_teaching and
-# demo_mode are switches on the one model that has them (MODEL_ENTITY_SETS).
+# volume_enabled, calendar_enabled, splash_prevent, fill_brush, auto_mode,
+# auto_update and network hold no setting on any supported model, and
+# voice_teaching and demo_mode are switches on the one model that has them
+# (MODEL_ENTITY_SETS).
 # Their rows stay so a yaml that names one gets an error that says so.
 BINARY_SENSORS = [
     (
@@ -115,6 +116,15 @@ BINARY_SENSORS = [
         "mdi:wifi-cog",
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Wi-Fi provisioned",
+    ),
+    # On once the brush acked the 0211 write of the hub's birthday, gender and age.
+    (
+        "birthday_written",
+        "set_birthday_written_binary_sensor",
+        None,
+        "mdi:cake-variant",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Birthday written",
     ),
     (
         "area_guidance",

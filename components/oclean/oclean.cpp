@@ -65,6 +65,8 @@ void OcleanHub::setup() {
   this->synced_pref_ = esphome::global_preferences->make_preference<SyncedValues>(hub_hash ^ 0x5A7ED0F1u);
   if (!this->synced_pref_.load(&this->synced_))
     this->synced_ = {};
+  esphome::oclean::OcleanHub::publish_(this->birthday_written_binary_sensor_,
+                                       this->value_confirmed_(SyncSlot::BIRTHDAY));
   this->session_last_pref_ = esphome::global_preferences->make_preference<PersistedSession>(hub_hash ^ 0x5E55D47Au);
   PersistedSession last{};
   if (this->session_last_pref_.load(&last)) {
@@ -135,7 +137,7 @@ void OcleanHub::dump_config() {
 #endif
   // whether, not which: the values are personal
   auto confirmed = [this](SyncSlot slot) {
-    return this->synced_.fp[static_cast<size_t>(slot)] != 0 ? "confirmed by the brush" : "not confirmed yet";
+    return this->value_confirmed_(slot) ? "confirmed by the brush" : "not confirmed yet";
   };
   bool keeps = this->birthday_month_ != BIRTHDAY_UNSET;
   if (keeps)
@@ -1840,9 +1842,47 @@ uint32_t OcleanHub::value_fingerprint_(SyncSlot slot, const uint8_t *payload, si
   return sync_fingerprint(this->parent_->get_address(), slot, payload, len);
 }
 
+uint32_t OcleanHub::yaml_value_fingerprint_(SyncSlot slot) const {
+  std::string value;
+  switch (slot) {
+    case SyncSlot::BIRTHDAY: {
+      if (this->birthday_month_ == BIRTHDAY_UNSET)
+        return 0;
+      std::vector<uint8_t> const frame =
+          build_birthday_command(this->user_gender_, this->user_age_, this->birthday_month_, this->birthday_day_);
+      return this->value_fingerprint_(slot, frame.data(), frame.size());
+    }
+    case SyncSlot::CLOUD_HOST:
+#ifdef USE_OCLEAN_CLOUD_RECEIVER
+      if (this->cloud_receiver_enabled_)
+        value = node_cloud_url_();
+#endif
+      break;
+    case SyncSlot::WIFI:
+#ifdef USE_OCLEAN_BLUFI
+      if (!this->blufi_ssid_.empty()) {
+        value = this->blufi_ssid_;
+        value.push_back('\0');
+        value += this->blufi_password_;
+      }
+#endif
+      break;
+  }
+  if (value.empty())
+    return 0;
+  return this->value_fingerprint_(slot, reinterpret_cast<const uint8_t *>(value.data()), value.size());
+}
+
+bool OcleanHub::value_confirmed_(SyncSlot slot) const {
+  uint32_t const fp = this->yaml_value_fingerprint_(slot);
+  return fp != 0 && this->synced_.fp[static_cast<size_t>(slot)] == fp;
+}
+
 void OcleanHub::store_synced_(SyncSlot slot, uint32_t fp, const char *what) {
   this->synced_.fp[static_cast<size_t>(slot)] = fp;
   this->synced_pref_.save(&this->synced_);
+  if (slot == SyncSlot::BIRTHDAY)
+    esphome::oclean::OcleanHub::publish_(this->birthday_written_binary_sensor_, this->value_confirmed_(slot));
   if (fp != 0) {
     ESP_LOGI(TAG, "[%s] %s confirmed by the brush", this->parent_->address_str(), what);
   } else {
@@ -1867,8 +1907,9 @@ void OcleanHub::queue_value_sync_() {
   if (this->read_only_ || !this->ble_user_enabled_ || !kept_values_permitted(*this->profile_))
     return;
   // pushed straight into this round's queue: send_command would kick the link
-  auto queue = [this](SyncSlot slot, uint32_t fp, std::vector<uint8_t> bytes, const char *name) {
+  auto queue = [this](SyncSlot slot, std::vector<uint8_t> bytes, const char *name) {
     auto const i = static_cast<size_t>(slot);
+    uint32_t const fp = this->yaml_value_fingerprint_(slot);
     if (!this->sync_due_(slot, fp))
       return;
     if (!command_permitted(this->read_only_, *this->profile_, bytes.data(), bytes.size())) {
@@ -1884,19 +1925,15 @@ void OcleanHub::queue_value_sync_() {
     this->note_sync_attempt_(slot, fp);
   };
   if (this->birthday_month_ != BIRTHDAY_UNSET) {
-    std::vector<uint8_t> frame =
-        build_birthday_command(this->user_gender_, this->user_age_, this->birthday_month_, this->birthday_day_);
-    uint32_t const fp = this->value_fingerprint_(SyncSlot::BIRTHDAY, frame.data(), frame.size());
-    queue(SyncSlot::BIRTHDAY, fp, std::move(frame), "birthday-sync");
+    queue(SyncSlot::BIRTHDAY,
+          build_birthday_command(this->user_gender_, this->user_age_, this->birthday_month_, this->birthday_day_),
+          "birthday-sync");
   }
 #ifdef USE_OCLEAN_CLOUD_RECEIVER
   if (this->cloud_receiver_enabled_) {
     std::string const url = node_cloud_url_();
-    if (!url.empty()) {
-      uint32_t const fp =
-          this->value_fingerprint_(SyncSlot::CLOUD_HOST, reinterpret_cast<const uint8_t *>(url.data()), url.size());
-      queue(SyncSlot::CLOUD_HOST, fp, build_set_cloud_host_command(url), "cloud-host-sync");
-    }
+    if (!url.empty())
+      queue(SyncSlot::CLOUD_HOST, build_set_cloud_host_command(url), "cloud-host-sync");
   }
 #endif
 }
@@ -1985,8 +2022,7 @@ void OcleanHub::process_cloud_request_(const std::string &host) {
     return;
   auto const i = static_cast<size_t>(SyncSlot::CLOUD_HOST);
   if (cloud_host_matches(host, url)) {
-    uint32_t const fp =
-        this->value_fingerprint_(SyncSlot::CLOUD_HOST, reinterpret_cast<const uint8_t *>(url.data()), url.size());
+    uint32_t const fp = this->yaml_value_fingerprint_(SyncSlot::CLOUD_HOST);
     if (fp != this->synced_.fp[i])
       this->store_synced_(SyncSlot::CLOUD_HOST, fp, "cloud host");
     return;
@@ -2242,11 +2278,7 @@ bool OcleanHub::wifi_sync_due_() {
   if (this->read_only_ || this->blufi_ssid_.empty() || this->blufi_write_handle_ == 0 ||
       !kept_values_permitted(*this->profile_))
     return false;
-  std::string payload = this->blufi_ssid_;
-  payload.push_back('\0');
-  payload += this->blufi_password_;
-  uint32_t const fp =
-      this->value_fingerprint_(SyncSlot::WIFI, reinterpret_cast<const uint8_t *>(payload.data()), payload.size());
+  uint32_t const fp = this->yaml_value_fingerprint_(SyncSlot::WIFI);
   if (!this->sync_due_(SyncSlot::WIFI, fp))
     return false;
   this->note_sync_attempt_(SyncSlot::WIFI, fp);

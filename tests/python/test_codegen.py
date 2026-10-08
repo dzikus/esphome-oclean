@@ -194,13 +194,18 @@ class InjectPerModel(RawConfigCase):
         self.assertIn("quadrant_upper_left", out)
 
     def test_flags_without_a_setting_are_built_on_no_model(self):
-        rows = [("fill_brush", "Fill brush"), ("charging", "Charging")]
+        rows = [
+            ("fill_brush", "Fill brush"),
+            ("auto_update", "Auto update"),
+            ("charging", "Charging"),
+        ]
         for model in oc.MODELS:
             self.set_hubs({"id": "hub_a", "model": model})
             out = oc.inject_entity_defaults(
                 {"oclean_id": "hub_a"}, rows, platform="binary_sensor"
             )
             self.assertNotIn("fill_brush", out, model)
+            self.assertNotIn("auto_update", out, model)
             self.assertIn("charging", out, model)
             # no model to switch to, so the error does not suggest one
             with self.assertRaises(cv.Invalid) as caught:
@@ -216,6 +221,34 @@ class InjectPerModel(RawConfigCase):
         with self.assertRaises(cv.Invalid) as caught:
             self._inject({"oclean_id": "hub_a", "quadrant_upper_left": True})
         self.assertIn("set model:", str(caught.exception))
+
+    def test_buttons_are_x_pro_elite_only(self):
+        rows = [
+            ("capture_sessions", "Capture sessions"),
+            ("reset_head", "Reset brush head"),
+            ("sync_time", "Sync clock"),
+            ("poll_now", "Poll now"),
+        ]
+        for model, built in (("x_pro_elite", True), ("x_ultra_20", False)):
+            self.set_hubs({"id": "hub_a", "model": model})
+            out = oc.inject_entity_defaults(
+                {"oclean_id": "hub_a"}, rows, platform="button"
+            )
+            for key, _name in rows:
+                self.assertEqual(key in out, built, f"{model} {key}")
+
+    def test_over_pressure_is_an_x_pro_elite_switch_only(self):
+        rows = [
+            ("over_pressure", "Over-pressure alert"),
+            ("raise_wake", "Raise to wake"),
+        ]
+        for model, built in (("x_pro_elite", True), ("x_ultra_20", False)):
+            self.set_hubs({"id": "hub_a", "model": model})
+            out = oc.inject_entity_defaults(
+                {"oclean_id": "hub_a"}, rows, platform="switch"
+            )
+            self.assertEqual("over_pressure" in out, built, model)
+            self.assertIn("raise_wake", out, model)
 
 
 class HeadMaxKey(RawConfigCase):
@@ -285,7 +318,7 @@ class SchemeModesPerModel(RawConfigCase):
 
 SWITCH_ROWS = [
     ("area_reminder", "Area reminder"),
-    ("over_pressure", "Over-pressure alert"),
+    ("raise_wake", "Raise to wake"),
 ]
 
 
@@ -298,8 +331,8 @@ class InjectModelDefaults(RawConfigCase):
         out = self._inject({"oclean_id": "hub_a"})
         self.assertEqual(out["area_reminder"]["name"], "X20 Voice on zone change")
         self.assertEqual(out["area_reminder"]["icon"], "mdi:swap-horizontal")
-        self.assertEqual(out["over_pressure"]["name"], "X20 Over-pressure alert")
-        self.assertNotIn("icon", out["over_pressure"])
+        self.assertEqual(out["raise_wake"]["name"], "X20 Raise to wake")
+        self.assertNotIn("icon", out["raise_wake"])
 
     def test_x_pro_elite_keeps_the_shared_default(self):
         self.set_hubs({"id": "hub_a"})
@@ -335,12 +368,65 @@ class HubBuilds(unittest.TestCase):
         self.set_hub(model="x_pro_elite", expose_dev_sensors=True)
         self.assertTrue(oc.hub_builds("hub_a", "switch", "area_reminder"))
 
-    def test_capture_is_dev_on_every_model(self):
-        for model in oc.MODELS:
-            self.set_hub(model=model, expose_dev_sensors=False)
-            self.assertFalse(
-                oc.hub_builds("hub_a", "button", "capture_sessions"), model
-            )
+    def test_capture_is_dev_on_the_x_pro_elite(self):
+        self.set_hub(model="x_pro_elite", expose_dev_sensors=False)
+        self.assertFalse(oc.hub_builds("hub_a", "button", "capture_sessions"))
+
+
+NEEDS_ROWS = [
+    ("last_session_score", "Score"),
+    ("gesture_zone_1", "Zone 1"),
+    ("battery", "Battery"),
+]
+
+
+class InjectNeeds(RawConfigCase):
+    """Rows of a model fed only through a hub option."""
+
+    def _inject(self, config, rows=None, platform="sensor"):
+        rows = NEEDS_ROWS if rows is None else rows
+        return oc.inject_entity_defaults(config, rows, platform=platform)
+
+    def test_x_ultra_20_without_the_receiver_skips_score_and_zones(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        out = self._inject({"oclean_id": "hub_a"})
+        self.assertNotIn("last_session_score", out)
+        self.assertNotIn("gesture_zone_1", out)
+        self.assertIn("battery", out)
+
+    def test_x_ultra_20_with_the_receiver_builds_them(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20", "cloud_receiver": True})
+        out = self._inject({"oclean_id": "hub_a"})
+        self.assertIn("last_session_score", out)
+        self.assertIn("gesture_zone_1", out)
+
+    def test_a_receiver_switched_off_counts_as_unset(self):
+        for off in (False, "false", "off"):
+            self.set_hubs({"id": "hub_a", "model": "x_ultra_20", "cloud_receiver": off})
+            self.assertNotIn("last_session_score", self._inject({"oclean_id": "hub_a"}))
+
+    def test_an_explicit_row_without_its_option_names_the_option(self):
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        with self.assertRaises(cv.Invalid) as caught:
+            self._inject({"oclean_id": "hub_a", "last_session_score": True})
+        self.assertIn("cloud_receiver", str(caught.exception))
+
+    def test_the_x_pro_elite_reads_score_and_zones_over_ble(self):
+        self.set_hubs({"id": "hub_a"})
+        out = self._inject({"oclean_id": "hub_a"})
+        self.assertIn("last_session_score", out)
+        self.assertIn("gesture_zone_1", out)
+
+    def test_birthday_written_needs_a_birthday_on_the_hub(self):
+        rows = [("birthday_written", "Birthday written")]
+        self.set_hubs(
+            {"id": "hub_a", "model": "x_ultra_20", "gender": "unknown", "age": 18}
+        )
+        out = self._inject({"oclean_id": "hub_a"}, rows, "binary_sensor")
+        self.assertNotIn("birthday_written", out)
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20", "birthday": "03-07"})
+        out = self._inject({"oclean_id": "hub_a"}, rows, "binary_sensor")
+        self.assertIn("birthday_written", out)
 
 
 if __name__ == "__main__":
