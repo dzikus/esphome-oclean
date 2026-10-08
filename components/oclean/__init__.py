@@ -73,6 +73,11 @@ DEFAULT_CLOUD_RECEIVER_PORT = 8099
 # configured. Off unless set true; the C++ is not compiled in otherwise
 # (USE_OCLEAN_CLOUD_RECEIVER).
 CONF_CLOUD_RECEIVER = "cloud_receiver"
+# A record dated implausibly far in the future comes from a brush whose clock has
+# not been corrected yet. On (default) the receiver acks it so the brush erases it
+# from its store instead of re-uploading it every connect; off keeps it there for
+# inspection. Never published either way.
+CONF_CLOUD_DROP_FUTURE = "cloud_drop_future"
 
 # BluFi Wi-Fi provisioning is off unless this is set true, and the C++ for it is
 # not compiled in otherwise (USE_OCLEAN_BLUFI).
@@ -493,6 +498,7 @@ CONFIG_SCHEMA = cv.All(
                 CONF_CLOUD_RECEIVER_PORT, default=DEFAULT_CLOUD_RECEIVER_PORT
             ): cv.port,
             cv.Optional(CONF_CLOUD_RECEIVER, default=False): cv.boolean,
+            cv.Optional(CONF_CLOUD_DROP_FUTURE, default=True): cv.boolean,
             cv.Optional(CONF_WIFI_PROVISIONING, default=False): cv.boolean,
             cv.Optional(CONF_WIFI_SSID): cv.string,
             cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
@@ -671,6 +677,7 @@ async def to_code(config):
     if config[CONF_CLOUD_RECEIVER]:
         cg.add_define("USE_OCLEAN_CLOUD_RECEIVER")
         cg.add(var.set_cloud_receiver_enabled(True))
+        cg.add(var.set_cloud_drop_future_enabled(config[CONF_CLOUD_DROP_FUTURE]))
     if config[CONF_WIFI_PROVISIONING]:
         cg.add_define("USE_OCLEAN_BLUFI")
         blufi_ssid, blufi_password = resolve_blufi_wifi(

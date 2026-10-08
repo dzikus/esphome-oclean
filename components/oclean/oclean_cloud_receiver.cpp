@@ -44,6 +44,7 @@ class OcleanCloudReceiver : public AsyncWebHandler {
   void handleRequest(AsyncWebServerRequest *request) override {
     httpd_req_t *r = *request;
     const char *uri = (r != nullptr) ? r->uri : "";
+    ESP_LOGD(CLOUD_TAG, "request %s", uri);
     if (std::strstr(uri, "UploadBrushRecord") != nullptr) {
       this->handle_upload_(request);
     } else if (std::strstr(uri, "UploadingMacWiFi") != nullptr) {
@@ -55,8 +56,10 @@ class OcleanCloudReceiver : public AsyncWebHandler {
           break;
       }
       if (now.empty()) {
+        ESP_LOGW(CLOUD_TAG, "macwifi: node time not valid, brush clock not set");
         request->send(200, "application/json", "{}");
       } else {
+        ESP_LOGD(CLOUD_TAG, "macwifi: reply currentTime=%s", now.c_str());
         std::string const js = R"({"data":{"currentTime":")" + now + R"("}})";
         request->send(200, "application/json", js.c_str());
       }
@@ -113,6 +116,11 @@ class OcleanCloudReceiver : public AsyncWebHandler {
              rec.year, rec.month, rec.day, rec.hour, rec.minute, rec.second, static_cast<unsigned>(rec.scheme),
              static_cast<unsigned>(rec.score), data_text.c_str());
     if (hub->cloud_record_captured(epoch)) {
+      request->send(200, "application/json", ACK);
+      return;
+    }
+    if (hub->cloud_drop_future_enabled() && hub->cloud_session_implausible(epoch)) {
+      ESP_LOGW(CLOUD_TAG, "implausible session from %s acked and dropped (brush store cleared)", mac_text.c_str());
       request->send(200, "application/json", ACK);
       return;
     }

@@ -199,6 +199,11 @@ class OcleanHub : public ble_client::BLEClientNode,
   // http server task -> main loop; captured gates the record-erasing ack
   void enqueue_cloud_record(const SessionRecord &rec, uint32_t epoch);
   bool cloud_record_captured(uint32_t epoch);
+  void set_cloud_drop_future_enabled(bool en) { this->cloud_drop_future_enabled_ = en; }
+  bool cloud_drop_future_enabled() const { return this->cloud_drop_future_enabled_; }
+  // the node-clock half of the ingest's future check (the brush reading is
+  // main-loop state), so the receiver can ack and erase such a record at once
+  bool cloud_session_implausible(uint32_t epoch);
   // node local time as "YYYYMMDDHHMMSS" for the brush's currentTime (firmware
   // parses the digits, not an epoch), empty when the node clock is unset
   std::string cloud_current_time();
@@ -562,6 +567,7 @@ class OcleanHub : public ble_client::BLEClientNode,
   // web server task fills cloud_inbound_, the main loop drains it; cloud_captured_
   // (RAM only) gates the record-erasing ack
   bool cloud_receiver_enabled_{false};
+  bool cloud_drop_future_enabled_{true};
   Mutex cloud_mutex_;
   std::vector<SessionRecord> cloud_inbound_;
   std::vector<uint32_t> cloud_captured_;

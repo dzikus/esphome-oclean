@@ -1893,6 +1893,10 @@ void OcleanHub::cloud_remember_(uint32_t epoch) {
   this->cloud_captured_.push_back(epoch);
 }
 
+bool OcleanHub::cloud_session_implausible(uint32_t epoch) {
+  return !session_epoch_plausible(epoch, SessionClocks{.node_local = this->local_now_epoch_(), .brush = 0});
+}
+
 std::string OcleanHub::cloud_current_time() {
 #ifdef USE_TIME
   if (this->time_ != nullptr) {
@@ -1917,8 +1921,9 @@ void OcleanHub::ingest_cloud_record_(const SessionRecord &rec) {
   if (!plan.implausible.empty()) {
     ESP_LOGW(TAG, "[%s] cloud session dated %04u-%02u-%02u dropped: implausibly future", this->parent_->address_str(),
              rec.year, rec.month, rec.day);
-    // acked regardless, so the brush store advances past a bad-clock record
-    this->cloud_remember_(epoch);
+    // ack so the brush store advances past a bad-clock record; off keeps it for inspection
+    if (this->cloud_drop_future_enabled_)
+      this->cloud_remember_(epoch);
     return;
   }
   for (const auto &pub : plan.to_publish)
