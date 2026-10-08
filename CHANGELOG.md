@@ -62,7 +62,9 @@
   on the node's web server and publishes them as the session entities: score,
   durations, timestamp and, from the full record, the eight `gesture_zone`
   values. BLE never carries the score on this firmware. An upload goes to the
-  hub whose brush MAC it names; a `web_server:` is required.
+  hub whose brush MAC it names; a `web_server:` is required. The image request
+  the brush sends at every sleep gets an empty slot; the brush reboots on an
+  empty reply and, off the dock, would never sleep.
 - X Ultra 20: the receiver answers the brush's clock with the node's local
   time, so the brush clock also corrects over Wi-Fi.
 - X Ultra 20: `cloud_drop_future` (on by default) acks an upload dated

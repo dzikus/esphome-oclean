@@ -516,7 +516,10 @@ the next. So the receiver answers "ok" only after a record has been published,
 and answers "keep it" the first time it sees one; the brush re-sends it on its
 next upload and that copy is acked. A record is thus never dropped before it is
 in Home Assistant, at the cost of one extra upload per record. The brush's clock
-is answered from the node's clock, so it also corrects over Wi-Fi.
+is answered from the node's clock, so it also corrects over Wi-Fi. The other
+requests get a reply that offers nothing: no firmware update and no image for
+the date page. The brush asks for that image each time it goes to sleep and
+reboots on an empty reply, so the receiver answers it with an empty slot.
 
 ### Weather on the brush
 

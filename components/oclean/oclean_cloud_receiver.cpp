@@ -66,6 +66,10 @@ class OcleanCloudReceiver : public AsyncWebHandler {
       }
     } else if (std::strstr(uri, "OTAUpGrade") != nullptr || std::strstr(uri, "GetOTACounterMode") != nullptr) {
       request->send(200, "application/json", R"({"state":false})");
+    } else if (std::strstr(uri, "GetAdvertisingLink") != nullptr) {
+      // asked at every sleep; the brush reads "state" without a null check, so {} reboots it
+      // and off the dock it never stays asleep. 0 clears its image slot
+      request->send(200, "application/json", R"({"state":0})");
     } else if (std::strstr(uri, "WeatherKit") != nullptr) {
       this->handle_weather_(request);
     } else {
