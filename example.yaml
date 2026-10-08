@@ -11,8 +11,8 @@
 
 esphome:
   name: oclean-example
-  # Component requires ESPHome 2026.1.0 or newer (select current_option API).
-  min_version: 2026.1.0
+  # Component requires ESPHome 2026.3.0 or newer (web server handler without auth).
+  min_version: 2026.3.0
 
 esp32:
   board: esp32dev

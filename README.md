@@ -181,8 +181,8 @@ the same catch: on selects the teaching program, off selects screen mode 5.
 ### Minimum config
 
 This component uses the ESPHome sub-device API and current entity APIs, so it
-needs **ESPHome 2026.1.0 or newer**. Pin it with
-`esphome: { min_version: 2026.1.0 }` so an older install fails fast instead of
+needs **ESPHome 2026.3.0 or newer**. Pin it with
+`esphome: { min_version: 2026.3.0 }` so an older install fails fast instead of
 erroring deep in code generation.
 
 Replace the MAC with the brush's MAC (any BLE scanner shows it while the brush
