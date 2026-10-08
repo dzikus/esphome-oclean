@@ -126,9 +126,9 @@ silently dropped by the brush.
 The entity set follows the hub's `model:` option, so each brush gets only the
 entities it has data or an opcode for. A row whose only source is a hub option
 is built only with that option (on the X Ultra 20: `cloud_receiver` for the
-score, the zones and the cloud host, `birthday` for birthday written, and
-`birthday` with `gender` / `age` for gender / age written); naming it in yaml
-without the option fails validation. Counts below are with the default
+score, the zones, the cloud host and cloud host written, `birthday` for user
+info written, `wifi_provisioning` for Wi-Fi written); naming it in yaml without
+the option fails validation. Counts below are with the default
 `expose_dev_sensors: false`, which leaves out the dev entities: rows with no
 observable effect on that brush, and the session-capture button. Several
 entities are created with `disabled_by_default: true`, so they stay hidden in
@@ -161,8 +161,9 @@ X Ultra 20 (`model: x_ultra_20`):
   12-zone map and quadrants are not decoded. No brush-head counters: firmware
   0.0.1.6 never counts head use.
 - 5 binary sensors: charging, docked, BLE connected (hidden), Wi-Fi
-  provisioned, zone guidance; with `birthday` on the hub also birthday written,
-  and gender written / age written for `gender` / `age` (all three hidden).
+  provisioned, zone guidance; hidden, one per write the hub keeps on the brush:
+  user info written (`birthday`), Wi-Fi written (`wifi_provisioning`), cloud
+  host written (`cloud_receiver`).
 - 9 text sensors, as above; with `cloud_receiver: true` also cloud host
   (hidden).
 - 10 switches: raise to wake, voice on zone change (the `area_reminder` key),
@@ -343,9 +344,9 @@ NVS per hub and re-published on boot.
 | `docked` | Docked | STATUS byte 2 == 0x01 or 0x03 | on the dock, charging or fully charged |
 | `connected` | BLE connected | link state | hidden; off almost always by design (the link is up only seconds per poll); use Last seen for freshness |
 | `wifi_configured` | Wi-Fi provisioned | `02 34` reply | X Ultra 20 only; off means no SSID is stored, and without one the brush never starts Wi-Fi |
-| `birthday_written` | Birthday written | the brush's `02 11` ack | X Ultra 20 only, built when the hub has `birthday`; hidden; on while the frame the brush acked last carried the yaml birthday, off after the birthday changes until the brush acks the new frame |
-| `gender_written` | Gender written | the brush's `02 11` ack | X Ultra 20 only, built when the hub has `birthday` and `gender` (gender goes only in the birthday frame); hidden; same rule for the gender |
-| `age_written` | Age written | the brush's `02 11` ack | X Ultra 20 only, built when the hub has `birthday` and `age`; hidden; same rule for the age |
+| `user_info_written` | User info written | the brush's `02 11` ack | X Ultra 20 only, built when the hub has `birthday`; hidden; on while the brush has acked the `02 11` frame of the yaml birthday, gender and age as they are now (one write), off from a change of any of them until it acks the new frame |
+| `wifi_written` | Wi-Fi written | the brush's BluFi connected report or its first request after the join | X Ultra 20 only, built with `wifi_provisioning: true`; hidden; on while the brush has confirmed the yaml Wi-Fi as it is now; Wi-Fi provisioned shows any stored network, this one ours |
+| `cloud_host_written` | Cloud host written | the `Host` header of the brush's request | X Ultra 20 only, built with `cloud_receiver: true`; hidden; on while the brush uploads to this node's current address |
 | `area_guidance` | Zone guidance | `03 16` reply | X Ultra 20 only |
 
 The X Pro Elite firmware keeps no setting in settings bytes 3, 4, 8-10 and 13:
@@ -477,10 +478,9 @@ on the first link after boot or after it changes, and again once a day while it
 stays unconfirmed (`retry_unconfirmed`, on by default; off: once per boot). A
 cloud host is confirmed by the brush's next upload, after a brushing, so it is
 written again a day later only if no upload came in between.
-`read_only: true` writes none of them. Birthday / Gender / Age written, Cloud
-host and Wi-Fi provisioned show the state in Home Assistant, and the node's
-config log says for
-each value whether the brush confirmed the current one (never the value). The
+`read_only: true` writes none of them. User info written, Wi-Fi written and
+Cloud host written (hidden) show in Home Assistant whether the brush confirmed
+each current value, as the node's config log does (never the value). The
 Oclean app sends its own account's birthday on every connection and the hub
 cannot see that, so after the app has been used the hub keeps its stale
 confirmation until the yaml value changes.

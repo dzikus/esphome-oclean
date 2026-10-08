@@ -422,40 +422,30 @@ class InjectNeeds(RawConfigCase):
         self.assertIn("last_session_score", out)
         self.assertIn("gesture_zone_1", out)
 
-    def test_birthday_written_needs_a_birthday_on_the_hub(self):
-        rows = [("birthday_written", "Birthday written")]
-        self.set_hubs(
-            {"id": "hub_a", "model": "x_ultra_20", "gender": "unknown", "age": 18}
-        )
-        out = self._inject({"oclean_id": "hub_a"}, rows, "binary_sensor")
-        self.assertNotIn("birthday_written", out)
-        self.set_hubs({"id": "hub_a", "model": "x_ultra_20", "birthday": "03-07"})
-        out = self._inject({"oclean_id": "hub_a"}, rows, "binary_sensor")
-        self.assertIn("birthday_written", out)
-
-    def test_gender_and_age_written_need_the_birthday_too(self):
-        rows = [("gender_written", "Gender written"), ("age_written", "Age written")]
+    def test_each_written_sensor_needs_the_option_its_write_comes_from(self):
+        rows = [
+            ("user_info_written", "User info written"),
+            ("wifi_written", "Wi-Fi written"),
+            ("cloud_host_written", "Cloud host written"),
+        ]
         for hub, built in (
             ({"gender": "unknown", "age": 18}, set()),
-            ({"birthday": "03-07"}, set()),
-            ({"birthday": "03-07", "age": 18}, {"age_written"}),
-            (
-                {"birthday": "03-07", "gender": "unknown", "age": 18},
-                {"gender_written", "age_written"},
-            ),
+            ({"birthday": "03-07"}, {"user_info_written"}),
+            ({"wifi_provisioning": True}, {"wifi_written"}),
+            ({"cloud_receiver": True}, {"cloud_host_written"}),
         ):
             self.set_hubs({"id": "hub_a", "model": "x_ultra_20", **hub})
             out = self._inject({"oclean_id": "hub_a"}, rows, "binary_sensor")
             self.assertEqual({key for key, _name in rows if key in out}, built, hub)
 
-    def test_an_explicit_row_names_every_missing_option(self):
-        rows = [("gender_written", "Gender written")]
+    def test_an_explicit_written_sensor_names_its_missing_option(self):
+        rows = [("user_info_written", "User info written")]
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
         with self.assertRaises(cv.Invalid) as caught:
             self._inject(
-                {"oclean_id": "hub_a", "gender_written": True}, rows, "binary_sensor"
+                {"oclean_id": "hub_a", "user_info_written": True}, rows, "binary_sensor"
             )
-        self.assertIn("birthday, gender", str(caught.exception))
+        self.assertIn("birthday", str(caught.exception))
 
 
 if __name__ == "__main__":

@@ -52,9 +52,9 @@
   Wi-Fi on the brush's BluFi connected report or its first request after the
   join. A value still unconfirmed is sent again once a day
   (`retry_unconfirmed`, on by default). A hidden, read-only `cloud_host` text
-  sensor shows the host the brush really uploads to, and hidden
-  `birthday_written`, `gender_written` and `age_written` binary sensors
-  whether the frame the brush acked last carried each current yaml value.
+  sensor shows the host the brush really uploads to, and one hidden binary
+  sensor per write (`user_info_written`, `wifi_written`, `cloud_host_written`)
+  whether the brush confirmed that value as the yaml holds it now.
 - X Ultra 20: an X Ultra 20 hub option fails validation on an `x_pro_elite`
   hub, and the birthday frame, the cloud host and the Wi-Fi go only to a brush
   that reports an X Ultra 20 family model.
@@ -75,9 +75,9 @@
   node allowed to perform Home Assistant actions; without that the brush gets
   the current condition and temperature.
 - X Ultra 20: a row whose only source is a hub option is built only with it:
-  the score and the eight zones (cloud record only) and `cloud_host` with
-  `cloud_receiver: true`, `birthday_written` with `birthday`, `gender_written`
-  and `age_written` with `birthday` and their own option. Not built: the
+  the score and the eight zones (cloud record only), `cloud_host` and
+  `cloud_host_written` with `cloud_receiver: true`, `user_info_written` with
+  `birthday`, `wifi_written` with `wifi_provisioning: true`. Not built: the
   capture and poll buttons (BLE never hands over the stored sessions), the
   `auto_update` binary sensor and the `over_pressure` switch (nothing in
   firmware 0.0.1.6 reads either flag; the pressure prompt is

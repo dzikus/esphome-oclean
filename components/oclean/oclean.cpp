@@ -65,14 +65,7 @@ void OcleanHub::setup() {
   this->synced_pref_ = esphome::global_preferences->make_preference<SyncedValues>(hub_hash ^ 0x5A7ED0F1u);
   if (!this->synced_pref_.load(&this->synced_))
     this->synced_ = {};
-  this->user_info_pref_ = esphome::global_preferences->make_preference<UserInfoSynced>(hub_hash ^ 0x0211F1E1u);
-  if (!this->user_info_pref_.load(&this->user_info_synced_)) {
-    this->user_info_synced_ = {};
-    // a frame the brush confirmed carries every field as the yaml has it now
-    if (this->value_confirmed_(SyncSlot::BIRTHDAY))
-      this->store_user_info_fields_();
-  }
-  this->publish_user_info_written_();
+  this->publish_written_();
   this->session_last_pref_ = esphome::global_preferences->make_preference<PersistedSession>(hub_hash ^ 0x5E55D47Au);
   PersistedSession last{};
   if (this->session_last_pref_.load(&last)) {
@@ -1884,47 +1877,21 @@ bool OcleanHub::value_confirmed_(SyncSlot slot) const {
   return fp != 0 && this->synced_.fp[static_cast<size_t>(slot)] == fp;
 }
 
-uint32_t OcleanHub::user_info_field_fp_(UserInfoField field) const {
-  // the field id keeps equal values of different fields apart
-  std::array<uint8_t, 3> value{static_cast<uint8_t>(field), 0, 0};
-  size_t len = 2;
-  switch (field) {
-    case UserInfoField::BIRTHDAY:
-      value[1] = this->birthday_month_;
-      value[2] = this->birthday_day_;
-      len = 3;
-      break;
-    case UserInfoField::GENDER:
-      value[1] = this->user_gender_;
-      break;
-    case UserInfoField::AGE:
-      value[1] = this->user_age_;
-      break;
-  }
-  return this->value_fingerprint_(SyncSlot::BIRTHDAY, value.data(), len);
-}
-
-void OcleanHub::store_user_info_fields_() {
-  for (auto field : {UserInfoField::BIRTHDAY, UserInfoField::GENDER, UserInfoField::AGE})
-    this->user_info_synced_.fp[static_cast<size_t>(field)] = this->user_info_field_fp_(field);
-  this->user_info_pref_.save(&this->user_info_synced_);
-  this->publish_user_info_written_();
-}
-
-void OcleanHub::publish_user_info_written_() {
-  if (this->birthday_month_ == BIRTHDAY_UNSET)
-    return;
-  auto written = [this](UserInfoField field) {
-    return this->user_info_synced_.fp[static_cast<size_t>(field)] == this->user_info_field_fp_(field);
+void OcleanHub::publish_written_() {
+  auto publish = [this](binary_sensor::BinarySensor *s, SyncSlot slot) {
+    uint32_t const fp = this->yaml_value_fingerprint_(slot);
+    if (s != nullptr && fp != 0)
+      s->publish_state(this->synced_.fp[static_cast<size_t>(slot)] == fp);
   };
-  esphome::oclean::OcleanHub::publish_(this->birthday_written_binary_sensor_, written(UserInfoField::BIRTHDAY));
-  esphome::oclean::OcleanHub::publish_(this->gender_written_binary_sensor_, written(UserInfoField::GENDER));
-  esphome::oclean::OcleanHub::publish_(this->age_written_binary_sensor_, written(UserInfoField::AGE));
+  publish(this->user_info_written_binary_sensor_, SyncSlot::BIRTHDAY);
+  publish(this->wifi_written_binary_sensor_, SyncSlot::WIFI);
+  publish(this->cloud_host_written_binary_sensor_, SyncSlot::CLOUD_HOST);
 }
 
 void OcleanHub::store_synced_(SyncSlot slot, uint32_t fp, const char *what) {
   this->synced_.fp[static_cast<size_t>(slot)] = fp;
   this->synced_pref_.save(&this->synced_);
+  this->publish_written_();
   if (fp != 0) {
     ESP_LOGI(TAG, "[%s] %s confirmed by the brush", this->parent_->address_str(), what);
   } else {
@@ -1946,6 +1913,8 @@ void OcleanHub::note_sync_attempt_(SyncSlot slot, uint32_t fp) {
 
 void OcleanHub::queue_value_sync_() {
   this->sync_sent_ = {};
+  // the node address may have come up since boot
+  this->publish_written_();
   if (this->read_only_ || !this->ble_user_enabled_ || !kept_values_permitted(*this->profile_))
     return;
   // pushed straight into this round's queue: send_command would kick the link
@@ -1992,7 +1961,6 @@ bool OcleanHub::handle_value_sync_ack_(const uint8_t *data, size_t len) {
     ESP_LOGD(TAG, "[%s] %02X%02X acked, not a write of ours", this->parent_->address_str(), data[0], data[1]);
   } else if (birthday) {
     this->store_synced_(SyncSlot::BIRTHDAY, fp, "birthday greeting");
-    this->store_user_info_fields_();
   } else {
     // stored on the brush; the next request it sends here confirms it is used
     ESP_LOGI(TAG, "[%s] cloud host written, waiting for the brush's next upload", this->parent_->address_str());
@@ -2066,8 +2034,11 @@ void OcleanHub::process_cloud_request_(const std::string &host) {
   auto const i = static_cast<size_t>(SyncSlot::CLOUD_HOST);
   if (cloud_host_matches(host, url)) {
     uint32_t const fp = this->yaml_value_fingerprint_(SyncSlot::CLOUD_HOST);
-    if (fp != this->synced_.fp[i])
+    if (fp != this->synced_.fp[i]) {
       this->store_synced_(SyncSlot::CLOUD_HOST, fp, "cloud host");
+    } else {
+      this->publish_written_();
+    }
     return;
   }
   ESP_LOGW(TAG, "[%s] the brush uploads to host %s, not %s; writing this node next round", this->parent_->address_str(),

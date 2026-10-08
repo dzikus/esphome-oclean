@@ -159,7 +159,7 @@ MODEL_ENTITY_SETS = {
             ),
             "binary_sensor": _X_ULTRA_20_FLAG_KEYS
             | _X_PRO_ELITE_FLAG_KEYS
-            | {"auto_mode", "birthday_written", "gender_written", "age_written"},
+            | {"auto_mode", "user_info_written", "wifi_written", "cloud_host_written"},
             "switch": frozenset(
                 {
                     "auto_mode",
@@ -208,11 +208,11 @@ MODEL_ENTITY_SETS = {
                 _ZONE_KEYS | {"last_session_score"}, (CONF_CLOUD_RECEIVER,)
             ),
             "text_sensor": {"cloud_host": (CONF_CLOUD_RECEIVER,)},
-            # gender and age go only in the frame that carries the birthday
+            # the 0211 frame (with gender and age) goes only with a birthday
             "binary_sensor": {
-                "birthday_written": (CONF_BIRTHDAY,),
-                "gender_written": (CONF_BIRTHDAY, CONF_GENDER),
-                "age_written": (CONF_BIRTHDAY, CONF_AGE),
+                "user_info_written": (CONF_BIRTHDAY,),
+                "wifi_written": (CONF_WIFI_PROVISIONING,),
+                "cloud_host_written": (CONF_CLOUD_RECEIVER,),
             },
         },
     },
@@ -264,9 +264,9 @@ HIDDEN_BINARY_SENSOR_KEYS = frozenset(
     {
         "connected",
         "auto_mode",
-        "birthday_written",
-        "gender_written",
-        "age_written",
+        "user_info_written",
+        "wifi_written",
+        "cloud_host_written",
     }
 )
 

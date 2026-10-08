@@ -117,30 +117,32 @@ BINARY_SENSORS = [
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Wi-Fi provisioned",
     ),
-    # On while the 0211 frame the brush acked last carried the hub's value.
+    # One per write the hub keeps on the brush: on while the brush has confirmed
+    # the value the yaml holds now (0211 birthday, gender and age; BluFi Wi-Fi;
+    # 0233 cloud host).
     (
-        "birthday_written",
-        "set_birthday_written_binary_sensor",
+        "user_info_written",
+        "set_user_info_written_binary_sensor",
         None,
-        "mdi:cake-variant",
+        "mdi:account-check",
         ENTITY_CATEGORY_DIAGNOSTIC,
-        "Birthday written",
+        "User info written",
     ),
     (
-        "gender_written",
-        "set_gender_written_binary_sensor",
+        "wifi_written",
+        "set_wifi_written_binary_sensor",
         None,
-        "mdi:gender-male-female",
+        "mdi:wifi-check",
         ENTITY_CATEGORY_DIAGNOSTIC,
-        "Gender written",
+        "Wi-Fi written",
     ),
     (
-        "age_written",
-        "set_age_written_binary_sensor",
+        "cloud_host_written",
+        "set_cloud_host_written_binary_sensor",
         None,
-        "mdi:account-clock",
+        "mdi:cloud-check",
         ENTITY_CATEGORY_DIAGNOSTIC,
-        "Age written",
+        "Cloud host written",
     ),
     (
         "area_guidance",
