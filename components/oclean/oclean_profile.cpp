@@ -56,9 +56,9 @@ static const ProfileCmd V20_QUERY_CMDS[] = {
 };
 
 // The first nine were acknowledged by the brush and read back from the settings
-// buffer; the program, teaching and retail writes are known from the firmware
-// image only. 0206 and 0230 move the brush off the mode picked on its screen,
-// with no way back over BLE; 02A0 keeps it awake on battery.
+// buffer; the program, teaching, retail and birthday writes are known from the
+// firmware image only. 0206 and 0230 move the brush off the mode picked on its
+// screen, with no way back over BLE; 02A0 keeps it awake on battery.
 static const uint8_t V20_WRITE_OPCODES[][2] = {
     {0x02, 0x0D},  // area reminder
     {0x02, 0x12},  // over-pressure alert
@@ -74,6 +74,7 @@ static const uint8_t V20_WRITE_OPCODES[][2] = {
     {0x02, 0x30},  // voice teaching
     {0x02, 0xA0},  // retail display mode
     {0x02, 0x33},  // cloud host upload server
+    {0x02, 0x11},  // birthday greeting date
 };
 
 // === UNKNOWN query sequence ===

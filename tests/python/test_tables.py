@@ -349,6 +349,42 @@ class WeatherOption(unittest.TestCase):
         self.assertEqual(oc._validate_weather({}), {})
 
 
+class BirthdayOption(unittest.TestCase):
+    def test_month_and_day(self):
+        self.assertEqual(oc.parse_month_day("03-07"), (3, 7))
+        self.assertEqual(oc.parse_month_day("3-7"), (3, 7))
+        self.assertEqual(oc._month_day("3-7"), "03-07")
+        self.assertEqual(oc.parse_month_day("02-29"), (2, 29))
+
+    def test_not_a_calendar_day(self):
+        for value in (
+            "02-30",
+            "04-31",
+            "13-01",
+            "00-10",
+            "03-00",
+            "03-",
+            "-07",
+            "0307",
+            "03-070",
+            "",
+            "ab-cd",
+        ):
+            with self.subTest(value=value), self.assertRaises(cv.Invalid):
+                oc.parse_month_day(value)
+
+    def test_x_ultra_20_only(self):
+        x20 = {oc.CONF_MODEL: oc.MODEL_X_ULTRA_20, oc.CONF_BIRTHDAY: "03-07"}
+        self.assertEqual(oc._validate_birthday(x20), x20)
+        elite = {oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE, oc.CONF_BIRTHDAY: "03-07"}
+        with self.assertRaises(cv.Invalid):
+            oc._validate_birthday(elite)
+        self.assertEqual(
+            oc._validate_birthday({oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE}),
+            {oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE},
+        )
+
+
 class WeatherApiAndOneHub(unittest.TestCase):
     # The entity comes over the native API and the brush request names no brush.
     def test_needs_api(self):

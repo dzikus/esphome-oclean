@@ -155,6 +155,33 @@ class ProvisionWifiButton(unittest.TestCase):
         self._validate({"id": "hub_a", "wifi_provisioning": True})
 
 
+class ApplyBirthdayButton(unittest.TestCase):
+    def _validate(self, hub):
+        token = fv.full_config.set({"oclean": [hub]})
+        try:
+            ocbtn._apply_birthday_needs_a_date(
+                {"oclean_id": "hub_a", "apply_birthday": {}}
+            )
+        finally:
+            fv.full_config.reset(token)
+
+    def test_fails_validation_without_a_date(self):
+        with self.assertRaises(cv.Invalid):
+            self._validate({"id": "hub_a"})
+
+    def test_passes_with_a_date(self):
+        self._validate({"id": "hub_a", "birthday": "03-07"})
+
+    def test_clear_needs_no_date(self):
+        token = fv.full_config.set({"oclean": [{"id": "hub_a"}]})
+        try:
+            ocbtn._apply_birthday_needs_a_date(
+                {"oclean_id": "hub_a", "clear_birthday": {}}
+            )
+        finally:
+            fv.full_config.reset(token)
+
+
 # a row on every model, one only on the X Ultra 20, one only on the X Pro Elite
 MODEL_ROWS = [
     ("battery", "Battery"),

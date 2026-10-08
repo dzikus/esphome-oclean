@@ -85,6 +85,12 @@ CONF_CLOUD_DROP_FUTURE = "cloud_drop_future"
 # which Home Assistant performs only for a device allowed to perform actions.
 CONF_WEATHER = "weather"
 
+# "MM-DD" the apply_birthday button writes as the X Ultra 20 birthday greeting
+# date. A yaml option baked into the firmware, not an entity, so a birthday never
+# reaches the Home Assistant recorder; use !secret.
+CONF_BIRTHDAY = "birthday"
+_DAYS_IN_MONTH = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+
 # BluFi Wi-Fi provisioning is off unless this is set true, and the C++ for it is
 # not compiled in otherwise (USE_OCLEAN_BLUFI).
 CONF_WIFI_PROVISIONING = "wifi_provisioning"
@@ -126,7 +132,14 @@ _HEAD_COUNTER_KEYS = frozenset({"head_used_time", "head_used_days", "head_used_t
 # X Ultra 20 only: cloud host text and the write buttons.
 _X_ULTRA_20_TEXT_KEYS = frozenset({"cloud_host"})
 _X_ULTRA_20_WRITE_BUTTON_KEYS = frozenset(
-    {"apply_cloud_host", "clear_cloud_host", "point_cloud_at_node", "provision_wifi"}
+    {
+        "apply_cloud_host",
+        "clear_cloud_host",
+        "point_cloud_at_node",
+        "provision_wifi",
+        "apply_birthday",
+        "clear_birthday",
+    }
 )
 
 # Highest gear a program step may use; the firmware's motor tables end there.
@@ -448,6 +461,35 @@ def _validate_blufi_wifi(config):
     return config
 
 
+def parse_month_day(value):
+    # "MM-DD", one or two digits each, to a day that exists in a leap year
+    month, sep, day = str(value).partition("-")
+    if (
+        not sep
+        or not (1 <= len(month) <= 2 and month.isdigit())
+        or not (1 <= len(day) <= 2 and day.isdigit())
+    ):
+        raise cv.Invalid(f"{CONF_BIRTHDAY} takes MM-DD, e.g. 03-07")
+    m, d = int(month), int(day)
+    if not 1 <= m <= 12 or not 1 <= d <= _DAYS_IN_MONTH[m - 1]:
+        raise cv.Invalid(f"{CONF_BIRTHDAY} is not a calendar day")
+    return m, d
+
+
+def _month_day(value):
+    m, d = parse_month_day(value)
+    return f"{m:02d}-{d:02d}"
+
+
+def _validate_birthday(config):
+    if CONF_BIRTHDAY in config and config[CONF_MODEL] != MODEL_X_ULTRA_20:
+        raise cv.Invalid(
+            f"{CONF_BIRTHDAY} is shown by the {MODEL_X_ULTRA_20} only",
+            path=[CONF_BIRTHDAY],
+        )
+    return config
+
+
 def _weather_entity(value):
     value = cv.entity_id(value)
     if not value.startswith("weather."):
@@ -531,6 +573,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_CLOUD_RECEIVER, default=False): cv.boolean,
             cv.Optional(CONF_CLOUD_DROP_FUTURE, default=True): cv.boolean,
             cv.Optional(CONF_WEATHER): _weather_entity,
+            cv.Optional(CONF_BIRTHDAY): cv.sensitive(_month_day),
             cv.Optional(CONF_WIFI_PROVISIONING, default=False): cv.boolean,
             cv.Optional(CONF_WIFI_SSID): cv.string,
             cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
@@ -563,6 +606,7 @@ CONFIG_SCHEMA = cv.All(
     _validate_name_prefix_is_reachable,
     _validate_blufi_wifi,
     _validate_weather,
+    _validate_birthday,
     cv.require_esphome_version(2026, 2, 0),
 )
 
@@ -743,6 +787,9 @@ async def to_code(config):
         cg.add_define("USE_API_HOMEASSISTANT_ACTION_RESPONSES")
         cg.add_define("USE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON")
         cg.add(var.set_weather_entity(weather))
+    if (birthday := config.get(CONF_BIRTHDAY)) is not None:
+        month, day = parse_month_day(birthday)
+        cg.add(var.set_birthday(month, day))
     if config[CONF_WIFI_PROVISIONING]:
         cg.add_define("USE_OCLEAN_BLUFI")
         blufi_ssid, blufi_password = resolve_blufi_wifi(

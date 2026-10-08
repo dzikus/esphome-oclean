@@ -11,6 +11,7 @@ from esphome.const import (
 from esphome.core import CORE
 
 from . import (
+    CONF_BIRTHDAY,
     CONF_OCLEAN_ID,
     CONF_WIFI_PROVISIONING,
     DOMAIN,
@@ -57,6 +58,12 @@ OcleanClearCloudHostButton = oclean_ns.class_(
 OcleanPointCloudHereButton = oclean_ns.class_(
     "OcleanPointCloudHereButton", button.Button, cg.Parented.template(OcleanHub)
 )
+OcleanApplyBirthdayButton = oclean_ns.class_(
+    "OcleanApplyBirthdayButton", button.Button, cg.Parented.template(OcleanHub)
+)
+OcleanClearBirthdayButton = oclean_ns.class_(
+    "OcleanClearBirthdayButton", button.Button, cg.Parented.template(OcleanHub)
+)
 OcleanProvisionWifiButton = oclean_ns.class_(
     "OcleanProvisionWifiButton", button.Button, cg.Parented.template(OcleanHub)
 )
@@ -90,6 +97,12 @@ CONF_POINT_CLOUD_AT_NODE = "point_cloud_at_node"
 DEFAULT_POINT_CLOUD_AT_NODE_NAME = "Point cloud at this node"
 CONF_PROVISION_WIFI = "provision_wifi"
 DEFAULT_PROVISION_WIFI_NAME = "Provision Wi-Fi"
+# X Ultra 20 only, opt-in: write the hub's birthday option as the greeting date,
+# or unset it. Both write to the brush.
+CONF_APPLY_BIRTHDAY = "apply_birthday"
+DEFAULT_APPLY_BIRTHDAY_NAME = "Apply birthday greeting"
+CONF_CLEAR_BIRTHDAY = "clear_birthday"
+DEFAULT_CLEAR_BIRTHDAY_NAME = "Clear birthday greeting"
 
 
 _DEFAULT_NAMES = [
@@ -101,6 +114,8 @@ _DEFAULT_NAMES = [
     (CONF_CLEAR_CLOUD_HOST, DEFAULT_CLEAR_CLOUD_HOST_NAME),
     (CONF_POINT_CLOUD_AT_NODE, DEFAULT_POINT_CLOUD_AT_NODE_NAME),
     (CONF_PROVISION_WIFI, DEFAULT_PROVISION_WIFI_NAME),
+    (CONF_APPLY_BIRTHDAY, DEFAULT_APPLY_BIRTHDAY_NAME),
+    (CONF_CLEAR_BIRTHDAY, DEFAULT_CLEAR_BIRTHDAY_NAME),
 ]
 
 _OPT_IN = frozenset(
@@ -109,6 +124,8 @@ _OPT_IN = frozenset(
         CONF_CLEAR_CLOUD_HOST,
         CONF_POINT_CLOUD_AT_NODE,
         CONF_PROVISION_WIFI,
+        CONF_APPLY_BIRTHDAY,
+        CONF_CLEAR_BIRTHDAY,
     }
 )
 
@@ -168,6 +185,16 @@ CONFIG_SCHEMA = cv.All(
                 icon="mdi:wifi-plus",
                 entity_category=ENTITY_CATEGORY_CONFIG,
             ),
+            cv.Optional(CONF_APPLY_BIRTHDAY): button.button_schema(
+                OcleanApplyBirthdayButton,
+                icon="mdi:cake-variant",
+                entity_category=ENTITY_CATEGORY_CONFIG,
+            ),
+            cv.Optional(CONF_CLEAR_BIRTHDAY): button.button_schema(
+                OcleanClearBirthdayButton,
+                icon="mdi:cake-variant-outline",
+                entity_category=ENTITY_CATEGORY_CONFIG,
+            ),
         }
     ),
 )
@@ -187,7 +214,25 @@ def _provision_needs_wifi_provisioning(config):
     return config
 
 
-FINAL_VALIDATE_SCHEMA = _provision_needs_wifi_provisioning
+def _apply_birthday_needs_a_date(config):
+    # The date is a hub option, so a button without one could only warn.
+    if CONF_APPLY_BIRTHDAY not in config:
+        return config
+    if CONF_BIRTHDAY not in final_hub_conf(config[CONF_OCLEAN_ID]):
+        raise cv.Invalid(
+            f"'{CONF_APPLY_BIRTHDAY}' needs '{CONF_BIRTHDAY}: MM-DD' on hub "
+            f"'{config[CONF_OCLEAN_ID]}'",
+            path=[CONF_APPLY_BIRTHDAY],
+        )
+    return config
+
+
+def _final_validate(config):
+    _provision_needs_wifi_provisioning(config)
+    return _apply_birthday_needs_a_date(config)
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
 
 
 async def to_code(config):
@@ -218,7 +263,13 @@ async def to_code(config):
         btn = await button.new_button(sub)
         await cg.register_parented(btn, hub)
 
-    for key in (CONF_APPLY_CLOUD_HOST, CONF_CLEAR_CLOUD_HOST, CONF_POINT_CLOUD_AT_NODE):
+    for key in (
+        CONF_APPLY_CLOUD_HOST,
+        CONF_CLEAR_CLOUD_HOST,
+        CONF_POINT_CLOUD_AT_NODE,
+        CONF_APPLY_BIRTHDAY,
+        CONF_CLEAR_BIRTHDAY,
+    ):
         sub = config.get(key)
         if sub is not None:
             btn = await button.new_button(sub)

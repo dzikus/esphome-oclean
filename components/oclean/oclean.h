@@ -189,6 +189,11 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_scheme_select(OcleanSchemeSelect *s) { this->scheme_select_ = s; }
   void set_language_select(OcleanLanguageSelect *s) { this->language_select_ = s; }
   void set_cloud_host_text(OcleanStoredText *t) { this->cloud_host_text_ = t; }
+  // baked from yaml (a secret), never an entity, so it stays out of the recorder
+  void set_birthday(uint8_t month, uint8_t day) {
+    this->birthday_month_ = month;
+    this->birthday_day_ = day;
+  }
 #ifdef USE_OCLEAN_BLUFI
   // Baked provisioning credentials (hub yaml or the node's own wifi:), not
   // entities, so a Wi-Fi password never reaches the Home Assistant recorder.
@@ -256,6 +261,11 @@ class OcleanHub : public ble_client::BLEClientNode,
   // X Ultra 20 only; a no-op with a warning without the text platform or entity.
   void apply_cloud_host();
   void clear_cloud_host();
+
+  // Writes the configured birthday as the brush's greeting date, or the unset
+  // date. X Ultra 20 only, like the cloud host.
+  void apply_birthday();
+  void clear_birthday();
 
   // Writes http://<this node's IPv4>:<port> as the cloud host, so the brush
   // uploads to this node: the web server's port with cloud_receiver on, else
@@ -495,6 +505,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   OcleanSchemeSelect *scheme_select_{nullptr};
   OcleanLanguageSelect *language_select_{nullptr};
   OcleanStoredText *cloud_host_text_{nullptr};
+  uint8_t birthday_month_{BIRTHDAY_UNSET};
+  uint8_t birthday_day_{BIRTHDAY_UNSET};
 
   State state_{State::IDLE};
   BrushModel model_{BrushModel::X_PRO_ELITE};

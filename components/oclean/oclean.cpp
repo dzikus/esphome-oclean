@@ -133,6 +133,9 @@ void OcleanHub::dump_config() {
   if (this->weather_enabled())
     ESP_LOGCONFIG(TAG, "  Weather: %s", this->weather_entity_.c_str());
 #endif
+  // whether, not which: the date is personal
+  if (this->birthday_month_ != BIRTHDAY_UNSET)
+    ESP_LOGCONFIG(TAG, "  Birthday greeting: set");
   // Active protocol profile: the default until the first poll reads the DIS
   // model string and selects the per-device profile.
   ESP_LOGCONFIG(TAG, "  Profile: %s (confidence %u)", this->profile_->name, (unsigned)this->profile_->confidence);
@@ -1827,6 +1830,18 @@ void OcleanHub::clear_cloud_host() {
 #else
   ESP_LOGW(TAG, "[%s] clear cloud host: text platform not built", this->parent_->address_str());
 #endif
+}
+
+void OcleanHub::apply_birthday() {
+  if (this->birthday_month_ == BIRTHDAY_UNSET) {
+    ESP_LOGW(TAG, "[%s] apply birthday: no birthday in the hub config", this->parent_->address_str());
+    return;
+  }
+  this->send_command(build_birthday_command(this->birthday_month_, this->birthday_day_), "birthday-apply");
+}
+
+void OcleanHub::clear_birthday() {
+  this->send_command(build_birthday_command(BIRTHDAY_UNSET, BIRTHDAY_UNSET), "birthday-clear");
 }
 
 void OcleanHub::point_cloud_at_node() {

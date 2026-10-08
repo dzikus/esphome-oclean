@@ -88,6 +88,8 @@ oclean:
     # the forecast action with its response.
     weather: weather.forecast_home
     time_id: ci_time
+    # Compiles the birthday greeting write (apply_birthday below).
+    birthday: "02-29"
 
 # Every entity platform auto-creates its full entity set, so a bare platform
 # block compiles every entity codegen path (dev-gated rows included via
@@ -157,11 +159,14 @@ button:
   - platform: oclean
     oclean_id: hub_second
     device_id: dev_second
-    # X Ultra 20 only, opt-in: exercise the cloud-host and provisioning codegen.
+    # X Ultra 20 only, opt-in: exercise the cloud-host, provisioning and
+    # birthday codegen.
     apply_cloud_host:
     clear_cloud_host:
     point_cloud_at_node:
     provision_wifi:
+    apply_birthday:
+    clear_birthday:
 
 text:
   - platform: oclean

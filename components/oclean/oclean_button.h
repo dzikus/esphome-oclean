@@ -48,6 +48,18 @@ class OcleanClearCloudHostButton : public button::Button, public Parented<Oclean
   void press_action() override { this->parent_->clear_cloud_host(); }
 };
 
+// Writes the staged MM-DD as the birthday greeting date (X Ultra 20).
+class OcleanApplyBirthdayButton : public button::Button, public Parented<OcleanHub> {
+ public:
+  void press_action() override { this->parent_->apply_birthday(); }
+};
+
+// Unsets the birthday greeting date.
+class OcleanClearBirthdayButton : public button::Button, public Parented<OcleanHub> {
+ public:
+  void press_action() override { this->parent_->clear_birthday(); }
+};
+
 // Points the cloud host at this node: its IPv4 and the receiver port.
 class OcleanPointCloudHereButton : public button::Button, public Parented<OcleanHub> {
  public:

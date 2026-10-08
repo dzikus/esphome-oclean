@@ -278,6 +278,7 @@ Set on the `oclean:` entry, not on the platforms.
 | `cloud_receiver_port` | int 1-65535 | `8099` | Port the `point_cloud_at_node` button puts in the host URL when `cloud_receiver` is off. With `cloud_receiver` on, the receiver rides on the web server, so the button uses the web server's port instead. X Ultra 20 only. |
 | `cloud_receiver` | bool | `false` | Receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. It does **not** start its own server: it registers a handler on the shared ESPHome web server, so a `web_server:` must be configured (validation requires it) and the uploads arrive on the web server's port. The code is not compiled in unless this is true. Needs the brush pointed at the node (`point_cloud_at_node`) and able to reach it over the network. See **In-node session receiver**. |
 | `weather` | `weather.*` entity id | unset | Answers the brush's weather request from this Home Assistant weather entity, so its clock page shows an icon, Today/Tomorrow and the day's low and high. Needs `cloud_receiver: true`, `time_id` and an `api:` block; one hub per node. The forecast needs the device to be allowed to perform Home Assistant actions; without that it shows the current condition and temperature. X Ultra 20 only. See **Weather on the brush**. |
+| `birthday` | `MM-DD` | unset | Date the `apply_birthday` button writes as the birthday greeting. A yaml option baked into the firmware, never an entity, so the date stays out of the Home Assistant recorder; use `!secret`. X Ultra 20 only. |
 | `wifi_provisioning` | bool | `false` | Enables BluFi Wi-Fi provisioning (the `provision_wifi` button). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
 | `wifi_ssid` | string | the node's `wifi:` SSID | The network `provision_wifi` joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
 | `wifi_password` | string | the node's `wifi:` password | Passphrase for `wifi_ssid`. Needs `wifi_provisioning: true`. Baked into the firmware, not an entity, so it never reaches the recorder; use `!secret`. |
@@ -434,6 +435,8 @@ program wants four steps to keep the four-quadrant guidance.
 | `clear_cloud_host` | Clear cloud host | writes `02 33 2A 00 00` | X Ultra 20 only; opt-in; reverts the brush to its firmware default server |
 | `point_cloud_at_node` | Point cloud at this node | writes `02 33` + `http://<node ip>:<port>` | X Ultra 20 only; opt-in; fills the host with this node's own IPv4 and the receiver port (the web server's port when `cloud_receiver` is on, otherwise `cloud_receiver_port`) |
 | `provision_wifi` | Provision Wi-Fi | BluFi join with the configured SSID/password | X Ultra 20 only; needs `wifi_provisioning: true` (see **Hub options**); runs the BluFi sequence over service `0xFFFF` on the next connect |
+| `apply_birthday` | Apply birthday greeting | writes `02 11 00 12 <month> <day>` | X Ultra 20 only; opt-in; needs the hub's `birthday` option and sends it as the greeting date. On every wake that day the brush shows its birthday screen with the date, whether or not the holiday greetings are on. The two bytes before the date (gender 0, age 18, what the app sends for an adult) overwrite the brush's own; its firmware stores them only. |
+| `clear_birthday` | Clear birthday greeting | writes `02 11 00 12 FF FF` | X Ultra 20 only; opt-in; a date that never matches, the brush's unset state |
 
 ### Entities (text)
 
@@ -442,7 +445,6 @@ Opt-in and X Ultra 20 only: list the key to create it.
 | Key | Default name | Effect | Notes |
 |---|---|---|---|
 | `cloud_host` | Cloud host | local store | the upload-server address written to the brush by `apply_cloud_host` (`02 33`); at most 59 bytes. The firmware has no read-back, so the field holds the last value written here, not the brush's own. |
-
 The brush takes `02 33` with no pairing, so treat it as a redirect, not a
 control. Point it at a server you run, and block the brush's internet on the
 router, to keep its uploads off the vendor cloud; with no Wi-Fi set the brush

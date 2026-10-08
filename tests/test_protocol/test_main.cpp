@@ -836,6 +836,18 @@ void test_parse_mac_u64() {
   TEST_ASSERT_FALSE(parse_mac_u64("zz:bb:cc:dd:ee:01", &v));
 }
 
+void test_build_birthday_command() {
+  // gender 0 and age 18 as the app sends an adult, then month and day
+  const uint8_t mar7[] = {0x02, 0x11, 0x00, 0x12, 0x03, 0x07};
+  std::vector<uint8_t> const cmd = build_birthday_command(3, 7);
+  TEST_ASSERT_EQUAL_UINT(sizeof(mar7), cmd.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(mar7, cmd.data(), sizeof(mar7));
+  // unset: a date that never matches, the age byte still not 0xFF
+  const uint8_t unset[] = {0x02, 0x11, 0x00, 0x12, 0xFF, 0xFF};
+  std::vector<uint8_t> const clear = build_birthday_command(BIRTHDAY_UNSET, BIRTHDAY_UNSET);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(unset, clear.data(), sizeof(unset));
+}
+
 void test_brush_weather_code() {
   // every Home Assistant condition lands on one of the brush's seven icons
   TEST_ASSERT_EQUAL_UINT8(2, static_cast<uint8_t>(brush_weather_code("sunny")));
@@ -1843,21 +1855,24 @@ void test_command_permitted_v20_passes_only_listed_writes() {
   TEST_ASSERT_TRUE(command_permitted(false, p, voice, sizeof(voice)));
   const uint8_t head_reset[] = {0x02, 0x0F};
   TEST_ASSERT_TRUE(command_permitted(false, p, head_reset, sizeof(head_reset)));
-  // the store clear after an inline record, the program, teaching, retail and
-  // cloud-host writes
+  // the store clear after an inline record, the program, teaching, retail,
+  // cloud-host and birthday writes
   const uint8_t teaching[] = {0x02, 0x30, 0x01};
   const uint8_t scheme[] = {0x02, 0x06, 0x79, 0x01, 0x00, 0x2F, 0xB4, 0x00, 0x05};
   const uint8_t scheme_tail[] = {0x02, 0x0B, 0x00, 0x10, 0x1E, 0x00, 0x05};
   const uint8_t demo[] = {0x02, 0xA0, 0x01};
   const uint8_t cloud_host[] = {0x02, 0x33, 0x2A, 0x01, 0x01, 0x68};
+  const std::vector<uint8_t> birthday = build_birthday_command(3, 7);
   TEST_ASSERT_TRUE(command_permitted(false, p, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
   TEST_ASSERT_TRUE(command_permitted(false, p, teaching, sizeof(teaching)));
   TEST_ASSERT_TRUE(command_permitted(false, p, scheme, sizeof(scheme)));
   TEST_ASSERT_TRUE(command_permitted(false, p, scheme_tail, sizeof(scheme_tail)));
   TEST_ASSERT_TRUE(command_permitted(false, p, demo, sizeof(demo)));
   TEST_ASSERT_TRUE(command_permitted(false, p, cloud_host, sizeof(cloud_host)));
-  // a read-only hub still refuses the cloud-host write
+  TEST_ASSERT_TRUE(command_permitted(false, p, birthday.data(), birthday.size()));
+  // a read-only hub still refuses the cloud-host and birthday writes
   TEST_ASSERT_FALSE(command_permitted(true, p, cloud_host, sizeof(cloud_host)));
+  TEST_ASSERT_FALSE(command_permitted(true, p, birthday.data(), birthday.size()));
   // firmware update, OTA host and factory reset stay out
   const uint8_t ota_url[] = {0x03, 0xA1, 0x68};
   const uint8_t factory_reset[] = {0x09, 0xED, 0xEF};
@@ -2503,6 +2518,7 @@ int main() {
   RUN_TEST(test_cloud_body_field);
   RUN_TEST(test_parse_hex_bytes);
   RUN_TEST(test_parse_mac_u64);
+  RUN_TEST(test_build_birthday_command);
   RUN_TEST(test_brush_weather_code);
   RUN_TEST(test_parse_iso8601_epoch);
   RUN_TEST(test_pick_weather_today_then_tomorrow);

@@ -24,8 +24,9 @@ CONF_CLOUD_HOST = "cloud_host"
 CLOUD_HOST_MAX_LEN = 59
 
 # (yaml_key, default_name, icon, mode, max_length, hub_setter)
-# Wi-Fi credentials are not here on purpose: a password text would be recorded
-# in Home Assistant. They are hub yaml options baked into the firmware instead.
+# Wi-Fi credentials and the birthday date are not here on purpose: a text would
+# be recorded in Home Assistant. They are hub yaml options baked into the
+# firmware instead.
 TEXTS = [
     (
         CONF_CLOUD_HOST,

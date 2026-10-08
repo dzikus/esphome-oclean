@@ -1104,6 +1104,12 @@ bool parse_iso8601_epoch(std::string_view text, int64_t *out) {
   return true;
 }
 
+std::vector<uint8_t> build_birthday_command(uint8_t month, uint8_t day) {
+  // gender 0 and age 18, what the app sends for an adult; the firmware only
+  // stores them
+  return {0x02, 0x11, 0x00, 18, month, day};
+}
+
 // two digits and a sign is all the page lays out
 static int weather_degrees(float value) {
   return std::clamp(static_cast<int>(std::lround(value)), -99, 99);
