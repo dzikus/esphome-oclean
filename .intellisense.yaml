@@ -50,47 +50,27 @@ oclean:
 sensor:
   - platform: oclean
     oclean_id: hub_probe
-    battery:
-      name: Battery
-    last_session_score:
-      name: Score
 
 binary_sensor:
   - platform: oclean
     oclean_id: hub_probe
-    charging:
-      name: Charging
 
 text_sensor:
   - platform: oclean
     oclean_id: hub_probe
-    model:
-      name: Model
-    hw_revision:
-      name: Hardware revision
-    sw_version:
-      name: Software version
 
 switch:
   - platform: oclean
     oclean_id: hub_probe
-    area_reminder:
-      name: Area reminder
 
 number:
   - platform: oclean
     oclean_id: hub_probe
-    head_max_minutes:
-      name: Brush head time limit
 
 select:
   - platform: oclean
     oclean_id: hub_probe
-    brush_scheme:
-      name: Brushing mode
 
 button:
   - platform: oclean
     oclean_id: hub_probe
-    sync_time:
-      name: Sync clock

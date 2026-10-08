@@ -68,56 +68,31 @@ oclean:
     update_interval: 4h
     time_id: ha_time
 
+# Each block creates every entity the brush model has; nothing is listed.
 sensor:
   - platform: oclean
     oclean_id: brush_hub
-    battery:
-      name: Battery
-    last_session_score:
-      name: Score
-    last_session_coverage:
-      name: Coverage
 
 binary_sensor:
   - platform: oclean
     oclean_id: brush_hub
-    charging:
-      name: Charging
 
 text_sensor:
   - platform: oclean
     oclean_id: brush_hub
-    last_session_time:
-      name: Last session
-    last_seen:
-      name: Last seen
 
 switch:
   - platform: oclean
     oclean_id: brush_hub
-    # area_reminder and the other dev-only toggles need
-    # expose_dev_sensors: true on the hub, so they are not shown here.
-    raise_wake:
-      name: Raise to wake
-    over_pressure:
-      name: Over-pressure alert
 
 number:
   - platform: oclean
     oclean_id: brush_hub
-    head_max_minutes:
-      name: Brush head time limit
 
 select:
   - platform: oclean
     oclean_id: brush_hub
-    brush_scheme:
-      name: Brushing mode
 
 button:
   - platform: oclean
     oclean_id: brush_hub
-    reset_head:
-      name: Reset brush head
-    sync_time:
-      name: Sync clock
