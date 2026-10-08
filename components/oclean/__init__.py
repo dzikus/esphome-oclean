@@ -86,9 +86,17 @@ CONF_CLOUD_DROP_FUTURE = "cloud_drop_future"
 CONF_WEATHER = "weather"
 
 # "MM-DD" the apply_birthday button writes as the X Ultra 20 birthday greeting
-# date. A yaml option baked into the firmware, not an entity, so a birthday never
-# reaches the Home Assistant recorder; use !secret.
+# date, with gender and age in the same frame. Yaml options baked into the
+# firmware, not entities, so none of it reaches the Home Assistant recorder; use
+# !secret. Gender codes and the 3-18 age range are what the app sends.
 CONF_BIRTHDAY = "birthday"
+CONF_GENDER = "gender"
+CONF_AGE = "age"
+GENDERS = {"unknown": 0, "male": 1, "female": 2}
+DEFAULT_GENDER = "unknown"
+DEFAULT_AGE = 18
+_gender = cv.enum(GENDERS, lower=True)
+_age = cv.int_range(min=3, max=18)
 _DAYS_IN_MONTH = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
 # BluFi Wi-Fi provisioning is off unless this is set true, and the C++ for it is
@@ -482,11 +490,13 @@ def _month_day(value):
 
 
 def _validate_birthday(config):
-    if CONF_BIRTHDAY in config and config[CONF_MODEL] != MODEL_X_ULTRA_20:
-        raise cv.Invalid(
-            f"{CONF_BIRTHDAY} is shown by the {MODEL_X_ULTRA_20} only",
-            path=[CONF_BIRTHDAY],
-        )
+    for key in (CONF_BIRTHDAY, CONF_GENDER, CONF_AGE):
+        if key in config and config[CONF_MODEL] != MODEL_X_ULTRA_20:
+            raise cv.Invalid(
+                f"{key} goes to the birthday greeting, which only the "
+                f"{MODEL_X_ULTRA_20} shows",
+                path=[key],
+            )
     return config
 
 
@@ -574,6 +584,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_CLOUD_DROP_FUTURE, default=True): cv.boolean,
             cv.Optional(CONF_WEATHER): _weather_entity,
             cv.Optional(CONF_BIRTHDAY): cv.sensitive(_month_day),
+            cv.Optional(CONF_GENDER): cv.sensitive(_gender),
+            cv.Optional(CONF_AGE): cv.sensitive(_age),
             cv.Optional(CONF_WIFI_PROVISIONING, default=False): cv.boolean,
             cv.Optional(CONF_WIFI_SSID): cv.string,
             cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
@@ -790,6 +802,9 @@ async def to_code(config):
     if (birthday := config.get(CONF_BIRTHDAY)) is not None:
         month, day = parse_month_day(birthday)
         cg.add(var.set_birthday(month, day))
+    if CONF_GENDER in config or CONF_AGE in config:
+        gender = GENDERS[config.get(CONF_GENDER, DEFAULT_GENDER)]
+        cg.add(var.set_user_profile(gender, config.get(CONF_AGE, DEFAULT_AGE)))
     if config[CONF_WIFI_PROVISIONING]:
         cg.add_define("USE_OCLEAN_BLUFI")
         blufi_ssid, blufi_password = resolve_blufi_wifi(

@@ -376,13 +376,34 @@ class BirthdayOption(unittest.TestCase):
     def test_x_ultra_20_only(self):
         x20 = {oc.CONF_MODEL: oc.MODEL_X_ULTRA_20, oc.CONF_BIRTHDAY: "03-07"}
         self.assertEqual(oc._validate_birthday(x20), x20)
-        elite = {oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE, oc.CONF_BIRTHDAY: "03-07"}
-        with self.assertRaises(cv.Invalid):
-            oc._validate_birthday(elite)
+        for key, value in (
+            (oc.CONF_BIRTHDAY, "03-07"),
+            (oc.CONF_GENDER, "female"),
+            (oc.CONF_AGE, 9),
+        ):
+            elite = {oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE, key: value}
+            with self.subTest(key=key), self.assertRaises(cv.Invalid):
+                oc._validate_birthday(elite)
         self.assertEqual(
             oc._validate_birthday({oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE}),
             {oc.CONF_MODEL: oc.MODEL_X_PRO_ELITE},
         )
+
+
+class UserProfileOptions(unittest.TestCase):
+    # the codes and the age range the app puts in the same 0211 frame
+    def test_gender_codes(self):
+        self.assertEqual(oc.GENDERS, {"unknown": 0, "male": 1, "female": 2})
+        self.assertEqual(oc.GENDERS[oc.DEFAULT_GENDER], 0)
+
+    def test_values(self):
+        self.assertEqual(oc._gender("Female"), "female")
+        with self.assertRaises(cv.Invalid):
+            oc._gender("other")
+        self.assertEqual(oc._age("9"), 9)
+        for value in (2, 19, 255):
+            with self.subTest(age=value), self.assertRaises(cv.Invalid):
+                oc._age(value)
 
 
 class WeatherApiAndOneHub(unittest.TestCase):

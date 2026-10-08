@@ -90,6 +90,8 @@ oclean:
     time_id: ci_time
     # Compiles the birthday greeting write (apply_birthday below).
     birthday: "02-29"
+    gender: female
+    age: 9
 
 # Every entity platform auto-creates its full entity set, so a bare platform
 # block compiles every entity codegen path (dev-gated rows included via

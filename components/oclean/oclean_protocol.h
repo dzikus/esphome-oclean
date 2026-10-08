@@ -538,9 +538,13 @@ std::vector<uint8_t> build_set_cloud_host_command(std::string_view url);
 // === Birthday greeting (0211) ===
 // 02 11 [gender][age][month][day]. On every wake on that day the X Ultra 20
 // shows a birthday screen with the date. A month or day of 0xFF never matches,
-// which is the unset state. An age of 0xFF would make it skip the date bytes.
+// which is the unset state. An age of 0xFF would make it skip the date bytes,
+// so gender and age are clamped the way the app does. Gender: 0 unknown, 1 male,
+// 2 female; the firmware stores both without using them.
 static constexpr uint8_t BIRTHDAY_UNSET = 0xFF;
-std::vector<uint8_t> build_birthday_command(uint8_t month, uint8_t day);
+static constexpr uint8_t USER_GENDER_DEFAULT = 0;
+static constexpr uint8_t USER_AGE_DEFAULT = 18;
+std::vector<uint8_t> build_birthday_command(uint8_t gender, uint8_t age, uint8_t month, uint8_t day);
 
 // === BluFi Wi-Fi provisioning (service 0xFFFF, write 0xFF01, notify 0xFF02) ===
 // Standard Espressif BluFi, the unencrypted variant (the X Ultra 20 accepts it).

@@ -1104,10 +1104,10 @@ bool parse_iso8601_epoch(std::string_view text, int64_t *out) {
   return true;
 }
 
-std::vector<uint8_t> build_birthday_command(uint8_t month, uint8_t day) {
-  // gender 0 and age 18, what the app sends for an adult; the firmware only
-  // stores them
-  return {0x02, 0x11, 0x00, 18, month, day};
+std::vector<uint8_t> build_birthday_command(uint8_t gender, uint8_t age, uint8_t month, uint8_t day) {
+  // the app's clamps: an unknown gender code becomes 1, the age stays in 3-18
+  uint8_t const g = gender > 2 ? 1 : gender;
+  return {0x02, 0x11, g, std::clamp<uint8_t>(age, 3, 18), month, day};
 }
 
 // two digits and a sign is all the page lays out

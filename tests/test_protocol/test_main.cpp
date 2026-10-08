@@ -837,15 +837,21 @@ void test_parse_mac_u64() {
 }
 
 void test_build_birthday_command() {
-  // gender 0 and age 18 as the app sends an adult, then month and day
-  const uint8_t mar7[] = {0x02, 0x11, 0x00, 0x12, 0x03, 0x07};
-  std::vector<uint8_t> const cmd = build_birthday_command(3, 7);
+  // gender, age, then month and day
+  const uint8_t mar7[] = {0x02, 0x11, 0x02, 0x09, 0x03, 0x07};
+  std::vector<uint8_t> const cmd = build_birthday_command(2, 9, 3, 7);
   TEST_ASSERT_EQUAL_UINT(sizeof(mar7), cmd.size());
   TEST_ASSERT_EQUAL_UINT8_ARRAY(mar7, cmd.data(), sizeof(mar7));
-  // unset: a date that never matches, the age byte still not 0xFF
+  // unset: a date that never matches, with the defaults (unknown, adult)
   const uint8_t unset[] = {0x02, 0x11, 0x00, 0x12, 0xFF, 0xFF};
-  std::vector<uint8_t> const clear = build_birthday_command(BIRTHDAY_UNSET, BIRTHDAY_UNSET);
+  std::vector<uint8_t> const clear =
+      build_birthday_command(USER_GENDER_DEFAULT, USER_AGE_DEFAULT, BIRTHDAY_UNSET, BIRTHDAY_UNSET);
   TEST_ASSERT_EQUAL_UINT8_ARRAY(unset, clear.data(), sizeof(unset));
+  // the app's clamps: an age of 0xFF would skip the date, a gender past 2 is 1
+  std::vector<uint8_t> const clamped = build_birthday_command(7, 0xFF, 3, 7);
+  TEST_ASSERT_EQUAL_UINT8(1, clamped[2]);
+  TEST_ASSERT_EQUAL_UINT8(18, clamped[3]);
+  TEST_ASSERT_EQUAL_UINT8(3, build_birthday_command(0, 1, 3, 7)[3]);
 }
 
 void test_brush_weather_code() {
@@ -1862,7 +1868,7 @@ void test_command_permitted_v20_passes_only_listed_writes() {
   const uint8_t scheme_tail[] = {0x02, 0x0B, 0x00, 0x10, 0x1E, 0x00, 0x05};
   const uint8_t demo[] = {0x02, 0xA0, 0x01};
   const uint8_t cloud_host[] = {0x02, 0x33, 0x2A, 0x01, 0x01, 0x68};
-  const std::vector<uint8_t> birthday = build_birthday_command(3, 7);
+  const std::vector<uint8_t> birthday = build_birthday_command(0, 18, 3, 7);
   TEST_ASSERT_TRUE(command_permitted(false, p, CLEAR_RUNNING_DATA_CMD, sizeof(CLEAR_RUNNING_DATA_CMD)));
   TEST_ASSERT_TRUE(command_permitted(false, p, teaching, sizeof(teaching)));
   TEST_ASSERT_TRUE(command_permitted(false, p, scheme, sizeof(scheme)));

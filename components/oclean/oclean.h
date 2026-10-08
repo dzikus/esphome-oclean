@@ -189,10 +189,14 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_scheme_select(OcleanSchemeSelect *s) { this->scheme_select_ = s; }
   void set_language_select(OcleanLanguageSelect *s) { this->language_select_ = s; }
   void set_cloud_host_text(OcleanStoredText *t) { this->cloud_host_text_ = t; }
-  // baked from yaml (a secret), never an entity, so it stays out of the recorder
+  // baked from yaml (secrets), never entities, so they stay out of the recorder
   void set_birthday(uint8_t month, uint8_t day) {
     this->birthday_month_ = month;
     this->birthday_day_ = day;
+  }
+  void set_user_profile(uint8_t gender, uint8_t age) {
+    this->user_gender_ = gender;
+    this->user_age_ = age;
   }
 #ifdef USE_OCLEAN_BLUFI
   // Baked provisioning credentials (hub yaml or the node's own wifi:), not
@@ -507,6 +511,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   OcleanStoredText *cloud_host_text_{nullptr};
   uint8_t birthday_month_{BIRTHDAY_UNSET};
   uint8_t birthday_day_{BIRTHDAY_UNSET};
+  uint8_t user_gender_{USER_GENDER_DEFAULT};
+  uint8_t user_age_{USER_AGE_DEFAULT};
 
   State state_{State::IDLE};
   BrushModel model_{BrushModel::X_PRO_ELITE};

@@ -1837,11 +1837,14 @@ void OcleanHub::apply_birthday() {
     ESP_LOGW(TAG, "[%s] apply birthday: no birthday in the hub config", this->parent_->address_str());
     return;
   }
-  this->send_command(build_birthday_command(this->birthday_month_, this->birthday_day_), "birthday-apply");
+  this->send_command(
+      build_birthday_command(this->user_gender_, this->user_age_, this->birthday_month_, this->birthday_day_),
+      "birthday-apply");
 }
 
 void OcleanHub::clear_birthday() {
-  this->send_command(build_birthday_command(BIRTHDAY_UNSET, BIRTHDAY_UNSET), "birthday-clear");
+  this->send_command(build_birthday_command(this->user_gender_, this->user_age_, BIRTHDAY_UNSET, BIRTHDAY_UNSET),
+                     "birthday-clear");
 }
 
 void OcleanHub::point_cloud_at_node() {
