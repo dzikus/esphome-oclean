@@ -609,6 +609,9 @@ bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *ou
   decode_v20_head(rec, out);
   out->valid_duration_s = u16be(rec + 11);
   out->tz_index = rec[SESSION_V20_TZ_OFFSET];
+  // gestureArray, only in a full record; the publish path hides 0xFF per zone
+  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
+    out->zones[i] = rec[SESSION_V20_ZONES_OFFSET + i];
   out->score = rec[SESSION_V20_SCORE_OFFSET];
   out->has_score = out->score != SESSION_NO_SCORE;
   return true;

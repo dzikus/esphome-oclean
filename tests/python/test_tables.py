@@ -95,7 +95,7 @@ class ModelEntitySets(unittest.TestCase):
         elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
         ultra = oc.MODEL_ENTITY_SETS[oc.MODEL_X_ULTRA_20]["unavailable"]
         self.assertIn("voice_prompts", elite["switch"])
-        self.assertIn("gesture_zone_1", ultra["sensor"])
+        self.assertIn("quadrant_upper_left", ultra["sensor"])
 
     def test_auto_mode_is_a_switch_on_the_x_ultra_20_only(self):
         elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
@@ -161,6 +161,16 @@ class ModelEntitySets(unittest.TestCase):
         elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
         self.assertLessEqual(keys, ultra["sensor"])
         self.assertFalse(keys & elite["sensor"])
+
+    def test_gesture_zones_available_on_both_models(self):
+        # the full cloud record carries gestureArray[0..7] on the X Ultra 20, so
+        # the zone sensors are built there too (unlike the 4 quadrants)
+        zones = {f"gesture_zone_{i + 1}" for i in range(8)}
+        for model in (oc.MODEL_X_PRO_ELITE, oc.MODEL_X_ULTRA_20):
+            unavail = oc.MODEL_ENTITY_SETS[model]["unavailable"].get(
+                "sensor", frozenset()
+            )
+            self.assertFalse(zones & unavail, model)
 
 
 class ModelEntityDefaults(unittest.TestCase):

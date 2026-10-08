@@ -159,7 +159,7 @@ class ProvisionWifiButton(unittest.TestCase):
 MODEL_ROWS = [
     ("battery", "Battery"),
     ("device_mode", "Device mode"),
-    ("gesture_zone_1", "Zone 1"),
+    ("quadrant_upper_left", "Quadrant upper left"),
 ]
 
 
@@ -187,30 +187,30 @@ class InjectPerModel(RawConfigCase):
         out = self._inject({"oclean_id": "hub_a"})
         self.assertIn("battery", out)
         self.assertIn("device_mode", out)
-        self.assertNotIn("gesture_zone_1", out)
+        self.assertNotIn("quadrant_upper_left", out)
 
     def test_the_default_builds_the_elite_rows_and_not_the_ultra_ones(self):
         self.set_hubs({"id": "hub_a"})
         out = self._inject({"oclean_id": "hub_a"})
         self.assertIn("battery", out)
-        self.assertIn("gesture_zone_1", out)
+        self.assertIn("quadrant_upper_left", out)
         self.assertNotIn("device_mode", out)
 
     def test_an_explicit_row_the_model_lacks_is_rejected(self):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
         for want in ({"name": "Zone"}, True, None):
             with self.assertRaises(cv.Invalid):
-                self._inject({"oclean_id": "hub_a", "gesture_zone_1": want})
+                self._inject({"oclean_id": "hub_a", "quadrant_upper_left": want})
 
     def test_false_on_a_row_the_model_lacks_is_accepted(self):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
-        out = self._inject({"oclean_id": "hub_a", "gesture_zone_1": False})
-        self.assertNotIn("gesture_zone_1", out)
+        out = self._inject({"oclean_id": "hub_a", "quadrant_upper_left": False})
+        self.assertNotIn("quadrant_upper_left", out)
 
     def test_without_a_platform_nothing_is_filtered(self):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
         out = oc.inject_entity_defaults({"oclean_id": "hub_a"}, MODEL_ROWS)
-        self.assertIn("gesture_zone_1", out)
+        self.assertIn("quadrant_upper_left", out)
 
     def test_flags_without_a_setting_are_built_on_no_model(self):
         rows = [("fill_brush", "Fill brush"), ("charging", "Charging")]
@@ -233,7 +233,7 @@ class InjectPerModel(RawConfigCase):
     def test_a_row_another_model_has_suggests_the_model_option(self):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
         with self.assertRaises(cv.Invalid) as caught:
-            self._inject({"oclean_id": "hub_a", "gesture_zone_1": True})
+            self._inject({"oclean_id": "hub_a", "quadrant_upper_left": True})
         self.assertIn("set model:", str(caught.exception))
 
 

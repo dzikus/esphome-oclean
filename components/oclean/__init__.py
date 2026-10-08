@@ -95,7 +95,6 @@ def resolve_blufi_wifi(hub_ssid, hub_password, wifi_config):
     return "", ""
 
 
-_ZONE_KEYS = frozenset(f"gesture_zone_{i + 1}" for i in range(8))
 # session record order, bytes 19-22
 QUADRANT_POSITIONS = ("upper_left", "lower_left", "upper_right", "lower_right")
 _QUADRANT_KEYS = frozenset(f"quadrant_{position}" for position in QUADRANT_POSITIONS)
@@ -157,14 +156,14 @@ MODEL_ENTITY_SETS = {
         },
     },
     # Settings bytes 0, 1, 3, 8-10 and 13 hold other fields on this brush, its
-    # app family has no 0222 / 0209 setter, and its 12-zone record is not mapped.
-    # Nothing in firmware 0.0.1.6 writes byte 1 or counts head use, so the
-    # network flag and the head counters stay zero. Voice teaching and the
-    # retail mode are switches here.
+    # app family has no 0222 / 0209 setter, and the 12-zone map and quadrants of
+    # its record are not decoded. Nothing in firmware 0.0.1.6 writes byte 1 or
+    # counts head use, so the network flag and the head counters stay zero.
+    # Voice teaching and the retail mode are switches here. The eight zones come
+    # from the full record only, which BLE never hands over (cloud_receiver).
     MODEL_X_ULTRA_20: {
         "unavailable": {
             "sensor": frozenset({"device_theme", "volume_index"})
-            | _ZONE_KEYS
             | _QUADRANT_KEYS
             | _HEAD_COUNTER_KEYS,
             "binary_sensor": _X_PRO_ELITE_FLAG_KEYS

@@ -306,7 +306,7 @@ naming a model exist only on hubs with that `model:`.
 | `last_session_duration` | Duration | session record bytes 7-8 BE | seconds |
 | `last_session_valid_duration` | Valid duration | session record bytes 9-10 BE | seconds counted as effective |
 | `last_session_coverage` | Coverage | derived | valid / duration, percent |
-| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | session record bytes 23-30 | X Pro Elite only; per-region values; 1-4 left, 5-8 right (upper-outer / upper-inner / lower-outer / lower-inner per side) |
+| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | Elite record bytes 23-30; X Ultra 20 gestureArray bytes 20-27 | per-region values, 1-4 upper / 5-8 lower, outer/inner per side. On the X Ultra 20 only the full cloud record carries them (the inline BLE record does not), so they fill only via `cloud_receiver`. |
 | `quadrant_upper_left`, `quadrant_lower_left`, `quadrant_upper_right`, `quadrant_lower_right` | Quadrant upper left .. Quadrant lower right | session record bytes 19-22 | X Pro Elite only; hidden; percent of the session per quadrant, summing to 100; each is about the sum of its two zones, rounded on the brush |
 | `head_used_days` | Brush head used days | settings buffer 27-28 BE | X Pro Elite only; days with brushing since head reset |
 | `head_used_times` | Brush head sessions | settings buffer 29-30 BE | X Pro Elite only; valid sessions since head reset |

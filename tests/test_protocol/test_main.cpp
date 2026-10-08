@@ -840,20 +840,15 @@ void test_decode_cloud_brushdata_record() {
   // the full v20 record the cloud body carries, length prefix included: the
   // score at [28] is the datum BLE on this firmware never hands over
   std::vector<uint8_t> rec(SESSION_V20_RECORD_MIN, 0);
-  rec[0] = static_cast<uint8_t>(SESSION_V20_RECORD_MIN);  // length prefix lo
-  rec[2] = 26;                                            // year 2026
-  rec[3] = 10;                                            // month
-  rec[4] = 7;                                             // day
-  rec[5] = 21;                                            // hour
-  rec[6] = 41;                                            // minute
-  rec[7] = 24;                                            // second
-  rec[8] = 3;                                             // scheme
-  rec[9] = 0;
-  rec[10] = 120;  // program 120 s
-  rec[11] = 0;
-  rec[12] = 118;                       // brushed 118 s
-  rec[SESSION_V20_TZ_OFFSET] = 16;     // tz index (UTC+2)
-  rec[SESSION_V20_SCORE_OFFSET] = 88;  // score
+  rec[1] = static_cast<uint8_t>(SESSION_V20_RECORD_MIN);
+  // 2026-10-07 21:41:24, scheme 3, program 120 s, brushed 118 s
+  const uint8_t head[] = {26, 10, 7, 21, 41, 24, 3, 0, 120, 0, 118};
+  for (size_t i = 0; i < sizeof(head); i++)
+    rec[2 + i] = head[i];
+  rec[SESSION_V20_TZ_OFFSET] = 16;
+  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
+    rec[SESSION_V20_ZONES_OFFSET + i] = static_cast<uint8_t>(10 + i);
+  rec[SESSION_V20_SCORE_OFFSET] = 88;
   std::string hex;
   for (uint8_t b : rec) {
     char buf[3];
@@ -872,6 +867,25 @@ void test_decode_cloud_brushdata_record() {
   TEST_ASSERT_EQUAL_UINT8(16, out.tz_index);
   TEST_ASSERT_TRUE(out.has_score);
   TEST_ASSERT_EQUAL_UINT8(88, out.score);
+  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
+    TEST_ASSERT_EQUAL_UINT8(10 + i, out.zones[i]);
+}
+
+void test_decode_v20_record_zones_real() {
+  // real cloud UploadBrushRecord captured 2026-10-08 (score 65); gestureArray at
+  // [20..27] = 04 0e 01 05 03 37 06 13. The inline-only BLE path never carries it.
+  const std::string hex =
+      "006f40041115223503007800780a144600000010040e0105033706134103000000050100"
+      "ffffffffffffffffffffffffffffff717139ff150a201c3225292245262b156623452d34"
+      "474c432e2b192f2c641c2856273f393b232614";
+  std::vector<uint8_t> bytes;
+  TEST_ASSERT_TRUE(parse_hex_bytes(hex, &bytes));
+  SessionRecord out{};
+  TEST_ASSERT_TRUE(decode_session_record_v20(bytes.data(), bytes.size(), &out));
+  TEST_ASSERT_EQUAL_UINT8(65, out.score);
+  const uint8_t expected_zones[] = {0x04, 0x0e, 0x01, 0x05, 0x03, 0x37, 0x06, 0x13};
+  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
+    TEST_ASSERT_EQUAL_UINT8(expected_zones[i], out.zones[i]);
 }
 
 void test_timezone_index_to_string() {
@@ -2367,6 +2381,7 @@ int main() {
   RUN_TEST(test_parse_hex_bytes);
   RUN_TEST(test_parse_mac_u64);
   RUN_TEST(test_decode_cloud_brushdata_record);
+  RUN_TEST(test_decode_v20_record_zones_real);
   RUN_TEST(test_timezone_index_to_string);
   RUN_TEST(test_tz_index_for_offset_seconds);
   RUN_TEST(test_tz_index_offset_seconds_round_trips);

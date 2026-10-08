@@ -192,13 +192,20 @@ static constexpr size_t SESSION_V20_RECORD_MIN = 58;
 static constexpr size_t SESSION_V20_LENGTH_BASE = 51;
 static constexpr size_t SESSION_V20_MAX_BYTES = size_t(SESSION_V20_MAX_RECORDS) * SESSION_V20_RECORD_MAX;
 static constexpr size_t SESSION_V20_TZ_OFFSET = 19;
+// gestureArray[0..7]: per-region values, 0-3 upper jaw and 4-7 lower, outer and
+// inner per side. Only in a full record (count>0), never the count=0 inline. The
+// firmware also stores a scattered 12-zone map, not read here.
+static constexpr size_t SESSION_V20_ZONES_OFFSET = 20;
 static constexpr size_t SESSION_V20_SCORE_OFFSET = 28;
+static_assert(SESSION_V20_ZONES_OFFSET + SESSION_ZONES_COUNT <= SESSION_V20_SCORE_OFFSET &&
+                  SESSION_V20_SCORE_OFFSET < SESSION_V20_RECORD_MIN,
+              "zones and score must sit inside the shortest record");
 // length, start time, mode, program length: what a count=0 reply carries
 static constexpr size_t SESSION_V20_INLINE_LEN = 11;
 
 // [0-1] length, [2-7] start time, [8] mode, [9-10] program length s, [11-12]
-// brushed s, [19] time zone, [28] score. The zone bytes are not mapped, so every
-// zone comes back SESSION_ZONE_ABSENT.
+// brushed s, [19] time zone, [20-27] zones, [28] score. The quadrants are not
+// mapped and come back SESSION_ZONE_ABSENT.
 bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *out);
 
 // Brushed seconds read off the record length, low by at most 1 s. A record cut
