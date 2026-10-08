@@ -49,6 +49,17 @@
   options (baked into the firmware, falling back to the node's own `wifi:`), not
   entities, so a Wi-Fi password never reaches the recorder. A `provision_wifi`
   button runs the join.
+- X Ultra 20: `cloud_receiver: true` takes the brush's cloud session uploads
+  on the node's web server and publishes them as the session entities: score,
+  durations, timestamp and, from the full record, the eight `gesture_zone`
+  values. BLE never carries the score on this firmware. An upload goes to the
+  hub whose brush MAC it names; a `web_server:` is required.
+- X Ultra 20: the receiver answers the brush's clock with the node's local
+  time, so the brush clock also corrects over Wi-Fi.
+- X Ultra 20: `cloud_drop_future` (on by default) acks an upload dated
+  implausibly far in the future, from a brush whose clock was not corrected
+  yet, so the brush drops it instead of re-sending it on every connect. Such a
+  record is never published.
 - X Ultra 20: `weather: <weather entity>` answers the brush's weather request
   through the session receiver, so its clock page shows the Home Assistant
   condition, Today/Tomorrow and the day's low and high. The forecast needs the
