@@ -187,9 +187,9 @@ MODEL_ENTITY_SETS = {
     # Voice teaching and the retail mode are switches here. The download never
     # streams (count=0 and the head of a stored record), so there is no record
     # stream to capture, and the score and the eight zones come only from the
-    # full record of the brush's cloud upload. No buttons either: BLE never
-    # hands over the stored sessions, and every Wi-Fi connection sets the clock
-    # from the time answer, over any BLE clock write.
+    # full record of the brush's cloud upload. No capture or poll button either:
+    # BLE never hands over the stored sessions. The clock button stays: a BLE
+    # clock write stamps the sessions until the brush next asks for the time.
     MODEL_X_ULTRA_20: {
         "unavailable": {
             "sensor": frozenset({"device_theme", "volume_index"})
@@ -199,9 +199,7 @@ MODEL_ENTITY_SETS = {
             | {"auto_mode", "auto_update", "network", "voice_teaching", "demo_mode"},
             "switch": frozenset({"brush_pause", "brush_mode", "over_pressure"}),
             "number": frozenset({"head_max_minutes"}),
-            "button": frozenset(
-                {"reset_head", "capture_sessions", "sync_time", "poll_now"}
-            ),
+            "button": frozenset({"reset_head", "capture_sessions", "poll_now"}),
         },
         "dev": {},
         "needs": {

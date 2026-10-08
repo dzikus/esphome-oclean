@@ -172,9 +172,10 @@ X Ultra 20 (`model: x_ultra_20`):
 - 8 numbers: custom-program step parameters.
 - 2 selects: brushing mode, language (the `device_language` key, which also
   sets the voice prompt language).
-- No buttons: BLE never hands over the stored sessions, and every Wi-Fi
-  connection sets the brush clock from the time answer (the session receiver
-  answers with the node's time), over any BLE clock write.
+- 1 button: sync clock (needs `time_id`). No capture or poll button: BLE
+  never hands over the stored sessions. A clock write stamps the sessions
+  until the brush next asks the cloud for the time (`UploadingMacWiFi`, not
+  after every brushing; the session receiver answers it with the node's time).
 
 On the X Ultra 20 the brushing-mode select shows the mode picked on the screen
 ("Screen mode 1" .. "Screen mode 5") or "Voice teaching", and writes only
@@ -443,7 +444,7 @@ program wants four steps to keep the four-quadrant guidance.
 | Key | Default name | Effect | Notes |
 |---|---|---|---|
 | `reset_head` | Reset brush head | writes `02 0F` | X Pro Elite only; irreversible: zeroes the brush-head usage counters |
-| `sync_time` | Sync clock | writes `02 01` + 8 bytes | X Pro Elite only; created only when the hub has `time_id`; writes on press only |
+| `sync_time` | Sync clock | writes `02 01` + 8 bytes | created only when the hub has `time_id`; writes on press only |
 | `poll_now` | Poll now | immediate poll cycle | X Pro Elite only; hidden by default; read-only on the brush |
 | `capture_sessions` | Capture sessions | session download + 30 s hold | **dev**, X Pro Elite only (the X Ultra 20 download never streams); keeps the link open so the raw record stream lands in the log |
 

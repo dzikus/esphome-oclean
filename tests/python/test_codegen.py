@@ -222,20 +222,25 @@ class InjectPerModel(RawConfigCase):
             self._inject({"oclean_id": "hub_a", "quadrant_upper_left": True})
         self.assertIn("set model:", str(caught.exception))
 
-    def test_buttons_are_x_pro_elite_only(self):
+    def test_x_ultra_20_keeps_only_the_clock_button(self):
         rows = [
             ("capture_sessions", "Capture sessions"),
             ("reset_head", "Reset brush head"),
             ("sync_time", "Sync clock"),
             ("poll_now", "Poll now"),
         ]
-        for model, built in (("x_pro_elite", True), ("x_ultra_20", False)):
+        for model, built in (
+            (
+                "x_pro_elite",
+                {"capture_sessions", "reset_head", "sync_time", "poll_now"},
+            ),
+            ("x_ultra_20", {"sync_time"}),
+        ):
             self.set_hubs({"id": "hub_a", "model": model})
             out = oc.inject_entity_defaults(
                 {"oclean_id": "hub_a"}, rows, platform="button"
             )
-            for key, _name in rows:
-                self.assertEqual(key in out, built, f"{model} {key}")
+            self.assertEqual({key for key, _name in rows if key in out}, built, model)
 
     def test_over_pressure_is_an_x_pro_elite_switch_only(self):
         rows = [

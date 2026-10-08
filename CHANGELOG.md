@@ -77,10 +77,9 @@
 - X Ultra 20: a row whose only source is a hub option is built only with it:
   the score and the eight zones (cloud record only) and `cloud_host` with
   `cloud_receiver: true`, `birthday_written` with `birthday`. Not built: the
-  buttons (BLE never hands over the stored sessions, and every Wi-Fi
-  connection sets the brush clock from the time answer, over any BLE clock
-  write), the `auto_update` binary sensor and the `over_pressure` switch
-  (nothing in firmware 0.0.1.6 reads either flag; the pressure prompt is
+  capture and poll buttons (BLE never hands over the stored sessions), the
+  `auto_update` binary sensor and the `over_pressure` switch (nothing in
+  firmware 0.0.1.6 reads either flag; the pressure prompt is
   `voice_pressure`).
 - X Ultra 20: birthday greeting. The `birthday` hub option is the greeting date
   (`0211`), sent with the `gender` and `age` options; on every wake that day the
