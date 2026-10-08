@@ -1958,17 +1958,6 @@ static constexpr uint32_t WEATHER_REPLY_TIMEOUT_MS = 30000;
 // permission reloads the integration, and the new session asks again at once.
 static constexpr uint32_t WEATHER_REFUSED_RETRY_MS = 6 * 3600 * 1000;
 
-// Home Assistant, not just any API client (a log viewer drops the action, which
-// would read as a refusal); the call was renamed after the 2026.2 floor
-template <typename Server>
-static bool home_assistant_connected(Server *server) {
-  if constexpr (requires { server->is_connected_with_state_subscription(); }) {
-    return server->is_connected_with_state_subscription();
-  } else {
-    return server->is_connected(true);
-  }
-}
-
 std::string OcleanHub::cloud_weather_reply() {
   WeatherSnapshot snap;
   {
@@ -2018,7 +2007,10 @@ void OcleanHub::weather_on_temperature_(StringRef value) {
 }
 
 void OcleanHub::weather_tick_() {
-  bool const connected = api::global_api_server != nullptr && home_assistant_connected(api::global_api_server);
+  // Home Assistant, not just any API client: a log viewer drops the action,
+  // which would read as a refusal
+  bool const connected =
+      api::global_api_server != nullptr && api::global_api_server->is_connected_with_state_subscription();
   uint32_t const now = millis();
   if (connected && !this->weather_ha_connected_)
     this->weather_next_ask_ms_ = now + WEATHER_FIRST_ASK_DELAY_MS;

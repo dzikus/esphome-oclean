@@ -69,10 +69,12 @@
   as the greeting date (`0211`) with the `gender` and `age` options, Clear
   unsets it. All three are yaml options, not entities, so none of them reaches
   the recorder; use `!secret`.
-- The ESPHome floor is now 2026.3.0: the point-at-node button formats the
-  node's own IP through the network API of 2026.2.0, and the session receiver
-  registers on the web server outside its login (2026.3.0), which the brush
-  could not answer.
+- The ESPHome floor is now 2026.6.0: the hub options that hold a secret
+  (`wifi_password`, `birthday`, `gender`, `age`) are marked sensitive with
+  `cv.sensitive` (2026.6.0), the session receiver registers on the web server
+  outside its login, which the brush could not answer (2026.3.0), and the
+  point-at-node button formats the node's own IP through the network API of
+  2026.2.0.
 - The X Pro 20 (`OCLEANX20`) and the first X Ultra (`OCLEANV1*`) use the X
   Ultra 20 reply formats instead of TYPE1.
 
