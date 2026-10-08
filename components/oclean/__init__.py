@@ -145,8 +145,9 @@ GEAR_MAX = {MODEL_X_PRO_ELITE: 41, MODEL_X_ULTRA_20: 54}
 
 # Per model and platform. "unavailable": rows the model has no data or opcode
 # for, never built. "dev": rows with no observable effect on that brush, built
-# only with expose_dev_sensors. "needs": rows fed only through a hub option,
-# built only when the hub sets it. Every other row is built on every model.
+# only with expose_dev_sensors. "needs": rows fed only through hub options,
+# built only when the hub sets all of them. Every other row is built on every
+# model.
 MODEL_ENTITY_SETS = {
     # Settings bytes 3, 4, 8-10 and 13 hold no setting in the firmware: constant
     # zero, copies of bytes 0 and 1, a flag nothing writes, and a pause flag the
@@ -158,7 +159,7 @@ MODEL_ENTITY_SETS = {
             ),
             "binary_sensor": _X_ULTRA_20_FLAG_KEYS
             | _X_PRO_ELITE_FLAG_KEYS
-            | {"auto_mode", "birthday_written"},
+            | {"auto_mode", "birthday_written", "gender_written", "age_written"},
             "switch": frozenset(
                 {
                     "auto_mode",
@@ -204,10 +205,15 @@ MODEL_ENTITY_SETS = {
         "dev": {},
         "needs": {
             "sensor": dict.fromkeys(
-                _ZONE_KEYS | {"last_session_score"}, CONF_CLOUD_RECEIVER
+                _ZONE_KEYS | {"last_session_score"}, (CONF_CLOUD_RECEIVER,)
             ),
-            "text_sensor": {"cloud_host": CONF_CLOUD_RECEIVER},
-            "binary_sensor": {"birthday_written": CONF_BIRTHDAY},
+            "text_sensor": {"cloud_host": (CONF_CLOUD_RECEIVER,)},
+            # gender and age go only in the frame that carries the birthday
+            "binary_sensor": {
+                "birthday_written": (CONF_BIRTHDAY,),
+                "gender_written": (CONF_BIRTHDAY, CONF_GENDER),
+                "age_written": (CONF_BIRTHDAY, CONF_AGE),
+            },
         },
     },
 }
@@ -259,6 +265,8 @@ HIDDEN_BINARY_SENSOR_KEYS = frozenset(
         "connected",
         "auto_mode",
         "birthday_written",
+        "gender_written",
+        "age_written",
     }
 )
 
@@ -407,13 +415,13 @@ def inject_entity_defaults(
                 )
             config.pop(key, None)
             continue
-        option = needs.get(key)
-        if option is not None and not raw_hub_option_set(hub_id, option):
+        missing = [o for o in needs.get(key, ()) if not raw_hub_option_set(hub_id, o)]
+        if missing:
             if want is not ... and want is not False:
                 raise cv.Invalid(
                     f"'{key}' on model: {model} gets its value only through "
-                    f"the hub's '{option}'. Set it on the hub or remove the key "
-                    f"from this {platform} block.",
+                    f"the hub's {', '.join(missing)}. Set it on the hub or "
+                    f"remove the key from this {platform} block.",
                     path=[key],
                 )
             config.pop(key, None)

@@ -157,6 +157,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_voice_teaching_binary_sensor(binary_sensor::BinarySensor *s) { this->voice_teaching_binary_sensor_ = s; }
   void set_wifi_configured_binary_sensor(binary_sensor::BinarySensor *s) { this->wifi_configured_binary_sensor_ = s; }
   void set_birthday_written_binary_sensor(binary_sensor::BinarySensor *s) { this->birthday_written_binary_sensor_ = s; }
+  void set_gender_written_binary_sensor(binary_sensor::BinarySensor *s) { this->gender_written_binary_sensor_ = s; }
+  void set_age_written_binary_sensor(binary_sensor::BinarySensor *s) { this->age_written_binary_sensor_ = s; }
   void set_area_guidance_binary_sensor(binary_sensor::BinarySensor *s) { this->area_guidance_binary_sensor_ = s; }
   void set_demo_mode_binary_sensor(binary_sensor::BinarySensor *s) { this->demo_mode_binary_sensor_ = s; }
   void set_device_mode_sensor(sensor::Sensor *s) { this->device_mode_sensor_ = s; }
@@ -365,6 +367,11 @@ class OcleanHub : public ble_client::BLEClientNode,
   uint32_t yaml_value_fingerprint_(SyncSlot slot) const;
   // the brush confirmed the yaml value as it is now, not an earlier one
   bool value_confirmed_(SyncSlot slot) const;
+  enum class UserInfoField : uint8_t { BIRTHDAY = 0, GENDER = 1, AGE = 2 };
+  uint32_t user_info_field_fp_(UserInfoField field) const;
+  // records the fields of the yaml 0211 frame as acked
+  void store_user_info_fields_();
+  void publish_user_info_written_();
   void store_synced_(SyncSlot slot, uint32_t fp, const char *what);
   // sync_attempt_due for this slot; note_sync_attempt_ records a send
   bool sync_due_(SyncSlot slot, uint32_t fp) const;
@@ -485,6 +492,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   binary_sensor::BinarySensor *voice_teaching_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *wifi_configured_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *birthday_written_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *gender_written_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *age_written_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *area_guidance_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *demo_mode_binary_sensor_{nullptr};
   sensor::Sensor *device_mode_sensor_{nullptr};
@@ -520,6 +529,13 @@ class OcleanHub : public ble_client::BLEClientNode,
   };
   SyncedValues synced_{};
   esphome::ESPPreferenceObject synced_pref_;
+  // per field of the acked 0211 frame (birthday, gender, age), so a yaml change
+  // of one field clears only its entity until the brush acks the new frame
+  struct UserInfoSynced {
+    std::array<uint32_t, 3> fp;
+  };
+  UserInfoSynced user_info_synced_{};
+  esphome::ESPPreferenceObject user_info_pref_;
   // fingerprint of a write sent this round, until its ack
   std::array<uint32_t, SYNC_SLOTS> sync_sent_{};
   // the value last sent per slot and when (millis), for the daily retry

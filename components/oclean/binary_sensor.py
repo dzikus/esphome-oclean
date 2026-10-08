@@ -117,7 +117,7 @@ BINARY_SENSORS = [
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Wi-Fi provisioned",
     ),
-    # On once the brush acked the 0211 write of the hub's birthday, gender and age.
+    # On while the 0211 frame the brush acked last carried the hub's value.
     (
         "birthday_written",
         "set_birthday_written_binary_sensor",
@@ -125,6 +125,22 @@ BINARY_SENSORS = [
         "mdi:cake-variant",
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Birthday written",
+    ),
+    (
+        "gender_written",
+        "set_gender_written_binary_sensor",
+        None,
+        "mdi:gender-male-female",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Gender written",
+    ),
+    (
+        "age_written",
+        "set_age_written_binary_sensor",
+        None,
+        "mdi:account-clock",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Age written",
     ),
     (
         "area_guidance",

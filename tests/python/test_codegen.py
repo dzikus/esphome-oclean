@@ -433,6 +433,30 @@ class InjectNeeds(RawConfigCase):
         out = self._inject({"oclean_id": "hub_a"}, rows, "binary_sensor")
         self.assertIn("birthday_written", out)
 
+    def test_gender_and_age_written_need_the_birthday_too(self):
+        rows = [("gender_written", "Gender written"), ("age_written", "Age written")]
+        for hub, built in (
+            ({"gender": "unknown", "age": 18}, set()),
+            ({"birthday": "03-07"}, set()),
+            ({"birthday": "03-07", "age": 18}, {"age_written"}),
+            (
+                {"birthday": "03-07", "gender": "unknown", "age": 18},
+                {"gender_written", "age_written"},
+            ),
+        ):
+            self.set_hubs({"id": "hub_a", "model": "x_ultra_20", **hub})
+            out = self._inject({"oclean_id": "hub_a"}, rows, "binary_sensor")
+            self.assertEqual({key for key, _name in rows if key in out}, built, hub)
+
+    def test_an_explicit_row_names_every_missing_option(self):
+        rows = [("gender_written", "Gender written")]
+        self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
+        with self.assertRaises(cv.Invalid) as caught:
+            self._inject(
+                {"oclean_id": "hub_a", "gender_written": True}, rows, "binary_sensor"
+            )
+        self.assertIn("birthday, gender", str(caught.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
