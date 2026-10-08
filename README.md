@@ -452,12 +452,14 @@ them only to a brush that reports an X Ultra 20 family model, so a wrong
 |---|---|---|
 | birthday greeting | `02 11 <gender> <age> <month> <day>` | the brush's `02 11 4F 4B` |
 | cloud host | `02 33` + `http://<node IPv4>:<web server port>` | the next request the brush sends to the receiver, whose `Host` header is the host the brush has stored |
-| Wi-Fi | BluFi join over service `0xFFFF` | the brush's BluFi report that it is connected; a `02 34` reply of 0 (no Wi-Fi stored, e.g. after a factory reset) makes the hub provision again |
+| Wi-Fi | BluFi join over service `0xFFFF` | the brush's BluFi report that it is connected, or its first request to the receiver after the join was sent (a docked brush stores the network and joins on its next wake); a `02 34` reply of 0 (no Wi-Fi stored, e.g. after a factory reset) makes the hub provision again |
 
-A value goes out on the first link after it changes. A cloud host the brush has
-acked is not written again before a reboot while the hub waits for the next
-upload (after a brushing) to confirm it, and a Wi-Fi join that does not
-connect is tried once per boot. `read_only: true` writes none of them. The
+A request counts for a brush by the MAC in its record upload; requests that
+carry no MAC count only while one X Ultra 20 hub shares the receiver, so two
+brushes never confirm each other. A value goes out on the first link after it
+changes. A cloud host the brush has acked is not written again before a reboot
+while the hub waits for the next upload (after a brushing) to confirm it, and
+a Wi-Fi join is tried once per boot. `read_only: true` writes none of them. The
 Oclean app sends its own account's birthday on every connection and the hub
 cannot see that, so after the app has been used the hub keeps its stale
 confirmation until the yaml value changes.

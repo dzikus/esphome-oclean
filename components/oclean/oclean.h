@@ -617,7 +617,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   bool cloud_host_fresh_{false};
   // the main loop's side: what the read-only entity last showed
   std::string cloud_host_shown_;
-  void process_cloud_host_(const std::string &host);
+  // a request from this brush: it is on Wi-Fi and talks to the host it stores
+  void process_cloud_request_(const std::string &host);
 #ifdef USE_OCLEAN_WEATHER
   std::string weather_entity_;
   // main loop writes, the web server task copies, both under cloud_mutex_
@@ -652,7 +653,8 @@ class OcleanHub : public ble_client::BLEClientNode,
   std::string blufi_password_{};
   uint8_t blufi_seq_{0};
   // fingerprint of the credentials tried this boot, and of the run awaiting
-  // the brush's connected report
+  // the brush's connected report or its next request to the receiver (docked,
+  // it stores the network but joins only on its next wake)
   uint32_t blufi_tried_fp_{0};
   uint32_t blufi_pending_fp_{0};
 #endif

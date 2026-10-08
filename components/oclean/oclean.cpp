@@ -1938,7 +1938,7 @@ void OcleanHub::loop() {
   for (const SessionRecord &rec : batch)
     this->ingest_cloud_record_(rec);
   if (host_fresh)
-    this->process_cloud_host_(host);
+    this->process_cloud_request_(host);
 }
 
 void OcleanHub::note_cloud_host(const std::string &host) {
@@ -1948,7 +1948,14 @@ void OcleanHub::note_cloud_host(const std::string &host) {
   this->enable_loop_soon_any_context();
 }
 
-void OcleanHub::process_cloud_host_(const std::string &host) {
+void OcleanHub::process_cloud_request_(const std::string &host) {
+#ifdef USE_OCLEAN_BLUFI
+  // online after the hub gave it these credentials
+  if (this->blufi_pending_fp_ != 0) {
+    this->store_synced_(SyncSlot::WIFI, this->blufi_pending_fp_, "Wi-Fi");
+    this->blufi_pending_fp_ = 0;
+  }
+#endif
   if (host != this->cloud_host_shown_) {
     this->cloud_host_shown_ = host;
     if (this->cloud_host_text_sensor_ != nullptr)
