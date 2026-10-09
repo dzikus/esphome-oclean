@@ -26,7 +26,7 @@
 // expose their newest record through the entities, so trip history collapses to
 // a single session there (that is a recorder limitation, not the card's).
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.2.1";
 
 // HTML-escape any value interpolated into the innerHTML template. States and
 // labels are numeric or safe today, but escaping keeps a string entity or a
@@ -292,8 +292,10 @@ class OcleanCoverageCard extends HTMLElement {
     const scoreArr = cfg.score_entity ? arr(cfg.score_entity) : [];
     const covArr = cfg.coverage_entity ? arr(cfg.coverage_entity) : [];
     const timeArr = arr(cfg.time_entity);
+    // no sample yet (an entity newer than the session) is unknown, not 0
     const num = (a, t) => {
-      const x = Number(valueAt(a, t));
+      const v = valueAt(a, t);
+      const x = v === null ? NaN : Number(v);
       return Number.isFinite(x) ? x : null;
     };
     const sessions = [];

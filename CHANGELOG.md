@@ -41,7 +41,9 @@
   colored the four back teeth of the quadrant and the inner zone the four
   front ones. With 12 zones (`zone_count: 12` or a 12-entity `zones` list) it
   draws the X Ultra 20 map: the back teeth of each side and the front teeth,
-  canine to canine, as zones of their own.
+  canine to canine, as zones of their own. A past session with no recorded
+  value for a zone (an entity newer than the session) shows it as unknown
+  instead of 0.
 - The last session kept in flash across reboots moves to a layout with 12
   zones and the pressure summary; one stored in the old layout is still read
   and converted, so no brush loses its last session.
