@@ -8,6 +8,8 @@ esp32:
     type: esp-idf
 
 logger:
+  # the GATT map dump compiles only at VERBOSE
+  level: VERBOSE
 
 # The component uses api (session-history event) and time (clock); both need a
 # network, so a dummy wifi is here purely to satisfy compile validation. Nothing
@@ -44,8 +46,6 @@ oclean:
     # set_charging_interval / set_battery_interval).
     update_interval: 3600s
     charging_interval: 600s
-    # Force the dev-gated branches to compile too, for full TU coverage.
-    expose_dev_sensors: true
 
 sensor:
   - platform: oclean

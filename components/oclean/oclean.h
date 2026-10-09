@@ -83,7 +83,6 @@ class OcleanHub : public ble_client::BLEClientNode,
     if (model == BrushModel::X_ULTRA_20)
       this->profile_ = &PROFILE_TYPE_V20;
   }
-  void set_expose_dev_sensors(bool en) { this->expose_dev_sensors_ = en; }
   void set_read_only(bool en) { this->read_only_ = en; }
 
   // Identically named auto-created entities share an object-id hash, so without
@@ -540,7 +539,6 @@ class OcleanHub : public ble_client::BLEClientNode,
 
   State state_{State::IDLE};
   BrushModel model_{BrushModel::X_PRO_ELITE};
-  bool expose_dev_sensors_{false};
   bool read_only_{false};
 
   // Handles resolved at SEARCH_CMPL for the characteristics this hub uses.

@@ -352,30 +352,19 @@ class InjectModelDefaults(RawConfigCase):
         self.assertEqual(out["area_reminder"], mine)
 
 
-class HubBuilds(unittest.TestCase):
-    """The dev gate, resolved off the validated config in to_code."""
+class RemovedHubOptions(unittest.TestCase):
+    """Hub keys that no longer exist fail with a pointer instead of silently."""
 
-    def setUp(self):
-        self.addCleanup(setattr, CORE, "config", CORE.config)
-
-    def set_hub(self, **conf):
-        CORE.config = {"oclean": [{"id": "hub_a", **conf}]}
-
-    def test_area_reminder_is_dev_on_the_x_pro_elite(self):
-        self.set_hub(model="x_pro_elite", expose_dev_sensors=False)
-        self.assertFalse(oc.hub_builds("hub_a", "switch", "area_reminder"))
-
-    def test_area_reminder_is_a_plain_control_on_the_x_ultra_20(self):
-        self.set_hub(model="x_ultra_20", expose_dev_sensors=False)
-        self.assertTrue(oc.hub_builds("hub_a", "switch", "area_reminder"))
-
-    def test_expose_dev_builds_the_dev_rows(self):
-        self.set_hub(model="x_pro_elite", expose_dev_sensors=True)
-        self.assertTrue(oc.hub_builds("hub_a", "switch", "area_reminder"))
-
-    def test_capture_is_dev_on_the_x_pro_elite(self):
-        self.set_hub(model="x_pro_elite", expose_dev_sensors=False)
-        self.assertFalse(oc.hub_builds("hub_a", "button", "capture_sessions"))
+    def test_expose_dev_sensors_is_refused_with_a_pointer(self):
+        schema = oc.CONFIG_SCHEMA.validators[0]
+        validator = next(
+            v for k, v in schema.schema.items() if str(k) == oc.CONF_EXPOSE_DEV_SENSORS
+        )
+        for value in (True, False):
+            with self.assertRaises(cv.Invalid) as caught:
+                validator(value)
+            self.assertIn("was removed", str(caught.exception))
+            self.assertIn("VERBOSE", str(caught.exception))
 
 
 NEEDS_ROWS = [

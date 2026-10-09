@@ -22,7 +22,6 @@ from . import (
     OCLEAN_COMPONENT_SCHEMA,
     QUADRANT_POSITIONS,
     UNIT_DAY,
-    hub_builds,
     inject_entity_defaults,
 )
 
@@ -298,8 +297,6 @@ async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
     for key, setter, *_row in SENSORS:
         if key not in config:
-            continue
-        if not hub_builds(config[CONF_OCLEAN_ID], "sensor", key):
             continue
         sens = await sensor.new_sensor(config[key])
         if key.startswith("gesture_zone_"):

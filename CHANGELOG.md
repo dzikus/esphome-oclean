@@ -9,6 +9,12 @@
 - Breaking: the X Pro Elite no longer builds `fill_brush`, `auto_mode`,
   `volume_enabled`, `calendar_enabled`, `splash_prevent` and `volume_index`:
   their settings bytes hold no setting in the firmware.
+- Breaking: `expose_dev_sensors` is gone and naming it fails validation. Every
+  entity a model supports is built: on the X Pro Elite that adds area reminder
+  (the 30 s zone-change signal), brush pause (a press after the first 10 s
+  pauses instead of ending) and brush mode (off: the waking press also starts
+  brushing), plus the capture sessions button, hidden. The GATT map is logged
+  at the logger's `VERBOSE` level.
 - `head_used_time` has the unit `min`. Its long-term statistics were recorded
   without a unit, so Home Assistant may ask to fix them.
 - `0202` goes out only after a whole session stream is in, the events are sent

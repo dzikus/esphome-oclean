@@ -12,7 +12,6 @@ from . import (
     CONF_OCLEAN_ID,
     HIDDEN_BINARY_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
-    hub_builds,
     inject_entity_defaults,
 )
 
@@ -220,8 +219,6 @@ async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
     for key, setter, *_row in BINARY_SENSORS:
         if key not in config:
-            continue
-        if not hub_builds(config[CONF_OCLEAN_ID], "binary_sensor", key):
             continue
         bs = await binary_sensor.new_binary_sensor(config[key])
         cg.add(getattr(hub, setter)(bs))

@@ -128,7 +128,6 @@ void OcleanHub::dump_config() {
                 (unsigned)this->battery_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Hold link while docked: %s", YESNO(this->hold_while_docked_));
   ESP_LOGCONFIG(TAG, "  Model: %s", brush_model_key(this->model_));
-  ESP_LOGCONFIG(TAG, "  Expose dev sensors: %s", YESNO(this->expose_dev_sensors_));
   ESP_LOGCONFIG(TAG, "  Read-only: %s", YESNO(this->read_only_));
 #ifdef USE_OCLEAN_WEATHER
   if (this->weather_enabled())
@@ -430,8 +429,9 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
       // valid during this event; a deferred lookup from the settle callback
       // returns nullptr for everything.
       this->resolve_handles_();
-      if (this->expose_dev_sensors_)
-        this->dump_gatt_map_();
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
+      this->dump_gatt_map_();
+#endif
       // Settle before issuing reads; some firmware drops early requests. By
       // now every handle is cached, so the callback only reads and never looks
       // characteristics up again.
@@ -644,6 +644,7 @@ bool OcleanHub::write_cccd_(uint16_t cccd_handle) {
   return true;
 }
 
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
 void OcleanHub::dump_gatt_map_() {
   auto uuid_text = [](const esp_bt_uuid_t &u) {
     return ble_uuid_text(reinterpret_cast<const uint8_t *>(&u.uuid), u.len);
@@ -655,7 +656,7 @@ void OcleanHub::dump_gatt_map_() {
                                   &svc_count, s) != ESP_GATT_OK ||
         svc_count == 0)
       break;
-    ESP_LOGI(TAG, "[%s] GATT service %s handles 0x%04X-0x%04X", this->parent_->address_str(),
+    ESP_LOGV(TAG, "[%s] GATT service %s handles 0x%04X-0x%04X", this->parent_->address_str(),
              uuid_text(svc.uuid).c_str(), svc.start_handle, svc.end_handle);
     for (uint16_t c = 0;; c++) {
       esp_gattc_char_elem_t chr{};
@@ -664,11 +665,12 @@ void OcleanHub::dump_gatt_map_() {
                                      svc.end_handle, &chr, &chr_count, c) != ESP_GATT_OK ||
           chr_count == 0)
         break;
-      ESP_LOGI(TAG, "[%s] GATT char %s handle 0x%04X props %s", this->parent_->address_str(),
+      ESP_LOGV(TAG, "[%s] GATT char %s handle 0x%04X props %s", this->parent_->address_str(),
                uuid_text(chr.uuid).c_str(), chr.char_handle, gatt_props_text(chr.properties).c_str());
     }
   }
 }
+#endif
 
 void OcleanHub::begin_queries_() {
   if (this->state_ != State::POLLING)

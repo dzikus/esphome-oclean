@@ -119,7 +119,8 @@ hosts more BLE clients than that.
 
 No pairing, no bonding, no auth: connect and write. Integers are big-endian,
 frames carry no CRC. Write With Response is mandatory; Write No Response is
-silently dropped by the brush.
+silently dropped by the brush. With the logger at `VERBOSE` the hub logs the
+brush's GATT services and characteristics on each connect.
 
 ### What it exposes per brush
 
@@ -128,11 +129,8 @@ entities it has data or an opcode for. A row whose only source is a hub option
 is built only with that option (on the X Ultra 20: `cloud_receiver` for the
 score, the zones, the cloud host and cloud host written, `birthday` for user
 info written, `wifi_provisioning` for Wi-Fi written); naming it in yaml without
-the option fails validation. Counts below are with the default
-`expose_dev_sensors: false`, which leaves out the dev entities: rows with no
-observable effect on that brush, and the session-capture button. Several
-entities are created with `disabled_by_default: true`, so they stay hidden in
-HA until enabled per entity.
+the option fails validation. Several entities are created with
+`disabled_by_default: true`, so they stay hidden in HA until enabled per entity.
 
 X Pro Elite (`model: x_pro_elite`, the default):
 
@@ -144,12 +142,12 @@ X Pro Elite (`model: x_pro_elite`, the default):
 - 9 text sensors: last session, last session mode, device clock, hardware
   revision, software version, last seen, timezone, MAC address, model (the last
   six hidden).
-- 3 switches: over-pressure alert, raise to wake, bluetooth (BLE link master
-  switch). 3 dev switches: area reminder, brush pause, brush mode.
+- 6 switches: area reminder, brush pause, brush mode, over-pressure alert, raise
+  to wake, bluetooth (BLE link master switch).
 - 9 numbers: brush head time limit plus 8 custom-program step parameters.
 - 2 selects: brushing mode, display language.
-- 3 buttons: reset brush head, sync clock (needs `time_id`), poll now (hidden).
-  1 dev button: capture sessions.
+- 4 buttons: reset brush head, sync clock (needs `time_id`), poll now and capture
+  sessions (both hidden).
 
 X Ultra 20 (`model: x_ultra_20`):
 
@@ -284,7 +282,6 @@ Set on the `oclean:` entry, not on the platforms.
 | `tzindex` | int 1-33 | `16` | 1-based index into the brush's 33-entry GMT-offset table, written together with the clock. 16 = CEST (UTC+2), 15 = CET (UTC+1). |
 | `auto_sync_time` | bool | on when `time_id` is set, off otherwise | Resync the brush clock during a poll when it has drifted past `sync_drift_threshold`. Explicit `true` without `time_id` fails validation. |
 | `sync_drift_threshold` | time | `120s` | Drift that triggers an auto resync. `0s` resyncs whenever the clocks differ by at least one second. |
-| `expose_dev_sensors` | bool | `false` | Creates the dev entities of the hub's model (see the per-platform tables) and logs the brush's GATT services and characteristics on each connect. |
 | `read_only` | bool | `false` | The brush only receives the profile's `03` read queries; the X Ultra 20's Wi-Fi check `02 34` is held back too. Every write is refused and logged: controls, clock sync, `0202`. |
 | `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
 | `cloud_receiver` | bool | `false` | Receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. It does **not** start its own server: it registers a handler on the shared ESPHome web server, so a `web_server:` must be configured (validation requires it) and the uploads arrive on the web server's port. The code is not compiled in unless this is true. The hub points the brush's cloud host at this node itself (see **Values kept on the brush**); the brush has to be able to reach the node over the network. See **In-node session receiver**. |
@@ -314,8 +311,7 @@ race for the single scanner.
 ### Entities (sensor)
 
 All auto-created. "Hidden" means `disabled_by_default: true` in HA (enable per
-entity). "Dev" rows exist only on hubs with `expose_dev_sensors: true`. Rows
-naming a model exist only on hubs with that `model:`.
+entity). Rows naming a model exist only on hubs with that `model:`.
 
 | Key | Default name | Source | Notes |
 |---|---|---|---|
@@ -388,9 +384,9 @@ boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 | `over_pressure` | Over-pressure alert | `02 12` + 01/00 | X Pro Elite only; readback at settings buffer 22 |
 | `raise_wake` | Raise to wake | `02 23` + 01/00 | readback at settings buffer 2 |
 | `bluetooth` | Bluetooth | local only | master switch for the BLE link; OFF drops pending writes and tears the link down; `RESTORE_DEFAULT_ON` so a reboot never leaves the brush silently unreachable |
-| `area_reminder` | Area reminder | `02 0D` + 01/00 | **dev** on the X Pro Elite, where it has no observable effect. On the X Ultra 20 it is named Voice on zone change: it picks the cue at each 30 s zone change, a short motor stutter when off and a spoken prompt when on (only with voice prompts on); readback at settings buffer 23 |
-| `brush_pause` | Brush pause | `02 22` + 01/00 | X Pro Elite only; **dev** |
-| `brush_mode` | Brush mode | `02 09` + 01/EC | X Pro Elite only; **dev**; off byte is the 0xEC sentinel, not 0x00 |
+| `area_reminder` | Area reminder | `02 0D` + 01/00 | On the X Pro Elite it turns the zone-change signal every 30 s on or off. On the X Ultra 20 it is named Voice on zone change: it picks the cue at each 30 s zone change, a short motor stutter when off and a spoken prompt when on (only with voice prompts on); readback at settings buffer 23 |
+| `brush_pause` | Brush pause | `02 22` + 01/00 | X Pro Elite only; when on, a button press after the first 10 s of a session pauses it instead of ending it; readback at settings buffer 1 |
+| `brush_mode` | Brush mode | `02 09` + 01/EC | X Pro Elite only; when off, the press that wakes the brush also starts brushing, when on that press only wakes it; off byte is the 0xEC sentinel, not 0x00; readback at settings buffer 12 |
 | `auto_mode` | Auto mode | `02 25` + 01/00 | X Ultra 20 only; readback at settings buffer 4. On also moves the brush to mode 1 (03:01-12:00) or 2 (the rest of the day) whenever it is idle on the main screen; off does not bring the earlier mode back |
 | `festival_reminder` | Holiday reminder | `02 28` + 01/00 | X Ultra 20 only; readback at settings buffer 10 |
 | `voice_teaching` | Voice teaching | `02 30` + 01/00 | X Ultra 20 only; readback at settings buffer 6. On selects the firmware's single-step teaching program (gear 16, 180 s), off selects screen mode 5; neither returns to the mode picked on the screen |
@@ -452,7 +448,7 @@ program wants four steps to keep the four-quadrant guidance.
 | `reset_head` | Reset brush head | writes `02 0F` | X Pro Elite only; irreversible: zeroes the brush-head usage counters |
 | `sync_time` | Sync clock | writes `02 01` + 8 bytes | created only when the hub has `time_id`; writes on press only |
 | `poll_now` | Poll now | immediate poll cycle | X Pro Elite only; hidden by default; read-only on the brush |
-| `capture_sessions` | Capture sessions | session download + 30 s hold | **dev**, X Pro Elite only (the X Ultra 20 download never streams); keeps the link open so the raw record stream lands in the log |
+| `capture_sessions` | Capture sessions | session download + 30 s hold | X Pro Elite only (the X Ultra 20 download never streams); hidden; keeps the link open so the raw record stream lands in the log |
 
 ### Values kept on the brush
 
@@ -823,7 +819,7 @@ back ON.
 
 ```
 components/oclean/
-  __init__.py              hub config + schema, adaptive-poll validation, dev gating
+  __init__.py              hub config + schema, adaptive-poll validation, model entity sets
   sensor.py                sensor table (per-model sets in __init__.py)
   binary_sensor.py         binary sensor table
   text_sensor.py           text sensor table
@@ -1044,11 +1040,11 @@ Each settings-backed entity follows the same shape:
    (host-testable) and route it through `OcleanHub::send_command`, which
    queues while disconnected and wakes the link. Publish optimistically and
    let the settings readback correct the state.
-5. Gate it behind `expose_dev_sensors` (add the key to the platform's dev-key
-   set) until its effect is verified on hardware.
+5. List the key under `unavailable` in `MODEL_ENTITY_SETS` for every model
+   whose firmware does not act on it, so each brush gets only what it supports.
 
-Writes are mutations of someone's toothbrush: keep new controls dev-gated
-until the readback and the physical effect are both confirmed.
+Writes are mutations of someone's toothbrush: confirm the readback and the
+physical effect on hardware before a new control ships.
 
 ### Testing
 

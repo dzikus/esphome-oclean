@@ -144,10 +144,8 @@ _X_ULTRA_20_TEXT_SENSOR_KEYS = frozenset({"cloud_host"})
 GEAR_MAX = {MODEL_X_PRO_ELITE: 41, MODEL_X_ULTRA_20: 54}
 
 # Per model and platform. "unavailable": rows the model has no data or opcode
-# for, never built. "dev": rows with no observable effect on that brush, built
-# only with expose_dev_sensors. "needs": rows fed only through hub options,
-# built only when the hub sets all of them. Every other row is built on every
-# model.
+# for, never built. "needs": rows fed only through hub options, built only when
+# the hub sets all of them. Every other row is built on every model.
 MODEL_ENTITY_SETS = {
     # Settings bytes 3, 4, 8-10 and 13 hold no setting in the firmware: constant
     # zero, copies of bytes 0 and 1, a flag nothing writes, and a pause flag the
@@ -172,10 +170,6 @@ MODEL_ENTITY_SETS = {
                 }
             ),
             "text_sensor": _X_ULTRA_20_TEXT_SENSOR_KEYS,
-        },
-        "dev": {
-            "switch": frozenset({"area_reminder", "brush_pause", "brush_mode"}),
-            "button": frozenset({"capture_sessions"}),
         },
     },
     # Settings bytes 0, 1, 3, 8-10 and 13 hold other fields on this brush, its
@@ -202,7 +196,6 @@ MODEL_ENTITY_SETS = {
             "number": frozenset({"head_max_minutes"}),
             "button": frozenset({"reset_head", "capture_sessions", "poll_now"}),
         },
-        "dev": {},
         "needs": {
             "sensor": dict.fromkeys(
                 _ZONE_KEYS | {"last_session_score"}, (CONF_CLOUD_RECEIVER,)
@@ -278,7 +271,7 @@ def run_data():
 
 
 def _hub_configs():
-    # Fallback for platform to_code resolving expose_dev_sensors by oclean_id;
+    # Fallback for platform to_code resolving hub options by oclean_id;
     # _hub_conf reads CORE.config first.
     return run_data().setdefault("hub_configs", {})
 
@@ -290,8 +283,8 @@ def all_hubs():
 
 def _hub_conf(hub_id):
     # Must not depend on to_code order: under MULTI_CONF a platform's to_code can
-    # run before the hub records itself, which silently dropped dev entities.
-    # CORE.config is complete before any to_code runs.
+    # run before the hub records itself. CORE.config is complete before any
+    # to_code runs.
     target = str(hub_id)
     for hub_conf in CORE.config.get(DOMAIN, []):
         if str(hub_conf.get(CONF_ID)) == target:
@@ -312,22 +305,8 @@ def final_hub_conf(hub_id):
     return {}
 
 
-def hub_expose_dev(hub_id):
-    return bool(_hub_conf(hub_id).get(CONF_EXPOSE_DEV_SENSORS, False))
-
-
 def hub_model(hub_id):
     return str(_hub_conf(hub_id).get(CONF_MODEL, DEFAULT_MODEL))
-
-
-def dev_keys(model, platform):
-    return MODEL_ENTITY_SETS[model]["dev"].get(platform, frozenset())
-
-
-def hub_builds(hub_id, platform, key):
-    if key not in dev_keys(hub_model(hub_id), platform):
-        return True
-    return hub_expose_dev(hub_id)
 
 
 def _raw_hubs():
@@ -629,7 +608,10 @@ CONFIG_SCHEMA = cv.All(
         {
             cv.GenerateID(): cv.declare_id(OcleanHub),
             cv.Optional(CONF_MODEL, default=DEFAULT_MODEL): cv.enum(MODELS, lower=True),
-            cv.Optional(CONF_EXPOSE_DEV_SENSORS, default=False): cv.boolean,
+            cv.Optional(CONF_EXPOSE_DEV_SENSORS): cv.invalid(
+                f"'{CONF_EXPOSE_DEV_SENSORS}' was removed: every entity a model "
+                "supports is now built, and the GATT map is logged at VERBOSE level"
+            ),
             cv.Optional(CONF_READ_ONLY, default=False): cv.boolean,
             cv.Optional(CONF_UPDATE_INTERVAL, default="3600s"): _min_interval_validator(
                 "update_interval"
@@ -876,7 +858,6 @@ async def to_code(config):
         cg.add(var.set_blufi_ssid(blufi_ssid))
         cg.add(var.set_blufi_password(blufi_password))
     cg.add(var.set_model(config[CONF_MODEL]))
-    cg.add(var.set_expose_dev_sensors(config[CONF_EXPOSE_DEV_SENSORS]))
     cg.add(var.set_read_only(config[CONF_READ_ONLY]))
     cg.add(var.set_tz_index(config[CONF_TZINDEX]))
     cg.add(var.set_auto_sync_time(config[CONF_AUTO_SYNC_TIME]))

@@ -1,5 +1,3 @@
-import logging
-
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import switch
@@ -9,33 +7,9 @@ from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
     OcleanHub,
-    hub_builds,
-    hub_model,
     inject_entity_defaults,
     oclean_ns,
-    run_data,
 )
-
-_LOGGER = logging.getLogger(__name__)
-
-
-def _explicit_dev_switches():
-    # expose_dev only resolves at to_code, but explicit-vs-auto is only visible
-    # in the raw validator input, so it has to be recorded there for to_code to
-    # warn rather than silently drop a switch the user asked for by name.
-    # Per-run storage: CORE.config is still None during validation, so its
-    # identity cannot mark the run boundary.
-    return run_data().setdefault("explicit_dev_switches", {})
-
-
-def _record_explicit_dev(config):
-    hub_id = config.get(CONF_OCLEAN_ID)
-    hub_key = str(hub_id) if hub_id is not None else "__default__"
-    # Which rows are dev depends on the model, resolved only in to_code.
-    present = {key for key, *_row in SWITCHES if key in config}
-    if present:
-        _explicit_dev_switches().setdefault(hub_key, set()).update(present)
-
 
 DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
@@ -181,8 +155,6 @@ _DEFAULT_NAMES = (
 
 
 def _inject_defaults(config):
-    # Note explicit dev switches before auto-create hides which were user-listed.
-    _record_explicit_dev(config)
     return inject_entity_defaults(config, _DEFAULT_NAMES, platform="switch")
 
 
@@ -225,26 +197,8 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    explicit = _explicit_dev_switches()
-    # A single-hub config may omit oclean_id, so the record lands under the
-    # placeholder key; merge both.
-    explicit_dev = explicit.get(str(config[CONF_OCLEAN_ID]), set()) | explicit.get(
-        "__default__", set()
-    )
     for key, b0, b1, _icon, _default_name, label, off_value in SWITCHES:
         if key not in config:
-            continue
-        if not hub_builds(config[CONF_OCLEAN_ID], "switch", key):
-            # Only auto-created dev rows are dropped quietly; a user who listed
-            # one explicitly gets told why it is missing.
-            if key in explicit_dev:
-                _LOGGER.warning(
-                    "oclean: switch '%s' is dev-only on model: %s and not "
-                    "created; set expose_dev_sensors: true on hub '%s' to use it",
-                    key,
-                    hub_model(config[CONF_OCLEAN_ID]),
-                    config[CONF_OCLEAN_ID],
-                )
             continue
         sw = await switch.new_switch(config[key])
         await cg.register_parented(sw, hub)

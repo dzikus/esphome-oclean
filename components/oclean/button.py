@@ -15,7 +15,6 @@ from . import (
     DOMAIN,
     OCLEAN_COMPONENT_SCHEMA,
     OcleanHub,
-    hub_builds,
     inject_entity_defaults,
     oclean_ns,
 )
@@ -47,8 +46,9 @@ OcleanPollNowButton = oclean_ns.class_(
     "OcleanPollNowButton", button.Button, cg.Parented.template(OcleanHub)
 )
 
-# Dev-gated. Requests a buffered-session download and holds the link open so
-# the record stream can be captured into the log.
+# X Pro Elite only, disabled by default in Home Assistant. Requests a
+# buffered-session download and holds the link open so the record stream can be
+# captured into the log.
 CONF_CAPTURE_SESSIONS = "capture_sessions"
 DEFAULT_CAPTURE_NAME = "Capture sessions"
 
@@ -79,7 +79,7 @@ def _inject_defaults(config):
     return inject_entity_defaults(
         config,
         _DEFAULT_NAMES,
-        hidden=frozenset({CONF_POLL_NOW}),
+        hidden=frozenset({CONF_POLL_NOW, CONF_CAPTURE_SESSIONS}),
         platform="button",
     )
 
@@ -118,9 +118,7 @@ async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
 
     sub = config.get(CONF_CAPTURE_SESSIONS)
-    if sub is not None and hub_builds(
-        config[CONF_OCLEAN_ID], "button", CONF_CAPTURE_SESSIONS
-    ):
+    if sub is not None:
         btn = await button.new_button(sub)
         await cg.register_parented(btn, hub)
         cg.add(hub.set_capture_button(btn))

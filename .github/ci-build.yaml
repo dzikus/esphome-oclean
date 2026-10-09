@@ -18,6 +18,8 @@ esp32:
     type: esp-idf
 
 logger:
+  # the GATT map dump compiles only at VERBOSE
+  level: VERBOSE
 
 # The component uses api (session-history event) and time (clock); both need a
 # network, so a dummy wifi is here purely to satisfy compile validation. Nothing
@@ -60,8 +62,6 @@ oclean:
     # Exercise the charging-aware adaptive-poll codegen.
     update_interval: 3600s
     charging_interval: 600s
-    # Compile the dev-gated branches too.
-    expose_dev_sensors: true
     # Cover the remaining hub options.
     tzindex: 16
     hold_connection_while_docked: true
@@ -94,8 +94,7 @@ oclean:
     age: 9
 
 # Every entity platform auto-creates its full entity set, so a bare platform
-# block compiles every entity codegen path (dev-gated rows included via
-# expose_dev_sensors above).
+# block compiles every entity codegen path.
 sensor:
   - platform: oclean
     oclean_id: hub_test

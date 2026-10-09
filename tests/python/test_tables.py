@@ -75,17 +75,29 @@ class ModelEntitySets(unittest.TestCase):
 
     def test_listed_keys_exist_on_their_platform(self):
         for model, sets in oc.MODEL_ENTITY_SETS.items():
-            for kind in ("unavailable", "dev"):
-                for platform, keys in sets[kind].items():
+            for kind in ("unavailable", "needs"):
+                for platform, keys in sets.get(kind, {}).items():
                     self.assertIn(platform, PLATFORMS, f"{model}.{kind}")
                     rows = {key for key, _n in PLATFORMS[platform]._DEFAULT_NAMES}
-                    self.assertLessEqual(keys, rows, f"{model}.{kind}.{platform}")
+                    self.assertLessEqual(set(keys), rows, f"{model}.{kind}.{platform}")
 
-    def test_a_row_is_not_both_dev_and_unavailable(self):
+    def test_a_row_is_not_both_needed_and_unavailable(self):
         for model, sets in oc.MODEL_ENTITY_SETS.items():
-            for platform, keys in sets["dev"].items():
+            for platform, keys in sets.get("needs", {}).items():
                 missing = sets["unavailable"].get(platform, frozenset())
-                self.assertFalse(keys & missing, f"{model}.{platform}")
+                self.assertFalse(set(keys) & missing, f"{model}.{platform}")
+
+    def test_a_row_is_built_or_not_with_no_third_kind(self):
+        for model, sets in oc.MODEL_ENTITY_SETS.items():
+            self.assertLessEqual(set(sets), {"unavailable", "needs"}, model)
+
+    def test_elite_builds_the_switches_its_firmware_acts_on(self):
+        # 020D gates the 30 s zone signal, 0222 turns a mid-session press into a
+        # pause, 0209 = EC starts brushing on the waking press
+        elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]["unavailable"]
+        for key in ("area_reminder", "brush_pause", "brush_mode"):
+            self.assertNotIn(key, elite["switch"])
+        self.assertNotIn("capture_sessions", elite.get("button", frozenset()))
 
     def test_each_model_has_rows_the_other_lacks(self):
         # Guards the point of the option: drop either set and both models build
@@ -118,8 +130,6 @@ class ModelEntitySets(unittest.TestCase):
             elite["unavailable"]["binary_sensor"],
         )
         self.assertIn("volume_index", elite["unavailable"]["sensor"])
-        self.assertNotIn("binary_sensor", elite["dev"])
-        self.assertNotIn("sensor", elite["dev"])
 
     def test_x_ultra_20_leaves_out_what_its_firmware_never_fills(self):
         # 0.0.1.6 never writes settings byte 1 and never counts head use
