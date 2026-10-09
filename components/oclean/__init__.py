@@ -140,7 +140,9 @@ _HEAD_COUNTER_KEYS = frozenset({"head_used_time", "head_used_days", "head_used_t
 # X Ultra 20 only: the cloud host the brush uploads to, read from its requests.
 _X_ULTRA_20_TEXT_SENSOR_KEYS = frozenset({"cloud_host"})
 
-# Highest gear a program step may use; the firmware's motor tables end there.
+# Highest gear a program step may use. The X Ultra 20 motor table ends at 54; the
+# X Pro Elite one runs to 48, but 42-44 there are the brush's own over-pressure,
+# zone-change and shutdown patterns.
 GEAR_MAX = {MODEL_X_PRO_ELITE: 41, MODEL_X_ULTRA_20: 54}
 
 # Per model and platform. "unavailable": rows the model has no data or opcode

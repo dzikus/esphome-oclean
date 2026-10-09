@@ -363,7 +363,7 @@ validation.
 | Key | Default name | Source | Notes |
 |---|---|---|---|
 | `last_session_time` | Last session | session record bytes 0-5 | timestamp of the newest buffered session (brush clock) |
-| `last_session_mode` | Last session mode | session record byte 6 | scheme id decoded to the brushing-mode name; unknown ids fall back to the number |
+| `last_session_mode` | Last session mode | session record byte 6 | scheme id decoded to the brushing-mode name; unknown ids fall back to the number. On the X Pro Elite id 0 is also any mode picked on the brush itself |
 | `device_clock` | Device clock | settings buffer 16-21 | the brush's own clock |
 | `last_seen` | Last seen | wall clock | hidden; timestamp device class, renders "x ago" in HA; stamped on every successful poll, the freshness signal for the slow cadence |
 | `timezone` | Timezone | settings buffer 24 | hidden; decoded GMT offset, e.g. "GMT+02:00" |
@@ -381,7 +381,7 @@ boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 
 | Key | Default name | Write | Notes |
 |---|---|---|---|
-| `over_pressure` | Over-pressure alert | `02 12` + 01/00 | X Pro Elite only; readback at settings buffer 22 |
+| `over_pressure` | Over-pressure alert | `02 12` + 01/00 | X Pro Elite only; readback at settings buffer 22. The brush checks pressure only at some motor gears: 24-32 on the `OCLEANY3P`, which senses damped vibration, and 24-32 and 37-40 on the `OCLEANY3PD`, which senses motor load. Standard Cleaning written over BLE runs at gear 18 and the default Custom program at gear 8, so neither ever alerts |
 | `raise_wake` | Raise to wake | `02 23` + 01/00 | readback at settings buffer 2 |
 | `bluetooth` | Bluetooth | local only | master switch for the BLE link; OFF drops pending writes and tears the link down; `RESTORE_DEFAULT_ON` so a reboot never leaves the brush silently unreachable |
 | `area_reminder` | Area reminder | `02 0D` + 01/00 | On the X Pro Elite it turns the zone-change signal every 30 s on or off. On the X Ultra 20 it is named Voice on zone change: it picks the cue at each 30 s zone change, a short motor stutter when off and a spoken prompt when on (only with voice prompts on); readback at settings buffer 23 |
@@ -407,7 +407,7 @@ boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 
 | Key | Default name | Options | Notes |
 |---|---|---|---|
-| `brush_scheme` | Brushing mode | X Pro Elite: 19 presets + named `custom_modes` + "Custom"; X Ultra 20: "Screen mode 1" .. "Screen mode 5" and "Voice teaching" + named `custom_modes` + "Custom" | writes the full per-step program (`02 06` / `02 0B`); current option read back from settings buffer 11. The X Ultra 20's screen modes and voice teaching only show the brush's state: picking one is refused |
+| `brush_scheme` | Brushing mode | X Pro Elite: 19 presets + named `custom_modes` + "Custom"; X Ultra 20: "Screen mode 1" .. "Screen mode 5" and "Voice teaching" + named `custom_modes` + "Custom" | writes the full per-step program (`02 06` / `02 0B`); current option read back from settings buffer 11. On the X Pro Elite a mode picked on the brush itself also reads back as 0, so Standard Cleaning stands for those modes too. The X Ultra 20's screen modes and voice teaching only show the brush's state: picking one is refused |
 | `device_language` | Display language | 17 languages | writes `02 16` + language id; readback from settings buffer 31. An id past the brush firmware's last language would show English, so it is refused and logged: `OCLEANY3P` stops at 14 (Korean), `OCLEANY3PD` at 13 (Arabic). On the X Ultra 20 it is named Language: the same write also switches the voice prompts |
 
 Preset options are labelled "name (duration)", e.g. "Quick cleaning (1m20s)".
