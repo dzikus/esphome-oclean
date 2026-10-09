@@ -35,6 +35,11 @@
   the brush connects, seconds after the check that started the poll, so each
   poll used to slip one check: about 70 min off the dock and 20 min on it with
   the defaults.
+- Coverage card: every tooth of a quadrant is split into an outer (lip-side)
+  and an inner (tongue-side) half, colored by that quadrant's outer and inner
+  zone, with the inner value shown inside the arch. Before, the outer zone
+  colored the four back teeth of the quadrant and the inner zone the four
+  front ones.
 - X Ultra 20 support (`model: x_ultra_20`): status, settings, clock, voice
   prompts, auto mode, holiday reminder, language and the other setting writes.
 - X Ultra 20: the record its count=0 reply carries, the oldest in its store,
