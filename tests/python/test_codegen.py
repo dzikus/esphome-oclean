@@ -370,6 +370,8 @@ class RemovedHubOptions(unittest.TestCase):
 NEEDS_ROWS = [
     ("last_session_score", "Score"),
     ("gesture_zone_1", "Zone 1"),
+    ("zone_time_1", "Zone 1"),
+    ("last_session_over_pressure_time", "Over-pressure time"),
     ("battery", "Battery"),
 ]
 
@@ -385,6 +387,8 @@ class InjectNeeds(RawConfigCase):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20"})
         out = self._inject({"oclean_id": "hub_a"})
         self.assertNotIn("last_session_score", out)
+        self.assertNotIn("zone_time_1", out)
+        self.assertNotIn("last_session_over_pressure_time", out)
         self.assertNotIn("gesture_zone_1", out)
         self.assertIn("battery", out)
 
@@ -392,7 +396,10 @@ class InjectNeeds(RawConfigCase):
         self.set_hubs({"id": "hub_a", "model": "x_ultra_20", "cloud_receiver": True})
         out = self._inject({"oclean_id": "hub_a"})
         self.assertIn("last_session_score", out)
-        self.assertIn("gesture_zone_1", out)
+        self.assertIn("zone_time_1", out)
+        self.assertIn("last_session_over_pressure_time", out)
+        self.assertNotIn("gesture_zone_1", out)
+        self.assertEqual(out["zone_time_1"]["name"], "Zone 1")
 
     def test_a_receiver_switched_off_counts_as_unset(self):
         for off in (False, "false", "off"):
@@ -410,6 +417,8 @@ class InjectNeeds(RawConfigCase):
         out = self._inject({"oclean_id": "hub_a"})
         self.assertIn("last_session_score", out)
         self.assertIn("gesture_zone_1", out)
+        self.assertNotIn("zone_time_1", out)
+        self.assertNotIn("last_session_over_pressure_time", out)
 
     def test_each_written_sensor_needs_the_option_its_write_comes_from(self):
         rows = [

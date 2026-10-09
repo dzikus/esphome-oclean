@@ -125,6 +125,43 @@ void test_decode_record_gesture_zones_offset23() {
   const uint8_t expected[SESSION_ZONES_COUNT] = {10, 21, 11, 2, 14, 22, 12, 3};
   for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
     TEST_ASSERT_EQUAL_UINT8(expected[i], r.zones[i]);
+  // no front-teeth zones and no pressure log in this record
+  for (size_t i = SESSION_ZONES_COUNT; i < SESSION_ZONES_MAX; i++)
+    TEST_ASSERT_EQUAL_UINT8(SESSION_ZONE_ABSENT, r.zones[i]);
+  TEST_ASSERT_EQUAL_UINT(SESSION_ZONES_COUNT, session_zone_count(r));
+  TEST_ASSERT_EQUAL_UINT16(SESSION_PRESSURE_ABSENT, r.over_pressure_s);
+  TEST_ASSERT_EQUAL_UINT16(SESSION_PRESSURE_ABSENT, r.pressure_max);
+}
+
+void test_session_record_from_v2_keeps_the_eight_zones() {
+  SessionRecord r;
+  TEST_ASSERT_TRUE(decode_session_record(fixtures::SESSION_REC_NORMAL, &r));
+  SessionRecordV2 old{};
+  old.year = r.year;
+  old.month = r.month;
+  old.day = r.day;
+  old.hour = r.hour;
+  old.minute = r.minute;
+  old.second = r.second;
+  old.scheme = r.scheme;
+  old.duration_s = r.duration_s;
+  old.valid_duration_s = r.valid_duration_s;
+  old.tz_index = r.tz_index;
+  for (size_t i = 0; i < SESSION_QUADRANTS_COUNT; i++)
+    old.quadrants[i] = r.quadrants[i];
+  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
+    old.zones[i] = r.zones[i];
+  old.score = r.score;
+  old.has_score = r.has_score;
+  SessionRecord const back = session_record_from_v2(old);
+  TEST_ASSERT_EQUAL_UINT32(session_record_epoch(r), session_record_epoch(back));
+  TEST_ASSERT_EQUAL_UINT16(r.valid_duration_s, back.valid_duration_s);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(r.quadrants, back.quadrants, SESSION_QUADRANTS_COUNT);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(r.zones, back.zones, SESSION_ZONES_MAX);
+  TEST_ASSERT_EQUAL_UINT8(r.score, back.score);
+  TEST_ASSERT_TRUE(back.has_score);
+  TEST_ASSERT_EQUAL_UINT16(SESSION_PRESSURE_ABSENT, back.over_pressure_s);
+  TEST_ASSERT_EQUAL_UINT16(SESSION_PRESSURE_ABSENT, back.pressure_max);
 }
 
 void test_decode_record_aborted() {
@@ -1052,8 +1089,10 @@ void test_decode_cloud_brushdata_record() {
 }
 
 void test_decode_v20_record_zones_real() {
-  // real cloud UploadBrushRecord captured 2026-10-08 (score 65); gestureArray at
-  // [20..27] = 04 0e 01 05 03 37 06 13. The inline-only BLE path never carries it.
+  // real cloud UploadBrushRecord captured 2026-10-08 (score 65), logged cut at 91
+  // of its 111 bytes: zones at [20..27] = 04 0e 01 05 03 37 06 13 and [32..35] =
+  // 00 05 01 00, then 40 pressure samples. The inline-only BLE path never
+  // carries them.
   const std::string hex =
       "006f40041115223503007800780a144600000010040e0105033706134103000000050100"
       "ffffffffffffffffffffffffffffff717139ff150a201c3225292245262b156623452d34"
@@ -1063,9 +1102,104 @@ void test_decode_v20_record_zones_real() {
   SessionRecord out{};
   TEST_ASSERT_TRUE(decode_session_record_v20(bytes.data(), bytes.size(), &out));
   TEST_ASSERT_EQUAL_UINT8(65, out.score);
-  const uint8_t expected_zones[] = {0x04, 0x0e, 0x01, 0x05, 0x03, 0x37, 0x06, 0x13};
-  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
-    TEST_ASSERT_EQUAL_UINT8(expected_zones[i], out.zones[i]);
+  const uint8_t expected_zones[SESSION_ZONES_MAX] = {0x04, 0x0e, 0x01, 0x05, 0x03, 0x37,
+                                                     0x06, 0x13, 0x00, 0x05, 0x01, 0x00};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected_zones, out.zones, SESSION_ZONES_MAX);
+  TEST_ASSERT_EQUAL_UINT(SESSION_ZONES_MAX, session_zone_count(out));
+  // 0x71, 0x71 (452), 0xff (1000 or more) and 0x66 (408) pass 400: 4 samples
+  TEST_ASSERT_EQUAL_UINT16(8, out.over_pressure_s);
+  TEST_ASSERT_EQUAL_UINT16(1000, out.pressure_max);
+}
+
+// the firmware score: every zone with 5 s or more is worth 84, a shorter one
+// pro rata, and the sum over the 12 zones over 10 is the score
+static unsigned v20_score_from_zones(const uint8_t (&zones)[SESSION_ZONES_MAX]) {
+  unsigned sum = 0;
+  for (uint8_t const s : zones)
+    sum += (s < 5 ? s : 5U) * 84U / 5U;
+  return sum / 10;
+}
+
+void test_decode_v20_real_records_twelve_zones_and_pressure() {
+  // the other eight cloud records the receiver logged on 2026-10-07/08, each cut
+  // at 90-91 bytes by the log line; the brush's own score at [28] comes back
+  // from the 12 zones, which pins their offsets
+  struct Case {
+    const char *hex;
+    uint8_t zones[SESSION_ZONES_MAX];
+    uint8_t score;
+    uint16_t over_s;
+    uint16_t max;
+  };
+  static const Case CASES[] = {
+      {"006f400217051c0503007800780a14460000001000000000101707102103000000000000ffff"
+       "ffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000"
+       "00004e000000000000000011430000",
+       {0, 0, 0, 0, 16, 23, 7, 16, 0, 0, 0, 0},
+       33,
+       0,
+       312},
+      {"008d4006130a27060200b400b40a144600000010020f003e1218190c4303000300080003ffff"
+       "ffffffffffffffffffffffffff00380000000000000000000000000000000000000000000000"
+       "000000000000000000000000000000",
+       {2, 15, 0, 62, 18, 24, 25, 12, 0, 8, 0, 3},
+       67,
+       0,
+       224},
+      {"006f1a0a080d250b03007800780a144600000010000000013c0528092303000200000000ffff"
+       "ffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000"
+       "000000000000000000000000000000",
+       {0, 0, 0, 1, 60, 5, 40, 9, 0, 0, 0, 0},
+       35,
+       0,
+       0},
+      {"006f1a0a08123a3478007800780a144600000010072400140c090e034103000002010300ffff"
+       "ffffffffffffffffffffffffff000000006d6d00000000000000000000000000000000000000"
+       "0000000000000000000000000000",
+       {7, 36, 0, 20, 12, 9, 14, 3, 2, 1, 3, 0},
+       65,
+       4,
+       436},
+      {"006f1a0a0815140503007800780a144600000010030005051c1a16153c03000100000300ffff"
+       "ffffffffffffffffffffffffff0b0c5f2f285a15503d42412e16232c4b2c2b244c6ef8ff0014"
+       "2a05012f460321000012312d6e4b2a",
+       {3, 0, 5, 5, 28, 26, 22, 21, 0, 0, 3, 0},
+       60,
+       8,
+       1000},
+      {"006f40041205213003007800780a144600000010040206050710030e580300000c041f07ffff"
+       "ffffffffffffffffffffffffff02584d2ac41b101c181912120004060704041e15111510111a"
+       "13172122340d1f332f45362d37292c",
+       {4, 2, 6, 5, 7, 16, 3, 14, 12, 4, 31, 7},
+       88,
+       2,
+       784},
+      {"006f40041204373403007800780a14460000001005070500132214085003000004070400ffff"
+       "ffffffffffffffffffffffffff17354f492315181e241b0318253c2f223e3344470019121001"
+       "0a080003011e2029374850463e5c45",
+       {5, 7, 5, 0, 19, 34, 20, 8, 4, 7, 4, 0},
+       80,
+       0,
+       368},
+      {"006f1a0a080a382f03007800780a144600000010020c00040f1e081843030005000c0004ffff"
+       "ffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000"
+       "000000000000000000000000000000",
+       {2, 12, 0, 4, 15, 30, 8, 24, 0, 12, 0, 4},
+       67,
+       0,
+       0},
+  };
+  for (const Case &c : CASES) {
+    std::vector<uint8_t> bytes;
+    TEST_ASSERT_TRUE(parse_hex_bytes(c.hex, &bytes));
+    SessionRecord out{};
+    TEST_ASSERT_TRUE(decode_session_record_v20(bytes.data(), bytes.size(), &out));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(c.zones, out.zones, SESSION_ZONES_MAX);
+    TEST_ASSERT_EQUAL_UINT8(c.score, out.score);
+    TEST_ASSERT_EQUAL_UINT(c.score, v20_score_from_zones(out.zones));
+    TEST_ASSERT_EQUAL_UINT16(c.over_s, out.over_pressure_s);
+    TEST_ASSERT_EQUAL_UINT16(c.max, out.pressure_max);
+  }
 }
 
 void test_timezone_index_to_string() {
@@ -2139,6 +2273,27 @@ void test_v20_record_carries_its_time_zone() {
   TEST_ASSERT_FALSE(decode_session_record_v20(rec.data(), SESSION_V20_RECORD_MIN - 1, &r));
 }
 
+void test_decode_v20_pressure_log_stops_at_the_record_length() {
+  std::vector<uint8_t> rec = v20_record(SESSION_V20_RECORD_MIN + 4, 7, 30, 2, 120, 120, 50);
+  // 400 is the limit itself, 404 passes it, 0xFF is 1000 or more
+  const uint8_t log[] = {100, 101, 0xFF, 0, 20, 0, 0, 0, 0, 0, 0};
+  for (size_t i = 0; i < sizeof(log); i++)
+    rec[SESSION_V20_PRESSURE_OFFSET + i] = log[i];
+  // a buffer longer than the declared length: the tail is not the log
+  rec.push_back(0xFF);
+  SessionRecord out{};
+  TEST_ASSERT_TRUE(decode_session_record_v20(rec.data(), rec.size(), &out));
+  TEST_ASSERT_EQUAL_UINT16(4, out.over_pressure_s);
+  TEST_ASSERT_EQUAL_UINT16(1000, out.pressure_max);
+  // the shortest record holds the first 7 samples only
+  TEST_ASSERT_TRUE(decode_session_record_v20(rec.data(), SESSION_V20_RECORD_MIN, &out));
+  TEST_ASSERT_EQUAL_UINT16(4, out.over_pressure_s);
+  rec[SESSION_V20_PRESSURE_OFFSET + 2] = 0;
+  TEST_ASSERT_TRUE(decode_session_record_v20(rec.data(), rec.size(), &out));
+  TEST_ASSERT_EQUAL_UINT16(2, out.over_pressure_s);
+  TEST_ASSERT_EQUAL_UINT16(404, out.pressure_max);
+}
+
 void test_should_clear_inline_only_on_the_dock() {
   SessionRecord inl{};
   TEST_ASSERT_TRUE(decode_inline_0307_v20(V20_INLINE_0307, sizeof(V20_INLINE_0307), &inl));
@@ -2534,6 +2689,7 @@ int main() {
   RUN_TEST(test_decode_record_normal);
   RUN_TEST(test_decode_record_quadrants_follow_zone_pairs);
   RUN_TEST(test_decode_record_gesture_zones_offset23);
+  RUN_TEST(test_session_record_from_v2_keeps_the_eight_zones);
   RUN_TEST(test_decode_record_aborted);
   RUN_TEST(test_decode_record_no_score);
   RUN_TEST(test_decode_record_null_rejected);
@@ -2603,6 +2759,7 @@ int main() {
   RUN_TEST(test_build_weather_reply);
   RUN_TEST(test_decode_cloud_brushdata_record);
   RUN_TEST(test_decode_v20_record_zones_real);
+  RUN_TEST(test_decode_v20_real_records_twelve_zones_and_pressure);
   RUN_TEST(test_timezone_index_to_string);
   RUN_TEST(test_tz_index_for_offset_seconds);
   RUN_TEST(test_tz_index_offset_seconds_round_trips);
@@ -2684,6 +2841,7 @@ int main() {
   RUN_TEST(test_v20_inline_against_brush_clock);
   RUN_TEST(test_v20_brushed_seconds_from_length);
   RUN_TEST(test_v20_record_carries_its_time_zone);
+  RUN_TEST(test_decode_v20_pressure_log_stops_at_the_record_length);
   RUN_TEST(test_should_clear_inline_only_on_the_dock);
   RUN_TEST(test_is_bare_ack);
   RUN_TEST(test_voice_prompt_flags_need_the_main_one);

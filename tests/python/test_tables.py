@@ -40,11 +40,21 @@ class DefaultNames(unittest.TestCase):
             keys = [key for key, _n in mod._DEFAULT_NAMES]
             self.assertEqual(len(keys), len(set(keys)), name)
 
-    def test_no_duplicate_default_name_within_a_platform(self):
-        # Duplicates inside one platform collide even on a single-hub node.
+    def test_a_default_name_repeats_only_across_models(self):
+        # Duplicates inside one platform collide even on a single-hub node, so a
+        # name may repeat only on rows no model builds together (the X Pro Elite
+        # gesture zones and the X Ultra 20 zone times keep one entity id).
         for name, mod in PLATFORMS.items():
-            names = [n for _k, n in mod._DEFAULT_NAMES]
-            self.assertEqual(len(names), len(set(names)), name)
+            keys_by_name = {}
+            for key, default in mod._DEFAULT_NAMES:
+                keys_by_name.setdefault(default, []).append(key)
+            for default, keys in keys_by_name.items():
+                if len(keys) == 1:
+                    continue
+                for model, sets in oc.MODEL_ENTITY_SETS.items():
+                    missing = sets["unavailable"].get(name, frozenset())
+                    built = [key for key in keys if key not in missing]
+                    self.assertLessEqual(len(built), 1, f"{name} {default} {model}")
 
     def test_every_default_name_is_non_empty(self):
         for name, mod in PLATFORMS.items():
@@ -170,15 +180,20 @@ class ModelEntitySets(unittest.TestCase):
         self.assertLessEqual(keys, ultra["sensor"])
         self.assertFalse(keys & elite["sensor"])
 
-    def test_gesture_zones_available_on_both_models(self):
-        # the full cloud record carries gestureArray[0..7] on the X Ultra 20, so
-        # the zone sensors are built there too (unlike the 4 quadrants)
-        zones = {f"gesture_zone_{i + 1}" for i in range(8)}
-        for model in (oc.MODEL_X_PRO_ELITE, oc.MODEL_X_ULTRA_20):
-            unavail = oc.MODEL_ENTITY_SETS[model]["unavailable"].get(
-                "sensor", frozenset()
-            )
-            self.assertFalse(zones & unavail, model)
+    def test_each_model_builds_the_zones_its_record_has(self):
+        # the X Pro Elite record holds 8 gesture shares, the X Ultra 20 one 12
+        # zone times and a pressure log, the latter only in the cloud upload
+        gesture = {f"gesture_zone_{i + 1}" for i in range(8)}
+        times = {f"zone_time_{i + 1}" for i in range(12)}
+        pressure = {"last_session_over_pressure_time", "last_session_max_pressure"}
+        elite = oc.MODEL_ENTITY_SETS[oc.MODEL_X_PRO_ELITE]
+        ultra = oc.MODEL_ENTITY_SETS[oc.MODEL_X_ULTRA_20]
+        self.assertFalse(gesture & elite["unavailable"]["sensor"])
+        self.assertLessEqual(times | pressure, elite["unavailable"]["sensor"])
+        self.assertLessEqual(gesture, ultra["unavailable"]["sensor"])
+        self.assertFalse((times | pressure) & ultra["unavailable"]["sensor"])
+        for key in times | pressure:
+            self.assertEqual(ultra["needs"]["sensor"][key], (oc.CONF_CLOUD_RECEIVER,))
 
 
 class ModelEntityDefaults(unittest.TestCase):

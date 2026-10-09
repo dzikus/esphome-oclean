@@ -74,6 +74,9 @@ static constexpr uint8_t SESSION_ZONE_ABSENT = 0xFF;
 // upper-inner / lower-outer / lower-inner.
 static constexpr size_t SESSION_ZONES_OFFSET = 23;
 static constexpr size_t SESSION_ZONES_COUNT = 8;
+// the X Ultra 20 adds the upper (8, 9) and lower (10, 11) front teeth
+static constexpr size_t SESSION_ZONES_MAX = 12;
+static constexpr uint16_t SESSION_PRESSURE_ABSENT = 0xFFFF;
 static constexpr size_t SESSION_SCORE_OFFSET = 33;
 // time zone index of the brush clock when the session was recorded
 static constexpr size_t SESSION_TZ_OFFSET = 17;
@@ -99,13 +102,41 @@ struct SessionRecord {
   // 1-based into the 33-entry GMT table; 0 when the record does not carry it
   uint8_t tz_index;
   uint8_t quadrants[SESSION_QUADRANTS_COUNT];  // SESSION_ZONE_ABSENT when not carried
-  uint8_t zones[SESSION_ZONES_COUNT];          // gestureArray at SESSION_ZONES_OFFSET (left 0-3, right 4-7)
-  uint8_t score;                               // 0-100; SESSION_NO_SCORE means absent
+  // X Pro Elite: share per region in 0-7. X Ultra 20: seconds per zone in all
+  // 12. SESSION_ZONE_ABSENT where the record has none.
+  uint8_t zones[SESSION_ZONES_MAX];
+  uint8_t score;  // 0-100; SESSION_NO_SCORE means absent
   bool has_score;
+  // X Ultra 20 pressure log; SESSION_PRESSURE_ABSENT on the other records
+  uint16_t over_pressure_s;  // brushing time spent over the brush's 400 limit
+  uint16_t pressure_max;     // the brush's own force unit, 1000 = 1000 or more
 };
 
 // caller guarantees SESSION_RECORD_SIZE readable bytes at rec
 bool decode_session_record(const uint8_t *rec, SessionRecord *out);
+
+// 12 when the record carries the front-teeth zones, else 8
+size_t session_zone_count(const SessionRecord &r);
+
+// SessionRecord as persisted before the 12 zones and the pressure summary
+struct SessionRecordV2 {
+  uint16_t year;
+  uint8_t month;
+  uint8_t day;
+  uint8_t hour;
+  uint8_t minute;
+  uint8_t second;
+  uint8_t scheme;
+  uint16_t duration_s;
+  uint16_t valid_duration_s;
+  uint8_t tz_index;
+  uint8_t quadrants[SESSION_QUADRANTS_COUNT];
+  uint8_t zones[SESSION_ZONES_COUNT];
+  uint8_t score;
+  bool has_score;
+};
+
+SessionRecord session_record_from_v2(const SessionRecordV2 &old);
 
 inline bool session_voided(const SessionRecord &r) {
   return !r.has_score && r.score == SESSION_SCORE_VOID;
@@ -193,20 +224,33 @@ static constexpr size_t SESSION_V20_RECORD_MIN = 58;
 static constexpr size_t SESSION_V20_LENGTH_BASE = 51;
 static constexpr size_t SESSION_V20_MAX_BYTES = size_t(SESSION_V20_MAX_RECORDS) * SESSION_V20_RECORD_MAX;
 static constexpr size_t SESSION_V20_TZ_OFFSET = 19;
-// gestureArray[0..7]: per-region values, 0-3 upper jaw and 4-7 lower, outer and
-// inner per side. Only in a full record (count>0), never the count=0 inline. The
-// firmware also stores a scattered 12-zone map, not read here.
+// Seconds brushed per zone, low byte only: the back teeth 0-7 at [20-27] (left
+// 0-3, right 4-7, upper pair first, as on the X Pro Elite), the front teeth 8-11
+// at [32-35] (upper pair first). Only in a full record, never the count=0
+// inline. Firmware 0.0.1.6 fills [20] and [32-35] alone and leaves 0xFF in
+// [21-27].
 static constexpr size_t SESSION_V20_ZONES_OFFSET = 20;
 static constexpr size_t SESSION_V20_SCORE_OFFSET = 28;
+static constexpr size_t SESSION_V20_FRONT_ZONES_OFFSET = 32;
+static constexpr size_t SESSION_V20_FRONT_ZONES_COUNT = SESSION_ZONES_MAX - SESSION_ZONES_COUNT;
+// Pressure log: one byte per 2 s of brushing, force / 4, 0xFF from 1000 up.
+// Above 400 the brush halves the motor.
+static constexpr size_t SESSION_V20_PRESSURE_OFFSET = 51;
+static constexpr uint16_t SESSION_V20_PRESSURE_SAMPLE_S = 2;
+static constexpr uint8_t SESSION_V20_PRESSURE_SATURATED = 0xFF;
+static constexpr uint16_t SESSION_V20_PRESSURE_SATURATED_VALUE = 1000;
+static constexpr uint16_t SESSION_V20_OVER_PRESSURE = 400;
 static_assert(SESSION_V20_ZONES_OFFSET + SESSION_ZONES_COUNT <= SESSION_V20_SCORE_OFFSET &&
-                  SESSION_V20_SCORE_OFFSET < SESSION_V20_RECORD_MIN,
-              "zones and score must sit inside the shortest record");
+                  SESSION_V20_FRONT_ZONES_OFFSET + SESSION_V20_FRONT_ZONES_COUNT <= SESSION_V20_PRESSURE_OFFSET &&
+                  SESSION_V20_PRESSURE_OFFSET < SESSION_V20_RECORD_MIN,
+              "zones, score and the pressure log must start inside the shortest record");
 // length, start time, mode, program length: what a count=0 reply carries
 static constexpr size_t SESSION_V20_INLINE_LEN = 11;
 
 // [0-1] length, [2-7] start time, [8] mode, [9-10] program length s, [11-12]
-// brushed s, [19] time zone, [20-27] zones, [28] score. The quadrants are not
-// mapped and come back SESSION_ZONE_ABSENT.
+// brushed s, [19] time zone, [20-27] and [32-35] zones, [28] score, [51..]
+// pressure log. The record has no quadrants; they come back
+// SESSION_ZONE_ABSENT.
 bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *out);
 
 // Brushed seconds read off the record length, low by at most 1 s. A record cut

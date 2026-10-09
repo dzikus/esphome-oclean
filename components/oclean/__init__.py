@@ -123,6 +123,11 @@ def resolve_blufi_wifi(hub_ssid, hub_password, wifi_config):
 QUADRANT_POSITIONS = ("upper_left", "lower_left", "upper_right", "lower_right")
 _QUADRANT_KEYS = frozenset(f"quadrant_{position}" for position in QUADRANT_POSITIONS)
 _ZONE_KEYS = frozenset(f"gesture_zone_{i}" for i in range(1, 9))
+# X Ultra 20 record only: seconds per zone and the pressure log summary
+_ZONE_TIME_KEYS = frozenset(f"zone_time_{i}" for i in range(1, 13))
+_PRESSURE_KEYS = frozenset(
+    {"last_session_over_pressure_time", "last_session_max_pressure"}
+)
 _X_PRO_ELITE_FLAG_KEYS = frozenset(
     {"volume_enabled", "calendar_enabled", "splash_prevent", "fill_brush"}
 )
@@ -156,7 +161,9 @@ MODEL_ENTITY_SETS = {
         "unavailable": {
             "sensor": frozenset(
                 {"device_mode", "mode_number", "running_state", "volume_index"}
-            ),
+            )
+            | _ZONE_TIME_KEYS
+            | _PRESSURE_KEYS,
             "binary_sensor": _X_ULTRA_20_FLAG_KEYS
             | _X_PRO_ELITE_FLAG_KEYS
             | {"auto_mode", "user_info_written", "wifi_written", "cloud_host_written"},
@@ -175,22 +182,23 @@ MODEL_ENTITY_SETS = {
         },
     },
     # Settings bytes 0, 1, 3, 8-10 and 13 hold other fields on this brush, its
-    # app family has no 0222 / 0209 setter, and the 12-zone map and quadrants of
-    # its record are not decoded. Nothing in firmware 0.0.1.6 writes byte 1 or
-    # counts head use, so the network flag and the head counters stay zero, and
-    # nothing reads the auto-update flag of byte 3 or the over-pressure flag of
-    # 0212: no update path checks the first, and the pressure voice follows the
-    # 0231 voice flags alone.
+    # app family has no 0222 / 0209 setter, and its record has no quadrants and
+    # counts seconds in 12 zones instead of the 8 gesture shares. Nothing in
+    # firmware 0.0.1.6 writes byte 1 or counts head use, so the network flag and
+    # the head counters stay zero, and nothing reads the auto-update flag of byte
+    # 3 or the over-pressure flag of 0212: no update path checks the first, and
+    # the pressure voice follows the 0231 voice flags alone.
     # Voice teaching and the retail mode are switches here. The download never
     # streams (count=0 and the head of a stored record), so there is no record
-    # stream to capture, and the score and the eight zones come only from the
-    # full record of the brush's cloud upload. No capture or poll button either:
-    # BLE never hands over the stored sessions. The clock button stays: a BLE
-    # clock write stamps the sessions until the brush next asks for the time.
+    # stream to capture, and the score, the zones and the pressure log come only
+    # from the full record of the brush's cloud upload. No capture or poll button
+    # either: BLE never hands over the stored sessions. The clock button stays: a
+    # BLE clock write stamps the sessions until the brush next asks for the time.
     MODEL_X_ULTRA_20: {
         "unavailable": {
             "sensor": frozenset({"device_theme", "volume_index"})
             | _QUADRANT_KEYS
+            | _ZONE_KEYS
             | _HEAD_COUNTER_KEYS,
             "binary_sensor": _X_PRO_ELITE_FLAG_KEYS
             | {"auto_mode", "auto_update", "network", "voice_teaching", "demo_mode"},
@@ -200,7 +208,8 @@ MODEL_ENTITY_SETS = {
         },
         "needs": {
             "sensor": dict.fromkeys(
-                _ZONE_KEYS | {"last_session_score"}, (CONF_CLOUD_RECEIVER,)
+                _ZONE_TIME_KEYS | _PRESSURE_KEYS | {"last_session_score"},
+                (CONF_CLOUD_RECEIVER,),
             ),
             "text_sensor": {"cloud_host": (CONF_CLOUD_RECEIVER,)},
             # the 0211 frame (with gender and age) goes only with a birthday

@@ -68,7 +68,21 @@ void OcleanHub::setup() {
   this->publish_written_();
   this->session_last_pref_ = esphome::global_preferences->make_preference<PersistedSession>(hub_hash ^ 0x5E55D47Au);
   PersistedSession last{};
-  if (this->session_last_pref_.load(&last)) {
+  bool loaded = this->session_last_pref_.load(&last);
+  if (!loaded) {
+    // same key, the size versions 1 and 2 were stored with
+    auto old_pref = esphome::global_preferences->make_preference<PersistedSessionV2>(hub_hash ^ 0x5E55D47Au);
+    PersistedSessionV2 old{};
+    if (old_pref.load(&old) && old.magic == PERSISTED_SESSION_MAGIC &&
+        (old.version == PERSISTED_SESSION_VERSION_V1 || old.version == PERSISTED_SESSION_VERSION_V2)) {
+      last = {.magic = PERSISTED_SESSION_MAGIC,
+              .version = old.version,
+              .partial = old.partial,
+              .record = session_record_from_v2(old.record)};
+      loaded = true;
+    }
+  }
+  if (loaded) {
     bool const v1 = last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION_V1;
     if (v1) {
       last.record.tz_index = 0;
@@ -76,7 +90,8 @@ void OcleanHub::setup() {
       if (last.record.score == SESSION_SCORE_VOID)
         last.record.has_score = false;
     }
-    if (v1 || (last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION)) {
+    bool const v2 = last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION_V2;
+    if (v1 || v2 || (last.magic == PERSISTED_SESSION_MAGIC && last.version == PERSISTED_SESSION_VERSION)) {
       this->newest_record_epoch_ =
           restored_newest_epoch(session_record_epoch(last.record), this->last_session_emitted_);
       SessionDetail detail = SessionDetail::FULL;
@@ -1158,10 +1173,14 @@ void OcleanHub::publish_session_record_(const SessionRecord &r, SessionDetail de
   esphome::oclean::OcleanHub::publish_(
       this->session_coverage_sensor_,
       has_brushed_time ? session_coverage_percent(r.valid_duration_s, r.duration_s) : NAN);
-  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++) {
+  for (size_t i = 0; i < SESSION_ZONES_MAX; i++) {
     bool const known = detail == SessionDetail::FULL && r.zones[i] != SESSION_ZONE_ABSENT;
     esphome::oclean::OcleanHub::publish_(this->zone_sensors_[i], known ? (float)r.zones[i] : NAN);
   }
+  bool const has_pressure = detail == SessionDetail::FULL && r.over_pressure_s != SESSION_PRESSURE_ABSENT;
+  esphome::oclean::OcleanHub::publish_(this->session_over_pressure_sensor_,
+                                       has_pressure ? (float)clamp_session_duration(r.over_pressure_s) : NAN);
+  esphome::oclean::OcleanHub::publish_(this->session_max_pressure_sensor_, has_pressure ? (float)r.pressure_max : NAN);
   for (size_t i = 0; i < SESSION_QUADRANTS_COUNT; i++) {
     bool const known = detail == SessionDetail::FULL && r.quadrants[i] <= 100;
     esphome::oclean::OcleanHub::publish_(this->quadrant_sensors_[i], known ? (float)r.quadrants[i] : NAN);
@@ -1502,12 +1521,16 @@ void OcleanHub::emit_session_event_(const SessionRecord &r, uint32_t ts) {
     coverage = 100;
   data["coverage"] = to_string(coverage);
   std::string zones;
-  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++) {
+  for (size_t i = 0; i < session_zone_count(r); i++) {
     if (i > 0)
       zones += ',';
     zones += r.zones[i] == SESSION_ZONE_ABSENT ? std::string("-") : to_string((unsigned)r.zones[i]);
   }
   data["zones"] = zones;
+  if (r.over_pressure_s != SESSION_PRESSURE_ABSENT) {
+    data["over_pressure"] = to_string((unsigned)clamp_session_duration(r.over_pressure_s));
+    data["max_pressure"] = to_string((unsigned)r.pressure_max);
+  }
   ESP_LOGI(TAG, "[%s] session event %s score=%s scheme=%s", this->parent_->address_str(), data["local"].c_str(),
            data["score"].c_str(), data["scheme"].c_str());
   // fires whether or not the HA event below is compiled in

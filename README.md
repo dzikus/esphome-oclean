@@ -127,7 +127,7 @@ brush's GATT services and characteristics on each connect.
 The entity set follows the hub's `model:` option, so each brush gets only the
 entities it has data or an opcode for. A row whose only source is a hub option
 is built only with that option (on the X Ultra 20: `cloud_receiver` for the
-score, the zones, the cloud host and cloud host written, `birthday` for user
+score, the zones, the pressure readings, the cloud host and cloud host written, `birthday` for user
 info written, `wifi_provisioning` for Wi-Fi written); naming it in yaml without
 the option fails validation. Several entities are created with
 `disabled_by_default: true`, so they stay hidden in HA until enabled per entity.
@@ -154,10 +154,10 @@ X Ultra 20 (`model: x_ultra_20`):
 - 9 sensors: battery, battery voltage, last-session duration / valid duration
   / coverage, device mode, mode number, running state, clock drift (mode
   number, running state and clock drift hidden). With `cloud_receiver: true`
-  also the last-session score and the 8 per-zone gesture values, which reach
-  the node only in the brush's cloud upload. No quadrant sensors: the record's
-  12-zone map and quadrants are not decoded. No brush-head counters: firmware
-  0.0.1.6 never counts head use.
+  also the last-session score, the seconds brushed in each of the 12 zones,
+  the over-pressure time and the max pressure, which reach the node only in the
+  brush's cloud upload. No quadrant sensors: the record has none. No
+  brush-head counters: firmware 0.0.1.6 never counts head use.
 - 5 binary sensors: charging, docked, BLE connected (hidden), Wi-Fi
   provisioned, zone guidance; hidden, one per write the hub keeps on the brush:
   user info written (`birthday`), Wi-Fi written (`wifi_provisioning`), cloud
@@ -321,7 +321,10 @@ entity). Rows naming a model exist only on hubs with that `model:`.
 | `last_session_duration` | Duration | session record bytes 7-8 BE | seconds |
 | `last_session_valid_duration` | Valid duration | session record bytes 9-10 BE | seconds counted as effective |
 | `last_session_coverage` | Coverage | derived | valid / duration, percent |
-| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | Elite record bytes 23-30; X Ultra 20 gestureArray bytes 20-27 | per-region values, 1-4 upper / 5-8 lower, outer/inner per side. On the X Ultra 20 only the full cloud record carries them (the inline BLE record does not), so they are built only with `cloud_receiver: true`. |
+| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | session record bytes 23-30 | X Pro Elite only; share of the session per region, left 1-4 then right 5-8, each side upper outer / upper inner / lower outer / lower inner |
+| `zone_time_1` .. `zone_time_12` | Zone 1 .. Zone 12 | X Ultra 20 record bytes 20-27 and 32-35 | X Ultra 20 only; seconds brushed per zone: 1-8 the back teeth in the `gesture_zone` order, 9-10 the upper front teeth (canine to canine), 11-12 the lower ones. The brush scores 84 points for every zone brushed 5 s or more and less pro rata, and the sum over 10 is the session score. Only the full cloud record carries them (the inline BLE record does not), so they are built only with `cloud_receiver: true`. Which zone of a pair is the outer surface is not confirmed on this brush |
+| `last_session_over_pressure_time` | Over-pressure time | X Ultra 20 record bytes 51 on | X Ultra 20 only, with `cloud_receiver: true`; seconds of the session the force stayed over 400, where the brush halves the motor, counted from its log of one sample per 2 s |
+| `last_session_max_pressure` | Max pressure | X Ultra 20 record bytes 51 on | X Ultra 20 only, with `cloud_receiver: true`; highest force sample of the session in the brush's own unit (it treats 50 as contact and 600 as hard pressing); 1000 means 1000 or more |
 | `quadrant_upper_left`, `quadrant_lower_left`, `quadrant_upper_right`, `quadrant_lower_right` | Quadrant upper left .. Quadrant lower right | session record bytes 19-22 | X Pro Elite only; hidden; percent of the session per quadrant, summing to 100; each is about the sum of its two zones, rounded on the brush |
 | `head_used_days` | Brush head used days | settings buffer 27-28 BE | X Pro Elite only; days with brushing since head reset |
 | `head_used_times` | Brush head sessions | settings buffer 29-30 BE | X Pro Elite only; valid sessions since head reset |
@@ -711,7 +714,8 @@ Names you write yourself are never touched, in either direction.
 
 Each new session from the brush's ring buffer fires an `esphome.oclean_session`
 event (score, duration, valid duration, coverage, scheme, per-zone values,
-timestamp). A per-brush watermark stored in NVS prevents re-emitting old
+timestamp; on the X Ultra 20 the 12 zone times plus `over_pressure` and
+`max_pressure`). A per-brush watermark stored in NVS prevents re-emitting old
 sessions across reboots. A session dated after the brush's own clock, as read
 in the same poll, is dropped: it was stamped before the clock was set back.
 The timestamp is UTC, converted with the time zone the record was made in, so a
@@ -726,8 +730,9 @@ so.
 Independently of the event, each new session also fires the `on_session`
 trigger, so a node can act on a session without Home Assistant in the loop. `x`
 is the decoded record (`score`, `duration_s`, `valid_duration_s`, `scheme`,
-`zones[8]`, `quadrants[4]`, `tz_index`, the `year`..`second` fields,
-`has_score`). Trigger and event both
+`zones[12]` (the X Pro Elite fills the first 8), `quadrants[4]`, `tz_index`,
+the `year`..`second` fields, `has_score`, and on the X Ultra 20
+`over_pressure_s` and `pressure_max`). Trigger and event both
 fire oldest session first, and both run before the session entities are updated,
 so read the session from `x` rather than from the entity states:
 
@@ -768,11 +773,13 @@ Settings -> Dashboards -> ... -> Statistics.
 
 ### Coverage card
 
-`custom:oclean-coverage-card` draws the eight per-zone gesture values of the last
-session as a colored mouth map (upper and lower arch, left/right side, outer/inner
-surface). Read-only: it reads the zone / score / coverage entities and recorder
-history and never talks to the brush. Install it through HACS (Installation,
-path 2) or by hand.
+`custom:oclean-coverage-card` draws the per-zone values of the last session as
+a colored mouth map: 32 teeth, each split into its outer and inner surface. With
+8 zones (X Pro Elite) each zone colors one surface of a whole quadrant; with 12
+(X Ultra 20) the back teeth of each side and the front teeth, canine to canine,
+are zones of their own. Read-only: it reads the zone / score / coverage entities
+and recorder history and never talks to the brush. Install it through HACS
+(Installation, path 2) or by hand.
 
 ```yaml
 type: custom:oclean-coverage-card
@@ -783,13 +790,27 @@ coverage_entity: sensor.oclean_coverage
 time_entity: sensor.oclean_last_session
 ```
 
+The X Ultra 20 counts seconds per zone and scores a zone fully from 5 s on, so
+color it against that:
+
+```yaml
+type: custom:oclean-coverage-card
+zone_prefix: sensor.oclean_x20_zone_
+zone_count: 12
+normalize: absolute
+target: 5
+score_entity: sensor.oclean_x20_score
+time_entity: sensor.oclean_x20_last_session
+```
+
 | Option | Default | Meaning |
 |---|---|---|
-| `zones` | - | explicit list of 8 entities in gesture_zone_1..8 order (instead of `zone_prefix`) |
-| `zone_prefix` | - | entity prefix that `1`..`8` is appended to |
+| `zones` | - | explicit list of 8 or 12 zone entities in zone order (instead of `zone_prefix`) |
+| `zone_prefix` | - | entity prefix that `1`..`zone_count` is appended to |
+| `zone_count` | `8` | `12` for the X Ultra 20 `zone_time` entities |
 | `title` | - | card header |
 | `mirror` | `false` | swap the on-screen left / right sides |
-| `normalize` | `share` | colouring: `share` (vs an even 1/8), `max` (vs the best surface), `absolute` (vs `target`) |
+| `normalize` | `share` | colouring: `share` (vs an even split of the session), `max` (vs the best surface), `absolute` (vs `target`) |
 | `target` | `15` | per-surface target for `normalize: absolute` |
 | `score_entity` / `coverage_entity` / `time_entity` | - | values shown in the header |
 | `labels` | EN | override the on-card labels |
@@ -998,10 +1019,15 @@ drops them from the store instead.
 | 9-10 | 2 BE | program length (s) |
 | 11-12 | 2 BE | brushed time (s) |
 | 19 | 1 | time zone index of the brush clock when the session was recorded |
+| 20-27 | 8 | seconds brushed in zones 1-8, the back teeth (firmware 0.0.1.6 fills only byte 20 and leaves `0xFF` in 21-27) |
 | 28 | 1 | score 0-100 (`0xFF` = none) |
+| 32-35 | 4 | seconds brushed in zones 9-12, the front teeth |
+| 51 on | 1 per 2 s | force log: force / 4, `0xFF` from 1000 up |
 
-The zone bytes are not mapped, so `model: x_ultra_20` has no zone sensors.
-This layout has not yet been checked against a full record from a brush.
+Each zone byte is the low byte of the brush's seconds count. The score is the
+brush's own: every zone brushed 5 s or more counts 84, a shorter one pro rata,
+and the sum over 10 is the score, which matches all nine records seen from a
+brush running firmware 0.0.2.1.
 
 ### Scheme write format
 

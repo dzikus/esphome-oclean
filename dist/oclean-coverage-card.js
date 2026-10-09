@@ -1,7 +1,7 @@
-// Oclean coverage card: a Lovelace custom card that draws the 8 per-surface
+// Oclean coverage card: a Lovelace custom card that draws the 8 or 12 per-zone
 // brushing values of an Oclean session as a colored mouth map (upper and lower
 // arch, left/right side, outer/inner surface). Read-only: it only reads the
-// existing gesture_zone sensor states plus recorder history, never talks to the
+// existing zone sensor states plus recorder history, never talks to the
 // brush. No build step, no dependencies; copy this single file into
 // <config>/www/ and add it as a dashboard resource
 // (/local/oclean-coverage-card.js, type module).
@@ -11,6 +11,10 @@
 //   2 left  upper inner   6 right upper inner
 //   3 left  lower outer   7 right lower outer
 //   4 left  lower inner   8 right lower inner
+// With 12 zones (the X Ultra 20 zone_time_1..12 entities) 1-8 cover the back
+// teeth in the same order and the front teeth, canine to canine, follow:
+//   9 upper front outer  10 upper front inner
+//  11 lower front outer  12 lower front inner
 //
 // History source: recorder entity history for the zone/score/coverage entities,
 // grouped by the last-session timestamp sensor (time_entity). The node
@@ -22,7 +26,7 @@
 // expose their newest record through the entities, so trip history collapses to
 // a single session there (that is a recorder limitation, not the card's).
 
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.2.0";
 
 // HTML-escape any value interpolated into the innerHTML template. States and
 // labels are numeric or safe today, but escaping keeps a string entity or a
@@ -40,8 +44,7 @@ const esc = (v) =>
 // vertically so the arches' open (flat) edges leave a clear horizontal mouth
 // gap between them. Each arch holds 16 teeth (8 per quadrant, the real adult
 // count), each tooth split into an outer facial cell and an inner lingual cell.
-// Per-quadrant data colors all 8 teeth of that quadrant-surface the same; the
-// angular gaps between teeth make the arch read as 32 separate teeth.
+// The angular gaps between teeth make the two arches read as 32 separate teeth.
 const CX = 160;
 const R_IN = 80; // tongue-side edge of the tooth ring
 const R_MID = 96; // boundary between a tooth's inner and outer cell
@@ -63,15 +66,32 @@ const TOOTH_GAP_DEG = 3;
 // 8 teeth of it: the outer one the lip-side cell of each tooth, the inner one
 // the tongue-side cell.
 const SURFACES = [
-  { id: "ul_out", z: 0, label: "Upper left outer", a0: 180, a1: 270, rIn: R_MID, rOut: R_OUT, labelR: LABEL_R, cy: CY_UP },
-  { id: "ul_in", z: 1, label: "Upper left inner", a0: 180, a1: 270, rIn: R_IN, rOut: R_MID, labelR: LABEL_R_IN, cy: CY_UP },
-  { id: "ur_out", z: 4, label: "Upper right outer", a0: 270, a1: 360, rIn: R_MID, rOut: R_OUT, labelR: LABEL_R, cy: CY_UP },
-  { id: "ur_in", z: 5, label: "Upper right inner", a0: 270, a1: 360, rIn: R_IN, rOut: R_MID, labelR: LABEL_R_IN, cy: CY_UP },
-  { id: "lr_out", z: 6, label: "Lower right outer", a0: 0, a1: 90, rIn: R_MID, rOut: R_OUT, labelR: LABEL_R, cy: CY_LOW },
-  { id: "lr_in", z: 7, label: "Lower right inner", a0: 0, a1: 90, rIn: R_IN, rOut: R_MID, labelR: LABEL_R_IN, cy: CY_LOW },
-  { id: "ll_out", z: 2, label: "Lower left outer", a0: 90, a1: 180, rIn: R_MID, rOut: R_OUT, labelR: LABEL_R, cy: CY_LOW },
-  { id: "ll_in", z: 3, label: "Lower left inner", a0: 90, a1: 180, rIn: R_IN, rOut: R_MID, labelR: LABEL_R_IN, cy: CY_LOW },
+  { id: "ul_out", z: 0, label: "Upper left outer", a0: 180, a1: 270, teeth: 8, rIn: R_MID, rOut: R_OUT, labelR: LABEL_R, cy: CY_UP },
+  { id: "ul_in", z: 1, label: "Upper left inner", a0: 180, a1: 270, teeth: 8, rIn: R_IN, rOut: R_MID, labelR: LABEL_R_IN, cy: CY_UP },
+  { id: "ur_out", z: 4, label: "Upper right outer", a0: 270, a1: 360, teeth: 8, rIn: R_MID, rOut: R_OUT, labelR: LABEL_R, cy: CY_UP },
+  { id: "ur_in", z: 5, label: "Upper right inner", a0: 270, a1: 360, teeth: 8, rIn: R_IN, rOut: R_MID, labelR: LABEL_R_IN, cy: CY_UP },
+  { id: "lr_out", z: 6, label: "Lower right outer", a0: 0, a1: 90, teeth: 8, rIn: R_MID, rOut: R_OUT, labelR: LABEL_R, cy: CY_LOW },
+  { id: "lr_in", z: 7, label: "Lower right inner", a0: 0, a1: 90, teeth: 8, rIn: R_IN, rOut: R_MID, labelR: LABEL_R_IN, cy: CY_LOW },
+  { id: "ll_out", z: 2, label: "Lower left outer", a0: 90, a1: 180, teeth: 8, rIn: R_MID, rOut: R_OUT, labelR: LABEL_R, cy: CY_LOW },
+  { id: "ll_in", z: 3, label: "Lower left inner", a0: 90, a1: 180, teeth: 8, rIn: R_IN, rOut: R_MID, labelR: LABEL_R_IN, cy: CY_LOW },
 ];
+
+// 12 zones: each arch splits into the back teeth of either side (premolars and
+// molars, 5 a side) and the 6 front teeth (canine to canine) across the
+// midline. Even zones are drawn on the outer cell, as on the X Pro Elite.
+const TOOTH_DEG = 90 / TEETH_PER_QUADRANT;
+const BACK_DEG = 5 * TOOTH_DEG;
+const SURFACES_12 = [
+  ["Upper left back", 0, 180, 180 + BACK_DEG, 5, CY_UP],
+  ["Upper front", 8, 180 + BACK_DEG, 360 - BACK_DEG, 6, CY_UP],
+  ["Upper right back", 4, 360 - BACK_DEG, 360, 5, CY_UP],
+  ["Lower right back", 6, 0, BACK_DEG, 5, CY_LOW],
+  ["Lower front", 10, BACK_DEG, 180 - BACK_DEG, 6, CY_LOW],
+  ["Lower left back", 2, 180 - BACK_DEG, 180, 5, CY_LOW],
+].flatMap(([label, z, a0, a1, teeth, cy]) => [
+  { z, label: `${label} outer`, a0, a1, teeth, rIn: R_MID, rOut: R_OUT, labelR: LABEL_R, cy },
+  { z: z + 1, label: `${label} inner`, a0, a1, teeth, rIn: R_IN, rOut: R_MID, labelR: LABEL_R_IN, cy },
+]);
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -104,15 +124,12 @@ function sectorPath(a0, a1, rInner, rOuter, cy) {
   ].join(" ");
 }
 
-// Split one surface (a quadrant's outer or inner band) into its tooth cells:
-// TEETH_PER_QUADRANT teeth with a gap between each, one sector path per tooth
-// (all share the surface color).
 function toothCellPaths(s) {
   const span = s.a1 - s.a0;
-  const n = TEETH_PER_QUADRANT;
+  const n = s.teeth;
   const g = TOOTH_GAP_DEG;
-  // Reserve a half-gap at each quadrant edge so two abutting quadrants leave a
-  // full gap between their edge teeth. Without it the midline between the two
+  // Reserve a half-gap at each surface edge so two abutting runs leave a full
+  // gap between their edge teeth. Without it the midline between the two
   // central incisors has no gap and reads as one fat tooth.
   const tw = span / n - g; // single tooth angular width
   const out = [];
@@ -139,18 +156,23 @@ class OcleanCoverageCard extends HTMLElement {
     this._fetching = false;
   }
 
-  // zones: list of 8 entity ids in gesture_zone_1..8 order, or zone_prefix:
-  // a string to which "1".."8" are appended.
+  // zones: list of 8 or 12 entity ids in zone order, or zone_prefix: a string
+  // to which "1".."zone_count" are appended (zone_count 8, or 12 for the X Ultra
+  // 20).
   setConfig(config) {
     let zones = config.zones;
     if (!zones && config.zone_prefix) {
+      const count = Number(config.zone_count || 8);
+      if (count !== 8 && count !== 12) {
+        throw new Error("oclean-coverage-card: 'zone_count' must be 8 or 12");
+      }
       zones = [];
-      for (let i = 1; i <= 8; i++) {
+      for (let i = 1; i <= count; i++) {
         zones.push(`${config.zone_prefix}${i}`);
       }
     }
-    if (!Array.isArray(zones) || zones.length !== 8) {
-      throw new Error("oclean-coverage-card: provide 'zones' (8 entity ids) or 'zone_prefix'");
+    if (!Array.isArray(zones) || (zones.length !== 8 && zones.length !== 12)) {
+      throw new Error("oclean-coverage-card: provide 'zones' (8 or 12 entity ids) or 'zone_prefix'");
     }
     const normalize = config.normalize || "share";
     if (!["share", "max", "absolute"].includes(normalize)) {
@@ -365,13 +387,14 @@ class OcleanCoverageCard extends HTMLElement {
     }
     // share: compare each surface against an even split of the session total.
     const total = present.reduce((a, b) => a + b, 0);
-    const even = total / 8;
+    const even = total / values.length;
     return values.map((v) => (v === null ? null : even > 0 ? clamp01(v / even) : 0));
   }
 
   _zoneIndex(surface) {
-    // Mirror swaps left and right (xor 4 flips L<->R within each jaw/surface).
-    return this._config.mirror ? surface.z ^ 4 : surface.z;
+    // Mirror swaps left and right (xor 4 flips L<->R within each jaw/surface);
+    // the front zones 8-11 span the midline and stay.
+    return this._config.mirror && surface.z < 8 ? surface.z ^ 4 : surface.z;
   }
 
   _fireMoreInfo(entityId) {
@@ -402,7 +425,8 @@ class OcleanCoverageCard extends HTMLElement {
     const paths = [];
     const badges = [];
     const labels = [];
-    SURFACES.forEach((s) => {
+    const twelve = values.length === 12;
+    (twelve ? SURFACES_12 : SURFACES).forEach((s) => {
       const zi = this._zoneIndex(s);
       const val = values[zi];
       const ratio = ratios[zi];
@@ -430,6 +454,11 @@ class OcleanCoverageCard extends HTMLElement {
     const sideY = (CY_UP + CY_LOW) / 2 + 4; // mouth-line height for L/R labels
     const leftX = cfg.mirror ? CX + 128 : CX - 128;
     const rightX = cfg.mirror ? CX - 128 : CX + 128;
+    // The front badges of 12 zones sit where the arch names go, so those move
+    // inside the arches, and the box grows to keep the lower front badge whole.
+    const upperY = twelve ? CY_UP - 12 : 18;
+    const lowerY = twelve ? CY_LOW + 20 : 292;
+    const boxH = twelve ? 306 : 300;
 
     const summary = this._summary(view);
     const nav = this._nav(view);
@@ -459,9 +488,9 @@ class OcleanCoverageCard extends HTMLElement {
         ${headerTitle}
         ${summary}
         ${nav}
-        <svg viewBox="0 0 320 300" role="img" aria-label="brushing coverage map">
-          <text class="axis" x="${CX}" y="18">${lbl("upper", "Upper")}</text>
-          <text class="axis" x="${CX}" y="292">${lbl("lower", "Lower")}</text>
+        <svg viewBox="0 0 320 ${boxH}" role="img" aria-label="brushing coverage map">
+          <text class="axis" x="${CX}" y="${upperY}">${lbl("upper", "Upper")}</text>
+          <text class="axis" x="${CX}" y="${lowerY}">${lbl("lower", "Lower")}</text>
           <text class="axis" x="${leftX}" y="${sideY}">${lbl("left", "L")}</text>
           <text class="axis" x="${rightX}" y="${sideY}">${lbl("right", "R")}</text>
           ${sectors}

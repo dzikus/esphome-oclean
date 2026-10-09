@@ -39,7 +39,12 @@
   and an inner (tongue-side) half, colored by that quadrant's outer and inner
   zone, with the inner value shown inside the arch. Before, the outer zone
   colored the four back teeth of the quadrant and the inner zone the four
-  front ones.
+  front ones. With 12 zones (`zone_count: 12` or a 12-entity `zones` list) it
+  draws the X Ultra 20 map: the back teeth of each side and the front teeth,
+  canine to canine, as zones of their own.
+- The last session kept in flash across reboots moves to a layout with 12
+  zones and the pressure summary; one stored in the old layout is still read
+  and converted, so no brush loses its last session.
 - X Ultra 20 support (`model: x_ultra_20`): status, settings, clock, voice
   prompts, auto mode, holiday reminder, language and the other setting writes.
 - X Ultra 20: the record its count=0 reply carries, the oldest in its store,
@@ -75,8 +80,12 @@
   that reports an X Ultra 20 family model.
 - X Ultra 20: `cloud_receiver: true` takes the brush's cloud session uploads
   on the node's web server and publishes them as the session entities: score,
-  durations, timestamp and, from the full record, the eight `gesture_zone`
-  values. BLE never carries the score on this firmware. An upload goes to the
+  durations, timestamp and, from the full record, the seconds brushed in each
+  of the brush's 12 zones (`zone_time_1` .. `zone_time_12`: the back teeth in
+  the `gesture_zone` order, then the upper and lower front teeth), the
+  over-pressure time (force over 400, where the brush halves the motor) and the
+  max pressure from the record's force log. BLE never carries the score on
+  this firmware. An upload goes to the
   hub whose brush MAC it names; a `web_server:` is required. The image request
   the brush sends at every sleep gets an empty slot; the brush reboots on an
   empty reply and, off the dock, would never sleep.
@@ -92,7 +101,8 @@
   node allowed to perform Home Assistant actions; without that the brush gets
   the current condition and temperature.
 - X Ultra 20: a row whose only source is a hub option is built only with it:
-  the score and the eight zones (cloud record only), `cloud_host` and
+  the score, the 12 zones and the two pressure sensors (cloud record only),
+  `cloud_host` and
   `cloud_host_written` with `cloud_receiver: true`, `user_info_written` with
   `birthday`, `wifi_written` with `wifi_provisioning: true`. Not built: the
   capture and poll buttons (BLE never hands over the stored sessions), the

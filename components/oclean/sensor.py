@@ -215,8 +215,8 @@ SENSORS = [
         (
             f"gesture_zone_{i + 1}",
             # No generic setter: to_code wires these via the indexed
-            # set_gesture_zone_sensor branch. Sentinel None makes a future
-            # copy-paste onto the generic path fail loudly.
+            # set_zone_sensor branch. Sentinel None makes a future copy-paste
+            # onto the generic path fail loudly.
             None,
             UNIT_EMPTY,
             0,
@@ -228,6 +228,48 @@ SENSORS = [
         )
         for i in range(8)
     ],
+    # X Ultra 20 seconds per zone: 1-8 the back teeth in the gesture zone order,
+    # 9-10 the upper front teeth, 11-12 the lower ones. Same names as the gesture
+    # zones, which this model does not build.
+    *[
+        (
+            f"zone_time_{i + 1}",
+            # wired through set_zone_sensor, like the gesture zones
+            None,
+            UNIT_SECOND,
+            0,
+            DEVICE_CLASS_DURATION,
+            STATE_CLASS_MEASUREMENT,
+            "mdi:gesture-tap",
+            None,
+            f"Zone {i + 1}",
+        )
+        for i in range(12)
+    ],
+    # X Ultra 20 pressure log: 2 s samples over the brush's limit of 400, and the
+    # peak in the brush's own force unit (1000 means 1000 or more)
+    (
+        "last_session_over_pressure_time",
+        "set_session_over_pressure_sensor",
+        UNIT_SECOND,
+        0,
+        DEVICE_CLASS_DURATION,
+        STATE_CLASS_MEASUREMENT,
+        "mdi:gauge-full",
+        None,
+        "Over-pressure time",
+    ),
+    (
+        "last_session_max_pressure",
+        "set_session_max_pressure_sensor",
+        UNIT_EMPTY,
+        0,
+        None,
+        STATE_CLASS_MEASUREMENT,
+        "mdi:gauge",
+        None,
+        "Max pressure",
+    ),
     # session record bytes 19-22, each the share of one quadrant, summing to 100
     *[
         (
@@ -299,9 +341,9 @@ async def to_code(config):
         if key not in config:
             continue
         sens = await sensor.new_sensor(config[key])
-        if key.startswith("gesture_zone_"):
+        if key.startswith(("gesture_zone_", "zone_time_")):
             index = int(key.rsplit("_", 1)[1]) - 1
-            cg.add(hub.set_gesture_zone_sensor(index, sens))
+            cg.add(hub.set_zone_sensor(index, sens))
         elif key.startswith("quadrant_"):
             index = QUADRANT_POSITIONS.index(key.removeprefix("quadrant_"))
             cg.add(hub.set_quadrant_sensor(index, sens))

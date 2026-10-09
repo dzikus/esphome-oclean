@@ -127,8 +127,10 @@ class OcleanHub : public ble_client::BLEClientNode,
   void set_session_valid_duration_sensor(sensor::Sensor *s) { this->session_valid_duration_sensor_ = s; }
   void set_session_mode_text_sensor(text_sensor::TextSensor *s) { this->session_mode_text_sensor_ = s; }
   void set_session_coverage_sensor(sensor::Sensor *s) { this->session_coverage_sensor_ = s; }
-  void set_gesture_zone_sensor(int i, sensor::Sensor *s) {
-    if (i >= 0 && i < (int)SESSION_ZONES_COUNT)
+  void set_session_over_pressure_sensor(sensor::Sensor *s) { this->session_over_pressure_sensor_ = s; }
+  void set_session_max_pressure_sensor(sensor::Sensor *s) { this->session_max_pressure_sensor_ = s; }
+  void set_zone_sensor(int i, sensor::Sensor *s) {
+    if (i >= 0 && i < (int)SESSION_ZONES_MAX)
       this->zone_sensors_[i] = s;
   }
   void set_quadrant_sensor(int i, sensor::Sensor *s) {
@@ -474,7 +476,9 @@ class OcleanHub : public ble_client::BLEClientNode,
   sensor::Sensor *session_valid_duration_sensor_{nullptr};
   text_sensor::TextSensor *session_mode_text_sensor_{nullptr};
   sensor::Sensor *session_coverage_sensor_{nullptr};
-  sensor::Sensor *zone_sensors_[SESSION_ZONES_COUNT]{};
+  sensor::Sensor *session_over_pressure_sensor_{nullptr};
+  sensor::Sensor *session_max_pressure_sensor_{nullptr};
+  sensor::Sensor *zone_sensors_[SESSION_ZONES_MAX]{};
   sensor::Sensor *quadrant_sensors_[SESSION_QUADRANTS_COUNT]{};
   text_sensor::TextSensor *session_time_text_sensor_{nullptr};
   text_sensor::TextSensor *device_clock_text_sensor_{nullptr};
@@ -596,11 +600,13 @@ class OcleanHub : public ble_client::BLEClientNode,
   // layout has to be rejected by size, not by inspection: this one runs two
   // bytes longer than the {record, flag} blob it replaced. Magic and version are
   // the second line. Change both the size and the version on any layout change
-  // here or in SessionRecord. Version 1 is the same size: it carried five
-  // unmapped record bytes where the time zone and the quadrants sit now, and is
-  // loaded with those marked unknown.
+  // here or in SessionRecord. Versions 1 and 2 hold the 8-zone record and load
+  // through a second object of their size; version 1 carried five unmapped
+  // record bytes where the time zone and the quadrants sit now, and is loaded
+  // with those marked unknown.
   static constexpr uint16_t PERSISTED_SESSION_MAGIC = 0x0C1E;
-  static constexpr uint8_t PERSISTED_SESSION_VERSION = 2;
+  static constexpr uint8_t PERSISTED_SESSION_VERSION = 3;
+  static constexpr uint8_t PERSISTED_SESSION_VERSION_V2 = 2;
   static constexpr uint8_t PERSISTED_SESSION_VERSION_V1 = 1;
   // partial is the SessionDetail of an inline fragment, 0 for a full record
   struct PersistedSession {
@@ -609,9 +615,17 @@ class OcleanHub : public ble_client::BLEClientNode,
     uint8_t partial;
     SessionRecord record;
   };
+  struct PersistedSessionV2 {
+    uint16_t magic;
+    uint8_t version;
+    uint8_t partial;
+    SessionRecordV2 record;
+  };
   static_assert(sizeof(PersistedSession) > sizeof(SessionRecord) + 2,
                 "PersistedSession must not share a size with the {record, flag} "
                 "layout it replaced, or the length check would accept it");
+  static_assert(sizeof(PersistedSession) != sizeof(PersistedSessionV2),
+                "versions 1-2 are told apart from the current layout by size");
   esphome::ESPPreferenceObject session_last_pref_;
   // gates the inline fragment: a full record must never downgrade to a partial
   uint32_t newest_record_epoch_{0};

@@ -263,12 +263,45 @@ bool decode_session_record(const uint8_t *rec, SessionRecord *out) {
   out->tz_index = rec[SESSION_TZ_OFFSET];
   for (size_t i = 0; i < SESSION_QUADRANTS_COUNT; i++)
     out->quadrants[i] = rec[SESSION_QUADRANTS_OFFSET + i];
+  std::ranges::fill(out->zones, SESSION_ZONE_ABSENT);
   for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
     out->zones[i] = rec[SESSION_ZONES_OFFSET + i];
   uint8_t const s = rec[SESSION_SCORE_OFFSET];
   out->has_score = s != SESSION_NO_SCORE && s != SESSION_SCORE_VOID;
   out->score = s;
+  out->over_pressure_s = SESSION_PRESSURE_ABSENT;
+  out->pressure_max = SESSION_PRESSURE_ABSENT;
   return true;
+}
+
+size_t session_zone_count(const SessionRecord &r) {
+  for (size_t i = SESSION_ZONES_COUNT; i < SESSION_ZONES_MAX; i++) {
+    if (r.zones[i] != SESSION_ZONE_ABSENT)
+      return SESSION_ZONES_MAX;
+  }
+  return SESSION_ZONES_COUNT;
+}
+
+SessionRecord session_record_from_v2(const SessionRecordV2 &old) {
+  SessionRecord r{};
+  r.year = old.year;
+  r.month = old.month;
+  r.day = old.day;
+  r.hour = old.hour;
+  r.minute = old.minute;
+  r.second = old.second;
+  r.scheme = old.scheme;
+  r.duration_s = old.duration_s;
+  r.valid_duration_s = old.valid_duration_s;
+  r.tz_index = old.tz_index;
+  std::ranges::copy(old.quadrants, r.quadrants);
+  std::ranges::fill(r.zones, SESSION_ZONE_ABSENT);
+  std::ranges::copy(old.zones, r.zones);
+  r.score = old.score;
+  r.has_score = old.has_score;
+  r.over_pressure_s = SESSION_PRESSURE_ABSENT;
+  r.pressure_max = SESSION_PRESSURE_ABSENT;
+  return r;
 }
 
 bool decode_inline_0307(const uint8_t *data, size_t len, SessionRecord *out) {
@@ -299,9 +332,12 @@ bool decode_inline_0307(const uint8_t *data, size_t len, SessionRecord *out) {
   out->valid_duration_s = u16be(r + 9);
   out->tz_index = 0;
   std::ranges::fill(out->quadrants, SESSION_ZONE_ABSENT);
-  std::ranges::fill(out->zones, uint8_t{0});
+  std::ranges::fill(out->zones, SESSION_ZONE_ABSENT);
+  std::fill_n(out->zones, SESSION_ZONES_COUNT, uint8_t{0});
   out->score = 0;
   out->has_score = false;
+  out->over_pressure_s = SESSION_PRESSURE_ABSENT;
+  out->pressure_max = SESSION_PRESSURE_ABSENT;
   return true;
 }
 
@@ -605,6 +641,8 @@ static void decode_v20_head(const uint8_t *rec, SessionRecord *out) {
   std::ranges::fill(out->zones, SESSION_ZONE_ABSENT);
   out->score = SESSION_NO_SCORE;
   out->has_score = false;
+  out->over_pressure_s = SESSION_PRESSURE_ABSENT;
+  out->pressure_max = SESSION_PRESSURE_ABSENT;
 }
 
 bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *out) {
@@ -613,11 +651,28 @@ bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *ou
   decode_v20_head(rec, out);
   out->valid_duration_s = u16be(rec + 11);
   out->tz_index = rec[SESSION_V20_TZ_OFFSET];
-  // gestureArray, only in a full record; the publish path hides 0xFF per zone
+  // only in a full record; the publish path hides 0xFF per zone
   for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
     out->zones[i] = rec[SESSION_V20_ZONES_OFFSET + i];
+  for (size_t i = 0; i < SESSION_V20_FRONT_ZONES_COUNT; i++)
+    out->zones[SESSION_ZONES_COUNT + i] = rec[SESSION_V20_FRONT_ZONES_OFFSET + i];
   out->score = rec[SESSION_V20_SCORE_OFFSET];
   out->has_score = out->score != SESSION_NO_SCORE;
+  // the log runs to the record's own length; a shorter buffer cuts it there
+  size_t const declared = u16be(rec);
+  size_t const end = declared < len ? declared : len;
+  uint16_t over_s = 0;
+  uint16_t peak = 0;
+  for (size_t i = SESSION_V20_PRESSURE_OFFSET; i < end; i++) {
+    uint16_t const force = rec[i] == SESSION_V20_PRESSURE_SATURATED ? SESSION_V20_PRESSURE_SATURATED_VALUE
+                                                                    : static_cast<uint16_t>(rec[i] * 4);
+    if (force > SESSION_V20_OVER_PRESSURE)
+      over_s = static_cast<uint16_t>(over_s + SESSION_V20_PRESSURE_SAMPLE_S);
+    if (force > peak)
+      peak = force;
+  }
+  out->over_pressure_s = over_s;
+  out->pressure_max = peak;
   return true;
 }
 
