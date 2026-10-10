@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The X Ultra 20 is fully supported without the Oclean app and without the
+  Oclean cloud. The node joins it to Wi-Fi over BluFi, receives every session
+  with the score, the seconds brushed in each of its 12 zones and the pressure
+  log, and keeps its clock, birthday greeting and weather page; the X Ultra 20
+  entries below have the details.
 - Breaking: the number `head_max_days` is now `head_max_minutes`, "Brush head
   time limit", 1-65535 min. The brush counts the limit in minutes of brushing;
   the old key fails validation with a pointer to the new one. Home Assistant

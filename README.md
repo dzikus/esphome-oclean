@@ -14,6 +14,16 @@ hardware, and other models of the family on untested profiles (see
 **Hardware**). One component instance ("hub") per brush; several hubs run on a
 single ESP32 with their first polls staggered so the radio is not contended.
 
+**The X Ultra 20 is fully supported without the Oclean app and without the
+Oclean cloud.** The ESP32 node takes the place of both: it joins the brush to
+your Wi-Fi over BluFi, points the brush's uploads at itself and receives every
+session with its score, the seconds brushed in each of the 12 zones and the
+pressure log, none of which BLE carries. It also keeps the brush clock right,
+sets the birthday greeting and fills the weather page from Home Assistant. No
+Oclean account and no phone app are involved; block the brush's internet access
+on the router and nothing it sends leaves your network (see **In-node session
+receiver** and **Values kept on the brush**).
+
 ![Coverage card of an X Pro Elite (8 zones) and an X Ultra 20 (12 zones)](https://raw.githubusercontent.com/dzikus/esphome-oclean/main/docs/coverage-cards.png)
 
 The component reads battery, dock/charge state, device settings and the
@@ -22,13 +32,6 @@ brushing sessions, and writes back the brush's controls: brushing mode
 clock on both brushes, plus the over-pressure alert, brush pause, brush mode,
 brush-head time limit and counter reset on the X Pro Elite, and the voice
 prompts, auto mode, holiday reminder and voice teaching on the X Ultra 20.
-
-On the X Ultra 20 the node also stands in for the Oclean cloud
-(`cloud_receiver`): the brush uploads each session to it over Wi-Fi, the only
-way to the score, the seconds brushed in each of its 12 zones and its pressure
-log, none of which BLE carries. From the yaml the hub keeps the brush on your
-Wi-Fi (BluFi) and sets its birthday greeting; the node answers the brush's
-clock and fills its weather page from a Home Assistant weather entity.
 
 It connects only to poll and then disconnects (connect-poll-disconnect), so it
 does not hold the brush's BLE radio open and keeps brush battery drain low. The
@@ -106,7 +109,7 @@ because ESPHome creates entities at build time, so it comes from the hub's
 | Line | Model id (DIS 0x2A24) | Profile | Status |
 |---|---|---|---|
 | X / X Pro / Pro Elite | `OCLEANY3`, `OCLEANY3M*`, `OCLEANY3P*` | TYPE1 | X Pro Elite verified on hardware with `OCLEANY3P` firmware 1.0.0.30 and `OCLEANY3PD` firmware 1.0.0.31; other models and firmware versions untested |
-| X Ultra 20 | `OCLEANV20*` | TYPE_V20 | verified on hardware with firmware 0.0.2.1: status, settings, the clock, the setting, program and voice-teaching writes, the session receiver (score, 12 zone times, pressure), Wi-Fi over BluFi, the cloud host, the weather page and the birthday greeting. Over BLE the brush never streams its sessions: each poll reads the oldest stored one, without score or zones (see **Session stream and record**). The retail-mode write is acked, but the mode did not come on with the brush docked |
+| X Ultra 20 | `OCLEANV20*` | TYPE_V20 | fully supported without the Oclean app or cloud; verified on hardware with firmware 0.0.2.1: status, settings, the clock, the setting, program and voice-teaching writes, the session receiver (score, 12 zone times, pressure), Wi-Fi over BluFi, the cloud host, the weather page and the birthday greeting. Over BLE the brush never streams its sessions: each poll reads the oldest stored one, without score or zones (see **Session stream and record**). The retail-mode write is acked, but the mode did not come on with the brush docked |
 | X Pro 20, X Ultra (first generation) | `OCLEANX20`, `OCLEANV1*` | TYPE_V20_FAMILY | untested; captures from both show the X Ultra 20 reply shapes. Use `model: x_ultra_20`. The store is never cleared, so only its oldest session shows up |
 | Z1 | `OCLEANY5` | TYPE_Z1 | untested (needs a capture to freeze the record layout) |
 | other / new firmware | unmatched | UNKNOWN fallback | battery + status only |
