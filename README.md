@@ -285,31 +285,34 @@ with `0202`. For a hub that never writes anything, set `read_only: true`.
 
 ### Hub options
 
-Set on the `oclean:` entry, not on the platforms.
+Set on the `oclean:` entry, not on the platforms. The X Pro Elite and X Ultra 20
+columns mark the hubs an option applies to: `model: x_pro_elite` and
+`model: x_ultra_20`, which also serve the other models of each family (see
+`model`). An option marked `-` for the hub's model fails validation.
 
-| Option | Type | Default | Effect |
-|---|---|---|---|
-| `ble_client_id` | id | - | Required. Points to the `ble_client` entry with this brush's MAC. |
-| `model` | `x_pro_elite` or `x_ultra_20` | `x_pro_elite` | The brush on this hub, which picks the entity set at build time (see **What it exposes per brush**). The X / X Pro and the Z1 use `x_pro_elite`; the X Pro 20 and the first X Ultra use `x_ultra_20`. The protocol is still chosen from the model id the brush reports, so a wrong value costs entities, never data; the log names the right value after the first poll. An entity listed in yaml that the model does not have fails validation. |
-| `update_interval` | time | `3600s` (min `60s`) | Off-dock cadence: gap between connect-poll-disconnect cycles while the brush runs on battery. |
-| `charging_interval` | time | `600s` (min `60s`) | Docked cadence: faster polls while the brush sits on the dock (charging or fully charged). Clamped down to `update_interval` if set larger; set both equal for fixed-interval polling. |
-| `hold_connection_while_docked` | bool | `true` | Keep the BLE link open while the brush is docked instead of disconnecting after each poll; re-queries on the live link every `charging_interval`. The link drops when the brush leaves the dock. Docked means charging, so this costs no brush battery. Set `false` for plain connect-poll-disconnect. |
-| `time_id` | id | none | A `time:` platform id (local time source). Enables the sync-clock button, auto clock-sync and the wall-clock stamps (last seen, session timestamps). |
-| `tzindex` | int 1-33 | `16` | 1-based index into the brush's 33-entry GMT-offset table, written together with the clock. 16 = CEST (UTC+2), 15 = CET (UTC+1). |
-| `auto_sync_time` | bool | on when `time_id` is set, off otherwise | Resync the brush clock during a poll when it has drifted past `sync_drift_threshold`. Explicit `true` without `time_id` fails validation. |
-| `sync_drift_threshold` | time | `120s` | Drift that triggers an auto resync. `0s` resyncs whenever the clocks differ by at least one second. |
-| `read_only` | bool | `false` | The brush only receives the profile's `03` read queries; the X Ultra 20's Wi-Fi check `02 34` is held back too. Every write is refused and logged: controls, clock sync, `0202`. |
-| `name_prefix` | string, max 48 chars | unset | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
-| `cloud_receiver` | bool | `false` | Receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. It does **not** start its own server: it registers a handler on the shared ESPHome web server, so a `web_server:` must be configured (validation requires it) and the uploads arrive on the web server's port. The code is not compiled in unless this is true. The hub points the brush's cloud host at this node itself (see **Values kept on the brush**); the brush has to be able to reach the node over the network. See **In-node session receiver**. |
-| `cloud_drop_future` | bool | `true` | What the receiver does with an upload dated implausibly far in the future, which comes from a brush whose clock was not corrected yet. `true` acks it, so the brush erases it instead of re-uploading it on every connect; `false` leaves it on the brush. Never published either way. Only matters with `cloud_receiver: true`. X Ultra 20 only. |
-| `weather` | `weather.*` entity id | unset | Answers the brush's weather request from this Home Assistant weather entity, so its clock page shows an icon, Today/Tomorrow and the day's low and high. Needs `cloud_receiver: true`, `time_id` and an `api:` block; one hub per node. The forecast needs the device to be allowed to perform Home Assistant actions; without that it shows the current condition and temperature. X Ultra 20 only. See **Weather on the brush**. |
-| `birthday` | `MM-DD` | unset | Birthday greeting date the hub keeps on the brush (see **Values kept on the brush**): on every wake that day the brush shows its birthday screen with the date, whether or not the holiday greetings are on. A yaml option baked into the firmware, never an entity, so the date stays out of the Home Assistant recorder; use `!secret`. X Ultra 20 only. |
-| `gender` | `unknown`, `male`, `female` | `unknown` | Goes in the same frame as the date. Baked in like `birthday`, never an entity; use `!secret`. The brush stores it and shows nothing of it. X Ultra 20 only. |
-| `age` | int 3-18 | `18` | Goes in the same frame. 3-18 is the app's range, where any adult is 18. Baked in, never an entity; use `!secret`. The brush stores it and shows nothing of it. X Ultra 20 only. |
-| `retry_unconfirmed` | bool | `true` | A value the hub keeps on the brush (birthday greeting, cloud host, Wi-Fi) that the brush has not confirmed goes out once per boot; with this on, again once a day while it stays unconfirmed. See **Values kept on the brush**. |
-| `wifi_provisioning` | bool | `false` | The hub keeps the brush on the Wi-Fi below over BluFi (see **Values kept on the brush**). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
-| `wifi_ssid` | string | the node's `wifi:` SSID | The network the hub joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
-| `wifi_password` | string | the node's `wifi:` password | Passphrase for `wifi_ssid`. Needs `wifi_provisioning: true`. Baked into the firmware, not an entity, so it never reaches the recorder; use `!secret`. |
+| Option | Type | Default | X Pro Elite | X Ultra 20 | Effect |
+|---|---|---|---|---|---|
+| `ble_client_id` | id | - | yes | yes | Required. Points to the `ble_client` entry with this brush's MAC. |
+| `model` | `x_pro_elite` or `x_ultra_20` | `x_pro_elite` | yes | yes | The brush on this hub, which picks the entity set at build time (see **What it exposes per brush**). The X / X Pro and the Z1 use `x_pro_elite`; the X Pro 20 and the first X Ultra use `x_ultra_20`. The protocol is still chosen from the model id the brush reports, so a wrong value costs entities, never data; the log names the right value after the first poll. An entity listed in yaml that the model does not have fails validation. |
+| `update_interval` | time | `3600s` (min `60s`) | yes | yes | Off-dock cadence: gap between connect-poll-disconnect cycles while the brush runs on battery. |
+| `charging_interval` | time | `600s` (min `60s`) | yes | yes | Docked cadence: faster polls while the brush sits on the dock (charging or fully charged). Clamped down to `update_interval` if set larger; set both equal for fixed-interval polling. |
+| `hold_connection_while_docked` | bool | `true` | yes | yes | Keep the BLE link open while the brush is docked instead of disconnecting after each poll; re-queries on the live link every `charging_interval`. The link drops when the brush leaves the dock. Docked means charging, so this costs no brush battery. Set `false` for plain connect-poll-disconnect. |
+| `time_id` | id | none | yes | yes | A `time:` platform id (local time source). Enables the sync-clock button, auto clock-sync and the wall-clock stamps (last seen, session timestamps). |
+| `tzindex` | int 1-33 | `16` | yes | yes | 1-based index into the brush's 33-entry GMT-offset table, written together with the clock. 16 = CEST (UTC+2), 15 = CET (UTC+1). |
+| `auto_sync_time` | bool | on when `time_id` is set, off otherwise | yes | yes | Resync the brush clock during a poll when it has drifted past `sync_drift_threshold`. Explicit `true` without `time_id` fails validation. |
+| `sync_drift_threshold` | time | `120s` | yes | yes | Drift that triggers an auto resync. `0s` resyncs whenever the clocks differ by at least one second. |
+| `read_only` | bool | `false` | yes | yes | The brush only receives the profile's `03` read queries; the X Ultra 20's Wi-Fi check `02 34` is held back too. Every write is refused and logged: controls, clock sync, `0202`. |
+| `name_prefix` | string, max 48 chars | unset | yes | yes | Prepended to every default entity name on this hub, so two brushes do not both call a sensor `Battery`. Opt-in: nothing is prefixed unless you write it here. Names you write yourself are never touched. `""` keeps the bare names and silences the multi-hub warning. See **Two brushes on one ESP32**. |
+| `cloud_receiver` | bool | `false` | - | yes | Receives the brush's cloud session uploads and publishes them as the session entities (routing by the MAC in each upload). This is the only way to the brushing score and full record on X Ultra 20 firmware, which BLE does not expose. It does **not** start its own server: it registers a handler on the shared ESPHome web server, so a `web_server:` must be configured (validation requires it) and the uploads arrive on the web server's port. The code is not compiled in unless this is true. The hub points the brush's cloud host at this node itself (see **Values kept on the brush**); the brush has to be able to reach the node over the network. See **In-node session receiver**. |
+| `cloud_drop_future` | bool | `true` | - | yes | What the receiver does with an upload dated implausibly far in the future, which comes from a brush whose clock was not corrected yet. `true` acks it, so the brush erases it instead of re-uploading it on every connect; `false` leaves it on the brush. Never published either way. Only matters with `cloud_receiver: true`. |
+| `weather` | `weather.*` entity id | unset | - | yes | Answers the brush's weather request from this Home Assistant weather entity, so its clock page shows an icon, Today/Tomorrow and the day's low and high. Needs `cloud_receiver: true`, `time_id` and an `api:` block; one hub per node. The forecast needs the device to be allowed to perform Home Assistant actions; without that it shows the current condition and temperature. See **Weather on the brush**. |
+| `birthday` | `MM-DD` | unset | - | yes | Birthday greeting date the hub keeps on the brush (see **Values kept on the brush**): on every wake that day the brush shows its birthday screen with the date, whether or not the holiday greetings are on. A yaml option baked into the firmware, never an entity, so the date stays out of the Home Assistant recorder; use `!secret`. |
+| `gender` | `unknown`, `male`, `female` | `unknown` | - | yes | Goes in the same frame as the date. Baked in like `birthday`, never an entity; use `!secret`. The brush stores it and shows nothing of it. |
+| `age` | int 3-18 | `18` | - | yes | Goes in the same frame. 3-18 is the app's range, where any adult is 18. Baked in, never an entity; use `!secret`. The brush stores it and shows nothing of it. |
+| `retry_unconfirmed` | bool | `true` | - | yes | A value the hub keeps on the brush (birthday greeting, cloud host, Wi-Fi) that the brush has not confirmed goes out once per boot; with this on, again once a day while it stays unconfirmed. See **Values kept on the brush**. |
+| `wifi_provisioning` | bool | `false` | - | yes | The hub keeps the brush on the Wi-Fi below over BluFi (see **Values kept on the brush**). The BluFi code is not compiled in unless this is true. With it true the hub needs an SSID (below, or a `wifi:` network), or validation fails. |
+| `wifi_ssid` | string | the node's `wifi:` SSID | - | yes | The network the hub joins the brush to. Needs `wifi_provisioning: true`. Required on a node with no `wifi:` to fall back on (e.g. an Ethernet node). |
+| `wifi_password` | string | the node's `wifi:` password | - | yes | Passphrase for `wifi_ssid`. Needs `wifi_provisioning: true`. Baked into the firmware, not an entity, so it never reaches the recorder; use `!secret`. |
 
 The brushing-mode select additionally accepts `custom_modes` (a list of named
 programs); that option lives under the `select:` platform, not the hub. See
@@ -327,44 +330,47 @@ race for the single scanner.
 ### Entities (sensor)
 
 All auto-created. "Hidden" means `disabled_by_default: true` in HA (enable per
-entity). Rows naming a model exist only on hubs with that `model:`.
+entity). The X Pro Elite and X Ultra 20 columns mark the entity sets of
+`model: x_pro_elite` and `model: x_ultra_20`; "with" names the hub option an
+entity is built only with.
 
-| Key | Default name | Source | Notes |
-|---|---|---|---|
-| `battery` | Battery | battery characteristic / STATUS | percent, diagnostic |
-| `battery_voltage` | Battery voltage | STATUS bytes 3-4 BE | volts from the millivolt reading, diagnostic; a reading outside 2-5 V is not published |
-| `last_session_score` | Score | session record byte 33 | 0-100; the no-score sentinel (0xFF) and the score 1 the firmware gives a void session (14 s or less of brushing, or 85% or more of it without motion) read as unknown. On the X Ultra 20 only the cloud record carries it, so it is built only with `cloud_receiver: true` |
-| `last_session_duration` | Duration | session record bytes 7-8 BE | seconds |
-| `last_session_valid_duration` | Valid duration | session record bytes 9-10 BE | seconds counted as effective |
-| `last_session_coverage` | Coverage | derived | valid / duration, percent |
-| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | session record bytes 23-30 | X Pro Elite only; share of the session per region, left 1-4 then right 5-8, each side upper outer / upper inner / lower outer / lower inner |
-| `zone_time_1` .. `zone_time_12` | Zone 1 .. Zone 12 | X Ultra 20 record bytes 20-27 and 32-35 | X Ultra 20 only; seconds brushed per zone: 1-8 the back teeth in the `gesture_zone` order, 9-10 the upper front teeth (canine to canine), 11-12 the lower ones, each pair outer surface first, as the brush's own screen draws them. The brush scores 84 points for every zone brushed 5 s or more and less pro rata, and the sum over 10 is the session score. Only the full cloud record carries them (the inline BLE record does not), so they are built only with `cloud_receiver: true` |
-| `last_session_over_pressure_time` | Over-pressure time | X Ultra 20 record bytes 51 on | X Ultra 20 only, with `cloud_receiver: true`; seconds of the session the force stayed over 400, where the brush halves the motor, counted from its log of one sample per 2 s |
-| `last_session_max_pressure` | Max pressure | X Ultra 20 record bytes 51 on | X Ultra 20 only, with `cloud_receiver: true`; highest force sample of the session in the brush's own unit (it treats 50 as contact and 600 as hard pressing); 1000 means 1000 or more |
-| `quadrant_upper_left`, `quadrant_lower_left`, `quadrant_upper_right`, `quadrant_lower_right` | Quadrant upper left .. Quadrant lower right | session record bytes 19-22 | X Pro Elite only; hidden; percent of the session per quadrant, summing to 100; each is about the sum of its two zones, rounded on the brush |
-| `head_used_days` | Brush head used days | settings buffer 27-28 BE | X Pro Elite only; days with brushing since head reset |
-| `head_used_times` | Brush head sessions | settings buffer 29-30 BE | X Pro Elite only; valid sessions since head reset |
-| `head_used_time` | Brush head used time | settings buffer 14-15 BE | X Pro Elite only; hidden; minutes of valid brushing since head reset |
-| `device_theme` | Device theme | settings buffer 0 | X Pro Elite only; hidden; raw index |
-| `device_mode` | Device mode | settings buffer 11 | X Ultra 20 only; 1-5 = mode picked on the screen, 6 = voice teaching, otherwise the id of a program written over BLE (0 from the app) |
-| `mode_number` | Mode number | settings buffer 5 | X Ultra 20 only; hidden; raw, moved with the device mode so far |
-| `running_state` | Running state | `03 14` reply | X Ultra 20 only; hidden; raw value, 3 while charged on the dock |
+| Key | Default name | X Pro Elite | X Ultra 20 | Source | Notes |
+|---|---|---|---|---|---|
+| `battery` | Battery | yes | yes | battery characteristic / STATUS | percent, diagnostic |
+| `battery_voltage` | Battery voltage | yes | yes | STATUS bytes 3-4 BE | volts from the millivolt reading, diagnostic; a reading outside 2-5 V is not published |
+| `last_session_score` | Score | yes | with `cloud_receiver` | session record byte 33 | 0-100; the no-score sentinel (0xFF) and the score 1 the firmware gives a void session (14 s or less of brushing, or 85% or more of it without motion) read as unknown. On the X Ultra 20 only the cloud record carries it |
+| `last_session_duration` | Duration | yes | yes | session record bytes 7-8 BE | seconds |
+| `last_session_valid_duration` | Valid duration | yes | yes | session record bytes 9-10 BE | seconds counted as effective |
+| `last_session_coverage` | Coverage | yes | yes | derived | valid / duration, percent |
+| `gesture_zone_1` .. `gesture_zone_8` | Zone 1 .. Zone 8 | yes | - | session record bytes 23-30 | share of the session per region, left 1-4 then right 5-8, each side upper outer / upper inner / lower outer / lower inner |
+| `zone_time_1` .. `zone_time_12` | Zone 1 .. Zone 12 | - | with `cloud_receiver` | X Ultra 20 record bytes 20-27 and 32-35 | seconds brushed per zone: 1-8 the back teeth in the `gesture_zone` order, 9-10 the upper front teeth (canine to canine), 11-12 the lower ones, each pair outer surface first, as the brush's own screen draws them. The brush scores 84 points for every zone brushed 5 s or more and less pro rata, and the sum over 10 is the session score. Only the full cloud record carries them, not the inline BLE record |
+| `last_session_over_pressure_time` | Over-pressure time | - | with `cloud_receiver` | X Ultra 20 record bytes 51 on | seconds of the session the force stayed over 400, where the brush halves the motor, counted from its log of one sample per 2 s |
+| `last_session_max_pressure` | Max pressure | - | with `cloud_receiver` | X Ultra 20 record bytes 51 on | highest force sample of the session in the brush's own unit (it treats 50 as contact and 600 as hard pressing); 1000 means 1000 or more |
+| `quadrant_upper_left`, `quadrant_lower_left`, `quadrant_upper_right`, `quadrant_lower_right` | Quadrant upper left .. Quadrant lower right | yes | - | session record bytes 19-22 | hidden; percent of the session per quadrant, summing to 100; each is about the sum of its two zones, rounded on the brush |
+| `head_used_days` | Brush head used days | yes | - | settings buffer 27-28 BE | days with brushing since head reset |
+| `head_used_times` | Brush head sessions | yes | - | settings buffer 29-30 BE | valid sessions since head reset |
+| `head_used_time` | Brush head used time | yes | - | settings buffer 14-15 BE | hidden; minutes of valid brushing since head reset |
+| `device_theme` | Device theme | yes | - | settings buffer 0 | hidden; raw index |
+| `device_mode` | Device mode | - | yes | settings buffer 11 | 1-5 = mode picked on the screen, 6 = voice teaching, otherwise the id of a program written over BLE (0 from the app) |
+| `mode_number` | Mode number | - | yes | settings buffer 5 | hidden; raw, moved with the device mode so far |
+| `running_state` | Running state | - | yes | `03 14` reply | hidden; raw value, 3 while charged on the dock |
+| `clock_drift` | Clock drift | yes | yes | brush clock vs the node clock | hidden, diagnostic; seconds, positive when the brush runs ahead; read on every poll, also with `auto_sync_time` off |
 
 The last decoded session survives reboots: the newest record is persisted in
 NVS per hub and re-published on boot.
 
 ### Entities (binary_sensor)
 
-| Key | Default name | Source | Notes |
-|---|---|---|---|
-| `charging` | Charging | STATUS byte 2 == 0x01 | actively charging on the dock |
-| `docked` | Docked | STATUS byte 2 == 0x01 or 0x03 | on the dock, charging or fully charged |
-| `connected` | BLE connected | link state | hidden; off almost always by design (the link is up only seconds per poll); use Last seen for freshness |
-| `wifi_configured` | Wi-Fi provisioned | `02 34` reply | X Ultra 20 only; off means no SSID is stored, and without one the brush never starts Wi-Fi |
-| `user_info_written` | User info written | the brush's `02 11` ack | X Ultra 20 only, built when the hub has `birthday`; hidden; on while the brush has acked the `02 11` frame of the yaml birthday, gender and age as they are now (one write), off from a change of any of them until it acks the new frame |
-| `wifi_written` | Wi-Fi written | the brush's BluFi connected report or its first request after the join | X Ultra 20 only, built with `wifi_provisioning: true`; hidden; on while the brush has confirmed the yaml Wi-Fi as it is now; Wi-Fi provisioned shows any stored network, this one ours |
-| `cloud_host_written` | Cloud host written | the `Host` header of the brush's request | X Ultra 20 only, built with `cloud_receiver: true`; hidden; on while the brush uploads to this node's current address |
-| `area_guidance` | Zone guidance | `03 16` reply | X Ultra 20 only |
+| Key | Default name | X Pro Elite | X Ultra 20 | Source | Notes |
+|---|---|---|---|---|---|
+| `charging` | Charging | yes | yes | STATUS byte 2 == 0x01 | actively charging on the dock |
+| `docked` | Docked | yes | yes | STATUS byte 2 == 0x01 or 0x03 | on the dock, charging or fully charged |
+| `connected` | BLE connected | yes | yes | link state | hidden; off almost always by design (the link is up only seconds per poll); use Last seen for freshness |
+| `wifi_configured` | Wi-Fi provisioned | - | yes | `02 34` reply | off means no SSID is stored, and without one the brush never starts Wi-Fi |
+| `user_info_written` | User info written | - | with `birthday` | the brush's `02 11` ack | hidden; on while the brush has acked the `02 11` frame of the yaml birthday, gender and age as they are now (one write), off from a change of any of them until it acks the new frame |
+| `wifi_written` | Wi-Fi written | - | with `wifi_provisioning` | the brush's BluFi connected report or its first request after the join | hidden; on while the brush has confirmed the yaml Wi-Fi as it is now; Wi-Fi provisioned shows any stored network, this one ours |
+| `cloud_host_written` | Cloud host written | - | with `cloud_receiver` | the `Host` header of the brush's request | hidden; on while the brush uploads to this node's current address |
+| `area_guidance` | Zone guidance | - | yes | `03 16` reply | the zone-change guidance state the brush reports |
 
 The X Pro Elite firmware keeps no setting in settings bytes 3, 4, 8-10 and 13:
 constant zero, copies of bytes 0 and 1, a flag nothing writes, and a pause flag
@@ -379,18 +385,18 @@ validation.
 
 ### Entities (text_sensor)
 
-| Key | Default name | Source | Notes |
-|---|---|---|---|
-| `last_session_time` | Last session | session record bytes 0-5 | timestamp of the newest buffered session (brush clock) |
-| `last_session_mode` | Last session mode | session record byte 6 | scheme id decoded to the brushing-mode name; unknown ids fall back to the number. On the X Pro Elite id 0 is also any mode picked on the brush itself |
-| `device_clock` | Device clock | settings buffer 16-21 | the brush's own clock |
-| `last_seen` | Last seen | wall clock | hidden; timestamp device class, renders "x ago" in HA; stamped on every successful poll, the freshness signal for the slow cadence |
-| `timezone` | Timezone | settings buffer 24 | hidden; decoded GMT offset, e.g. "GMT+02:00" |
-| `hw_revision` | Hardware revision | DIS 0x2A27 | hidden |
-| `sw_version` | Software version | DIS 0x2A28 | hidden |
-| `mac_address` | MAC address | BLE | hidden |
-| `model` | Model | DIS 0x2A24 | hidden; the raw model id that drives profile selection |
-| `cloud_host` | Cloud host | `Host` header of the brush's requests | hidden, read-only; X Ultra 20 only, built with `cloud_receiver: true`; the host the brush uploads to, as read from its own requests to the receiver (see **Values kept on the brush**) |
+| Key | Default name | X Pro Elite | X Ultra 20 | Source | Notes |
+|---|---|---|---|---|---|
+| `last_session_time` | Last session | yes | yes | session record bytes 0-5 | timestamp of the newest buffered session (brush clock) |
+| `last_session_mode` | Last session mode | yes | yes | session record byte 6 | scheme id decoded to the brushing-mode name; unknown ids fall back to the number. On the X Pro Elite id 0 is also any mode picked on the brush itself |
+| `device_clock` | Device clock | yes | yes | settings buffer 16-21 | the brush's own clock |
+| `last_seen` | Last seen | yes | yes | wall clock | hidden; timestamp device class, renders "x ago" in HA; stamped on every successful poll, the freshness signal for the slow cadence |
+| `timezone` | Timezone | yes | yes | settings buffer 24 | hidden; decoded GMT offset, e.g. "GMT+02:00" |
+| `hw_revision` | Hardware revision | yes | yes | DIS 0x2A27 | hidden |
+| `sw_version` | Software version | yes | yes | DIS 0x2A28 | hidden |
+| `mac_address` | MAC address | yes | yes | BLE | hidden |
+| `model` | Model | yes | yes | DIS 0x2A24 | hidden; the raw model id that drives profile selection |
+| `cloud_host` | Cloud host | - | with `cloud_receiver` | `Host` header of the brush's requests | hidden, read-only; the host the brush uploads to, as read from its own requests to the receiver (see **Values kept on the brush**) |
 
 ### Entities (switch)
 
@@ -398,36 +404,36 @@ All device-backed switches publish optimistically and are then corrected by the
 settings readback; their restore mode is `DISABLED` so nothing is written on
 boot. The brush acks every accepted write with `<opcode> 4F 4B` ("OK").
 
-| Key | Default name | Write | Notes |
-|---|---|---|---|
-| `over_pressure` | Over-pressure alert | `02 12` + 01/00 | X Pro Elite only; readback at settings buffer 22. The brush checks pressure only at some motor gears: 24-32 on the `OCLEANY3P`, which senses damped vibration, and 24-32 and 37-40 on the `OCLEANY3PD`, which senses motor load. Standard Cleaning written over BLE runs at gear 18 and the default Custom program at gear 8, so neither ever alerts |
-| `raise_wake` | Raise to wake | `02 23` + 01/00 | readback at settings buffer 2 |
-| `bluetooth` | Bluetooth | local only | master switch for the BLE link; OFF drops pending writes and tears the link down; `RESTORE_DEFAULT_ON` so a reboot never leaves the brush silently unreachable |
-| `area_reminder` | Area reminder | `02 0D` + 01/00 | On the X Pro Elite it turns the zone-change signal every 30 s on or off. On the X Ultra 20 it is named Voice on zone change: it picks the cue at each 30 s zone change, a short motor stutter when off and a spoken prompt when on (only with voice prompts on); readback at settings buffer 23 |
-| `brush_pause` | Brush pause | `02 22` + 01/00 | X Pro Elite only; when on, a button press after the first 10 s of a session pauses it instead of ending it; readback at settings buffer 1 |
-| `brush_mode` | Brush mode | `02 09` + 01/EC | X Pro Elite only; when off, the press that wakes the brush also starts brushing, when on that press only wakes it; off byte is the 0xEC sentinel, not 0x00; readback at settings buffer 12 |
-| `auto_mode` | Auto mode | `02 25` + 01/00 | X Ultra 20 only; readback at settings buffer 4. On also moves the brush to mode 1 (03:01-12:00) or 2 (the rest of the day) whenever it is idle on the main screen; off does not bring the earlier mode back |
-| `festival_reminder` | Holiday reminder | `02 28` + 01/00 | X Ultra 20 only; readback at settings buffer 10 |
-| `voice_teaching` | Voice teaching | `02 30` + 01/00 | X Ultra 20 only; readback at settings buffer 6. On selects the firmware's single-step teaching program (gear 16, 180 s), off selects screen mode 5; neither returns to the mode picked on the screen |
-| `demo_mode` | Retail display mode | `02 A0` + 01/00 | X Ultra 20 only; readback from the `03 A0` reply. A shop mode in which the brush never sleeps on battery; turning it on during a session ends the session |
-| `voice_prompts` | Voice prompts | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 7 |
-| `voice_fast_brushing` | Voice on fast brushing | `02 31` + 4B | X Ultra 20 only; the prompt that warns of brushing too fast; readback at settings buffer 8. Takes only while Voice prompts is on, so the hub refuses it otherwise |
-| `voice_pressure` | Voice on over-pressure | `02 31` + 4B | X Ultra 20 only; readback at settings buffer 9; same rule as the fast-brushing prompt. The frame carries all three voice flags, so each switch resends the other two as last read |
+| Key | Default name | X Pro Elite | X Ultra 20 | Write | Notes |
+|---|---|---|---|---|---|
+| `over_pressure` | Over-pressure alert | yes | - | `02 12` + 01/00 | readback at settings buffer 22. The brush checks pressure only at some motor gears: 24-32 on the `OCLEANY3P`, which senses damped vibration, and 24-32 and 37-40 on the `OCLEANY3PD`, which senses motor load. Standard Cleaning written over BLE runs at gear 18 and the default Custom program at gear 8, so neither ever alerts |
+| `raise_wake` | Raise to wake | yes | yes | `02 23` + 01/00 | readback at settings buffer 2 |
+| `bluetooth` | Bluetooth | yes | yes | local only | master switch for the BLE link; OFF drops pending writes and tears the link down; `RESTORE_DEFAULT_ON` so a reboot never leaves the brush silently unreachable |
+| `area_reminder` | Area reminder | yes | yes | `02 0D` + 01/00 | On the X Pro Elite it turns the zone-change signal every 30 s on or off. On the X Ultra 20 it is named Voice on zone change: it picks the cue at each 30 s zone change, a short motor stutter when off and a spoken prompt when on (only with voice prompts on); readback at settings buffer 23 |
+| `brush_pause` | Brush pause | yes | - | `02 22` + 01/00 | when on, a button press after the first 10 s of a session pauses it instead of ending it; readback at settings buffer 1 |
+| `brush_mode` | Brush mode | yes | - | `02 09` + 01/EC | when off, the press that wakes the brush also starts brushing, when on that press only wakes it; off byte is the 0xEC sentinel, not 0x00; readback at settings buffer 12 |
+| `auto_mode` | Auto mode | - | yes | `02 25` + 01/00 | readback at settings buffer 4. On also moves the brush to mode 1 (03:01-12:00) or 2 (the rest of the day) whenever it is idle on the main screen; off does not bring the earlier mode back |
+| `festival_reminder` | Holiday reminder | - | yes | `02 28` + 01/00 | readback at settings buffer 10 |
+| `voice_teaching` | Voice teaching | - | yes | `02 30` + 01/00 | readback at settings buffer 6. On selects the firmware's single-step teaching program (gear 16, 180 s), off selects screen mode 5; neither returns to the mode picked on the screen |
+| `demo_mode` | Retail display mode | - | yes | `02 A0` + 01/00 | readback from the `03 A0` reply. A shop mode in which the brush never sleeps on battery; turning it on during a session ends the session |
+| `voice_prompts` | Voice prompts | - | yes | `02 31` + 4B | readback at settings buffer 7 |
+| `voice_fast_brushing` | Voice on fast brushing | - | yes | `02 31` + 4B | the prompt that warns of brushing too fast; readback at settings buffer 8. Takes only while Voice prompts is on, so the hub refuses it otherwise |
+| `voice_pressure` | Voice on over-pressure | - | yes | `02 31` + 4B | readback at settings buffer 9; same rule as the fast-brushing prompt. The frame carries all three voice flags, so each switch resends the other two as last read |
 
 ### Entities (number)
 
-| Key | Default name | Range | Notes |
-|---|---|---|---|
-| `head_max_minutes` | Brush head time limit | 1-65535 min | X Pro Elite only; minutes of valid brushing on one head before the brush shows its replacement reminder, once; 240 out of the box, about 120 two-minute sessions. Writes `02 17` + 2B BE, readback at settings buffer 25-26; box input (a slider would fire a write per step). Replaces `head_max_days`, which fails validation with a pointer here |
-| `custom_step1_gear` .. `custom_step4_gear` | Custom step N gear | 1-41 (1-54 on the X Ultra 20), default 8 | parameters of the runtime Custom program; stored on the node (flash-persisted), written to the brush only when Custom is selected |
-| `custom_step1_duration` .. `custom_step4_duration` | Custom step N duration | 5-120 s, step 5, default 30 | changing a parameter while Custom is active re-programs the brush (debounced) |
+| Key | Default name | X Pro Elite | X Ultra 20 | Range | Notes |
+|---|---|---|---|---|---|
+| `head_max_minutes` | Brush head time limit | yes | - | 1-65535 min | minutes of valid brushing on one head before the brush shows its replacement reminder, once; 240 out of the box, about 120 two-minute sessions. Writes `02 17` + 2B BE, readback at settings buffer 25-26; box input (a slider would fire a write per step). Replaces `head_max_days`, which fails validation with a pointer here |
+| `custom_step1_gear` .. `custom_step4_gear` | Custom step N gear | yes | yes | 1-41 (1-54 on the X Ultra 20), default 8 | parameters of the runtime Custom program; stored on the node (flash-persisted), written to the brush only when Custom is selected |
+| `custom_step1_duration` .. `custom_step4_duration` | Custom step N duration | yes | yes | 5-120 s, step 5, default 30 | changing a parameter while Custom is active re-programs the brush (debounced) |
 
 ### Entities (select)
 
-| Key | Default name | Options | Notes |
-|---|---|---|---|
-| `brush_scheme` | Brushing mode | X Pro Elite: 19 presets + named `custom_modes` + "Custom"; X Ultra 20: "Screen mode 1" .. "Screen mode 5" and "Voice teaching" + named `custom_modes` + "Custom" | writes the full per-step program (`02 06` / `02 0B`); current option read back from settings buffer 11. On the X Pro Elite a mode picked on the brush itself also reads back as 0, so Standard Cleaning stands for those modes too. The X Ultra 20's screen modes and voice teaching only show the brush's state: picking one is refused |
-| `device_language` | Display language | 17 languages | writes `02 16` + language id; readback from settings buffer 31. An id past the brush firmware's last language would show English, so it is refused and logged: `OCLEANY3P` stops at 14 (Korean), `OCLEANY3PD` at 13 (Arabic). On the X Ultra 20 it is named Language: the same write also switches the voice prompts |
+| Key | Default name | X Pro Elite | X Ultra 20 | Options | Notes |
+|---|---|---|---|---|---|
+| `brush_scheme` | Brushing mode | yes | yes | X Pro Elite: 19 presets + named `custom_modes` + "Custom"; X Ultra 20: "Screen mode 1" .. "Screen mode 5" and "Voice teaching" + named `custom_modes` + "Custom" | writes the full per-step program (`02 06` / `02 0B`); current option read back from settings buffer 11. On the X Pro Elite a mode picked on the brush itself also reads back as 0, so Standard Cleaning stands for those modes too. The X Ultra 20's screen modes and voice teaching only show the brush's state: picking one is refused |
+| `device_language` | Display language | yes | yes | 17 languages | writes `02 16` + language id; readback from settings buffer 31. An id past the brush firmware's last language would show English, so it is refused and logged: `OCLEANY3P` stops at 14 (Korean), `OCLEANY3PD` at 13 (Arabic). On the X Ultra 20 it is named Language: the same write also switches the voice prompts |
 
 Preset options are labelled "name (duration)", e.g. "Quick cleaning (1m20s)".
 Named custom modes are declared under the select:
@@ -462,12 +468,12 @@ program wants four steps to keep the four-quadrant guidance.
 
 ### Entities (button)
 
-| Key | Default name | Effect | Notes |
-|---|---|---|---|
-| `reset_head` | Reset brush head | writes `02 0F` | X Pro Elite only; irreversible: zeroes the brush-head usage counters |
-| `sync_time` | Sync clock | writes `02 01` + 8 bytes | created only when the hub has `time_id`; writes on press only |
-| `poll_now` | Poll now | immediate poll cycle | X Pro Elite only; hidden by default; read-only on the brush |
-| `capture_sessions` | Capture sessions | session download + 30 s hold | X Pro Elite only (the X Ultra 20 download never streams); hidden; keeps the link open so the raw record stream lands in the log |
+| Key | Default name | X Pro Elite | X Ultra 20 | Effect | Notes |
+|---|---|---|---|---|---|
+| `reset_head` | Reset brush head | yes | - | writes `02 0F` | irreversible: zeroes the brush-head usage counters |
+| `sync_time` | Sync clock | with `time_id` | with `time_id` | writes `02 01` + 8 bytes | writes on press only |
+| `poll_now` | Poll now | yes | - | immediate poll cycle | hidden by default; read-only on the brush |
+| `capture_sessions` | Capture sessions | yes | - | session download + 30 s hold | hidden; keeps the link open so the raw record stream lands in the log (the X Ultra 20 download never streams) |
 
 ### Values kept on the brush
 
