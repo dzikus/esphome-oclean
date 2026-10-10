@@ -1,5 +1,3 @@
-import logging
-
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import switch
@@ -9,41 +7,18 @@ from . import (
     CONF_OCLEAN_ID,
     OCLEAN_COMPONENT_SCHEMA,
     OcleanHub,
-    hub_expose_dev,
     inject_entity_defaults,
     oclean_ns,
-    run_data,
 )
-
-_LOGGER = logging.getLogger(__name__)
-
-# Toggles with no observable effect on the owned brushes: created only on hubs
-# with expose_dev_sensors so they do not crowd the dashboard as live controls.
-DEV_SWITCH_KEYS = frozenset({"area_reminder", "brush_pause", "brush_mode"})
-
-
-def _explicit_dev_switches():
-    # expose_dev only resolves at to_code, but explicit-vs-auto is only visible
-    # in the raw validator input, so it has to be recorded there for to_code to
-    # warn rather than silently drop a switch the user asked for by name.
-    # Per-run storage: CORE.config is still None during validation, so its
-    # identity cannot mark the run boundary.
-    return run_data().setdefault("explicit_dev_switches", {})
-
-
-def _record_explicit_dev(config):
-    hub_id = config.get(CONF_OCLEAN_ID)
-    hub_key = str(hub_id) if hub_id is not None else "__default__"
-    present = {k for k in DEV_SWITCH_KEYS if k in config}
-    if present:
-        _explicit_dev_switches().setdefault(hub_key, set()).update(present)
-
 
 DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
 
 OcleanCommandSwitch = oclean_ns.class_(
     "OcleanCommandSwitch", switch.Switch, cg.Parented.template(OcleanHub)
+)
+OcleanVoiceSwitch = oclean_ns.class_(
+    "OcleanVoiceSwitch", switch.Switch, cg.Parented.template(OcleanHub)
 )
 
 # Master BLE enable switch: local hub behavior, no opcode written to the brush.
@@ -63,6 +38,10 @@ HUB_SETTERS = {
     "brush_pause": "set_brush_pause_switch",
     "raise_wake": "set_raise_wake_switch",
     "brush_mode": "set_brush_mode_switch",
+    "auto_mode": "set_auto_mode_switch",
+    "festival_reminder": "set_festival_reminder_switch",
+    "voice_teaching": "set_voice_teaching_switch",
+    "demo_mode": "set_demo_mode_switch",
 }
 
 # Default on/off bytes for a config toggle: on 0x01, off 0x00.
@@ -118,18 +97,65 @@ SWITCHES = [
         "brush-mode",
         0xEC,
     ),
+    (
+        "auto_mode",
+        0x02,
+        0x25,
+        "mdi:autorenew",
+        "Auto mode",
+        "auto-mode",
+        OFF_DEFAULT,
+    ),
+    (
+        "festival_reminder",
+        0x02,
+        0x28,
+        "mdi:party-popper",
+        "Holiday reminder",
+        "holiday-reminder",
+        OFF_DEFAULT,
+    ),
+    # On selects the firmware's single-step teaching program (gear 16, 180 s),
+    # off selects mode 5; neither returns to the mode picked on the screen.
+    (
+        "voice_teaching",
+        0x02,
+        0x30,
+        "mdi:school-outline",
+        "Voice teaching",
+        "voice-teaching",
+        OFF_DEFAULT,
+    ),
+    # A shop display mode in which the brush never sleeps on battery; turning it
+    # on during a session ends the session.
+    (
+        "demo_mode",
+        0x02,
+        0xA0,
+        "mdi:storefront-outline",
+        "Retail display mode",
+        "demo-mode",
+        OFF_DEFAULT,
+    ),
+]
+
+# (yaml_key, flag index in the voice-prompt frame, icon, default_name)
+VOICE_SWITCHES = [
+    ("voice_prompts", 0, "mdi:account-voice", "Voice prompts"),
+    ("voice_fast_brushing", 1, "mdi:speedometer", "Voice on fast brushing"),
+    ("voice_pressure", 2, "mdi:gauge", "Voice on over-pressure"),
 ]
 
 
-_DEFAULT_NAMES = [
-    (key, name) for key, _b0, _b1, _icon, name, _label, _off in SWITCHES
-] + [(CONF_BLUETOOTH, DEFAULT_BLUETOOTH_NAME)]
+_DEFAULT_NAMES = (
+    [(key, name) for key, _b0, _b1, _icon, name, _label, _off in SWITCHES]
+    + [(key, name) for key, _index, _icon, name in VOICE_SWITCHES]
+    + [(CONF_BLUETOOTH, DEFAULT_BLUETOOTH_NAME)]
+)
 
 
 def _inject_defaults(config):
-    # Note explicit dev switches before auto-create hides which were user-listed.
-    _record_explicit_dev(config)
-    return inject_entity_defaults(config, _DEFAULT_NAMES)
+    return inject_entity_defaults(config, _DEFAULT_NAMES, platform="switch")
 
 
 CONFIG_SCHEMA = cv.All(
@@ -145,6 +171,15 @@ CONFIG_SCHEMA = cv.All(
                     default_restore_mode="DISABLED",
                 )
                 for key, _b0, _b1, icon, _default_name, _label, _off in SWITCHES
+            },
+            **{
+                cv.Optional(key): switch.switch_schema(
+                    OcleanVoiceSwitch,
+                    icon=icon,
+                    entity_category=ENTITY_CATEGORY_CONFIG,
+                    default_restore_mode="DISABLED",
+                )
+                for key, _index, icon, _default_name in VOICE_SWITCHES
             },
             # Master BLE enable. RESTORE_DEFAULT_ON so a reboot never silently
             # leaves the brush unreachable when HA has no persisted OFF.
@@ -162,26 +197,8 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
-    explicit = _explicit_dev_switches()
-    # A single-hub config may omit oclean_id, so the record lands under the
-    # placeholder key; merge both.
-    explicit_dev = explicit.get(str(config[CONF_OCLEAN_ID]), set()) | explicit.get(
-        "__default__", set()
-    )
     for key, b0, b1, _icon, _default_name, label, off_value in SWITCHES:
         if key not in config:
-            continue
-        if key in DEV_SWITCH_KEYS and not expose_dev:
-            # Only auto-created dev rows are dropped quietly; a user who listed
-            # one explicitly gets told why it is missing.
-            if key in explicit_dev:
-                _LOGGER.warning(
-                    "oclean: switch '%s' is dev-only and not created; set "
-                    "expose_dev_sensors: true on hub '%s' to use it",
-                    key,
-                    config[CONF_OCLEAN_ID],
-                )
             continue
         sw = await switch.new_switch(config[key])
         await cg.register_parented(sw, hub)
@@ -193,6 +210,14 @@ async def to_code(config):
         # Every command switch has a readback setter; index directly so a future
         # switch added without one fails loud instead of silently missing readback.
         cg.add(getattr(hub, HUB_SETTERS[key])(sw))
+
+    for key, index, _icon, _default_name in VOICE_SWITCHES:
+        if key not in config:
+            continue
+        sw = await switch.new_switch(config[key])
+        await cg.register_parented(sw, hub)
+        cg.add(sw.set_index(index))
+        cg.add(hub.set_voice_prompt_switch(index, sw))
 
     bt = config.get(CONF_BLUETOOTH)
     if bt is not None:

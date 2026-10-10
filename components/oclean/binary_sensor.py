@@ -12,14 +12,7 @@ from . import (
     CONF_OCLEAN_ID,
     HIDDEN_BINARY_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
-    hub_expose_dev,
     inject_entity_defaults,
-)
-
-# Settings readbacks with no observable effect on the owned brushes: created
-# only on hubs with expose_dev_sensors.
-DEV_BINARY_SENSOR_KEYS = frozenset(
-    {"volume_enabled", "calendar_enabled", "splash_prevent", "fill_brush"}
 )
 
 DEPENDENCIES = ["oclean"]
@@ -27,12 +20,13 @@ CODEOWNERS = ["@dzikus"]
 
 # (yaml_key, setter, device_class|None, icon, entity_category, default_name)
 # charging is published from the STATUS (0303) response byte 2: 0x01 means on the
-# dock / charging, 0x02 means off the dock. The rest are config toggles read back
-# from the settings buffer (030201) on each poll and have no device class. Every
-# row is auto-created so the entities appear without listing them in the yaml.
-# fill_brush and auto_mode are read-only: the brush returns a one-byte error stub
-# for their write opcodes (0224 / 0225) and the setting never changes, so they are
-# surfaced as state, not controls.
+# dock / charging, 0x02 means off the dock. Every row the hub's model has is
+# auto-created so the entities appear without listing them in the yaml.
+# volume_enabled, calendar_enabled, splash_prevent, fill_brush, auto_mode,
+# auto_update and network hold no setting on any supported model, and
+# voice_teaching and demo_mode are switches on the one model that has them
+# (MODEL_ENTITY_SETS).
+# Their rows stay so a yaml that names one gets an error that says so.
 BINARY_SENSORS = [
     (
         "charging",
@@ -105,6 +99,82 @@ BINARY_SENSORS = [
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Auto mode",
     ),
+    (
+        "voice_teaching",
+        "set_voice_teaching_binary_sensor",
+        None,
+        "mdi:school-outline",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Voice teaching",
+    ),
+    # On means an SSID is stored; without one the brush never starts Wi-Fi.
+    (
+        "wifi_configured",
+        "set_wifi_configured_binary_sensor",
+        None,
+        "mdi:wifi-cog",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Wi-Fi provisioned",
+    ),
+    # One per write the hub keeps on the brush: on while the brush has confirmed
+    # the value the yaml holds now (0211 birthday, gender and age; BluFi Wi-Fi;
+    # 0233 cloud host).
+    (
+        "user_info_written",
+        "set_user_info_written_binary_sensor",
+        None,
+        "mdi:account-check",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "User info written",
+    ),
+    (
+        "wifi_written",
+        "set_wifi_written_binary_sensor",
+        None,
+        "mdi:wifi-check",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Wi-Fi written",
+    ),
+    (
+        "cloud_host_written",
+        "set_cloud_host_written_binary_sensor",
+        None,
+        "mdi:cloud-check",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Cloud host written",
+    ),
+    (
+        "area_guidance",
+        "set_area_guidance_binary_sensor",
+        None,
+        "mdi:map-marker-path",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Zone guidance",
+    ),
+    (
+        "demo_mode",
+        "set_demo_mode_binary_sensor",
+        None,
+        "mdi:storefront-outline",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Retail display mode",
+    ),
+    (
+        "auto_update",
+        "set_auto_update_binary_sensor",
+        None,
+        "mdi:update",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Auto update",
+    ),
+    (
+        "network",
+        "set_network_binary_sensor",
+        DEVICE_CLASS_CONNECTIVITY,
+        None,
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Network",
+    ),
 ]
 
 
@@ -124,7 +194,10 @@ _DEFAULT_NAMES = [(key, name) for key, *_row, name in BINARY_SENSORS]
 
 def _inject_defaults(config):
     return inject_entity_defaults(
-        config, _DEFAULT_NAMES, hidden=HIDDEN_BINARY_SENSOR_KEYS
+        config,
+        _DEFAULT_NAMES,
+        hidden=HIDDEN_BINARY_SENSOR_KEYS,
+        platform="binary_sensor",
     )
 
 
@@ -144,11 +217,8 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     for key, setter, *_row in BINARY_SENSORS:
         if key not in config:
-            continue
-        if key in DEV_BINARY_SENSOR_KEYS and not expose_dev:
             continue
         bs = await binary_sensor.new_binary_sensor(config[key])
         cg.add(getattr(hub, setter)(bs))

@@ -17,7 +17,15 @@ from . import (
 # rarely needs on the dashboard; created but disabled by default in Home
 # Assistant, same as the connected sensor.
 HIDDEN_TEXT_SENSOR_KEYS = frozenset(
-    {"model", "hw_revision", "sw_version", "mac_address", "last_seen", "timezone"}
+    {
+        "model",
+        "hw_revision",
+        "sw_version",
+        "mac_address",
+        "last_seen",
+        "timezone",
+        "cloud_host",
+    }
 )
 
 DEPENDENCIES = ["oclean"]
@@ -109,6 +117,15 @@ TEXT_SENSORS = [
         "MAC address",
         None,
     ),
+    # X Ultra 20: the host the brush uploads to, read from its own requests
+    (
+        "cloud_host",
+        "set_cloud_host_text_sensor",
+        "mdi:cloud-check-outline",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Cloud host",
+        None,
+    ),
 ]
 
 
@@ -117,7 +134,7 @@ _DEFAULT_NAMES = [(key, name) for key, _s, _icon, _ec, name, _dc in TEXT_SENSORS
 
 def _inject_defaults(config):
     return inject_entity_defaults(
-        config, _DEFAULT_NAMES, hidden=HIDDEN_TEXT_SENSOR_KEYS
+        config, _DEFAULT_NAMES, hidden=HIDDEN_TEXT_SENSOR_KEYS, platform="text_sensor"
     )
 
 

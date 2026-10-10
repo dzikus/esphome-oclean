@@ -15,7 +15,6 @@ from . import (
     DOMAIN,
     OCLEAN_COMPONENT_SCHEMA,
     OcleanHub,
-    hub_expose_dev,
     inject_entity_defaults,
     oclean_ns,
 )
@@ -47,12 +46,13 @@ OcleanPollNowButton = oclean_ns.class_(
     "OcleanPollNowButton", button.Button, cg.Parented.template(OcleanHub)
 )
 
-# Dev-gated. Requests a buffered-session download and holds the link open so
-# the record stream can be captured into the log.
+# X Pro Elite only, disabled by default in Home Assistant. Requests a
+# buffered-session download and holds the link open so the record stream can be
+# captured into the log.
 CONF_CAPTURE_SESSIONS = "capture_sessions"
 DEFAULT_CAPTURE_NAME = "Capture sessions"
 
-# Always exposed. Resets the brush-head usage counter (irreversible).
+# X Pro Elite only. Resets the brush-head usage counter (irreversible).
 CONF_RESET_HEAD = "reset_head"
 DEFAULT_RESET_HEAD_NAME = "Reset brush head"
 
@@ -61,7 +61,7 @@ DEFAULT_RESET_HEAD_NAME = "Reset brush head"
 CONF_SYNC_TIME = "sync_time"
 DEFAULT_SYNC_TIME_NAME = "Sync clock"
 
-# Always created but disabled by default in Home Assistant. Forces an
+# X Pro Elite only, disabled by default in Home Assistant. Forces an
 # immediate full poll cycle (read-only on the brush).
 CONF_POLL_NOW = "poll_now"
 DEFAULT_POLL_NOW_NAME = "Poll now"
@@ -77,7 +77,10 @@ _DEFAULT_NAMES = [
 
 def _inject_defaults(config):
     return inject_entity_defaults(
-        config, _DEFAULT_NAMES, hidden=frozenset({CONF_POLL_NOW})
+        config,
+        _DEFAULT_NAMES,
+        hidden=frozenset({CONF_POLL_NOW, CONF_CAPTURE_SESSIONS}),
+        platform="button",
     )
 
 
@@ -113,11 +116,9 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
 
-    # Capture is a dev hook, gated behind expose_dev_sensors.
     sub = config.get(CONF_CAPTURE_SESSIONS)
-    if sub is not None and expose_dev:
+    if sub is not None:
         btn = await button.new_button(sub)
         await cg.register_parented(btn, hub)
         cg.add(hub.set_capture_button(btn))

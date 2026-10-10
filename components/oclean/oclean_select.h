@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "esphome/components/select/select.h"
+#include "esphome/core/log.h"
 #include "oclean.h"
 #include "oclean_protocol.h"
 
@@ -36,6 +37,12 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
   void set_custom_option(uint8_t pnum, const std::string &name) {
     this->custom_pnum_ = pnum;
     this->custom_name_ = name;
+  }
+
+  // A mode only the brush itself can switch to: named on readback, refused as a
+  // pick. name must match an option passed to set_options.
+  void add_readback_option(uint8_t pnum, const std::string &name) {
+    this->readback_only_.push_back(Scheme{.pnum = pnum, .name = name, .steps = {}});
   }
 
   // kind 0 = gear, 1 = duration; the program is always CUSTOM_STEPS long so the
@@ -69,9 +76,11 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
   std::string name_for_pnum(uint8_t pnum) const {
     if (!this->custom_name_.empty() && pnum == this->custom_pnum_)
       return this->custom_name_;
-    for (const auto &sc : this->schemes_) {
-      if (sc.pnum == pnum)
-        return sc.name;
+    for (const auto *table : {&this->schemes_, &this->readback_only_}) {
+      for (const auto &sc : *table) {
+        if (sc.pnum == pnum)
+          return sc.name;
+      }
     }
     return "";
   }
@@ -79,8 +88,11 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
   // settings readback; an unknown pNum leaves the last state alone
   void publish_pnum(uint8_t pnum) {
     std::string const name = this->name_for_pnum(pnum);
-    if (!name.empty())
-      this->publish_state(name);
+    if (name.empty())
+      return;
+    this->shown_pnum_ = pnum;
+    this->shown_known_ = true;
+    this->publish_state(name);
   }
 
  protected:
@@ -114,6 +126,15 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
         this->publish_state(value);
       return;
     }
+    for (const auto &sc : this->readback_only_) {
+      if (sc.name != value)
+        continue;
+      ESP_LOGW("oclean.select", "%s is picked on the brush, not over BLE", value.c_str());
+      // put back what the brush has, so the refused pick does not linger
+      if (this->shown_known_)
+        this->publish_pnum(this->shown_pnum_);
+      return;
+    }
   }
 
   struct Scheme {
@@ -122,6 +143,9 @@ class OcleanSchemeSelect : public select::Select, public Parented<OcleanHub> {
     std::vector<SchemeStep> steps;
   };
   std::vector<Scheme> schemes_;
+  std::vector<Scheme> readback_only_;
+  uint8_t shown_pnum_{0};
+  bool shown_known_{false};
 
   uint8_t custom_pnum_{0};
   std::string custom_name_;
@@ -143,6 +167,7 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
     for (const auto &lang : this->languages_) {
       if (lang.id != id)
         continue;
+      this->shown_id_ = id;
       this->publish_state(lang.name);
       return;
     }
@@ -153,8 +178,16 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
     for (const auto &lang : this->languages_) {
       if (lang.name != value)
         continue;
-      if (this->parent_->send_command(build_language_command(lang.id), "device-language"))
+      if (!this->parent_->language_available(lang.id)) {
+        // put back what the brush shows, so the refused pick does not linger
+        if (this->shown_id_ != 0)
+          this->publish_language(this->shown_id_);
+        return;
+      }
+      if (this->parent_->send_command(build_language_command(lang.id), "device-language")) {
+        this->shown_id_ = lang.id;
         this->publish_state(value);
+      }
       return;
     }
   }
@@ -164,6 +197,7 @@ class OcleanLanguageSelect : public select::Select, public Parented<OcleanHub> {
     std::string name;
   };
   std::vector<Language> languages_;
+  uint8_t shown_id_{0};
 };
 
 }  // namespace esphome::oclean

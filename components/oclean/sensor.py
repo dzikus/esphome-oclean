@@ -5,26 +5,25 @@ from esphome.const import (
     CONF_DEVICE_ID,
     DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_DURATION,
+    DEVICE_CLASS_VOLTAGE,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
     UNIT_EMPTY,
+    UNIT_MINUTE,
     UNIT_PERCENT,
     UNIT_SECOND,
+    UNIT_VOLT,
 )
 
 from . import (
     CONF_OCLEAN_ID,
     HIDDEN_SENSOR_KEYS,
     OCLEAN_COMPONENT_SCHEMA,
+    QUADRANT_POSITIONS,
     UNIT_DAY,
-    hub_expose_dev,
     inject_entity_defaults,
 )
-
-# Raw settings indices with no use on the owned brushes: created only on hubs
-# with expose_dev_sensors.
-DEV_SENSOR_KEYS = frozenset({"volume_index"})
 
 DEPENDENCIES = ["oclean"]
 CODEOWNERS = ["@dzikus"]
@@ -43,6 +42,18 @@ SENSORS = [
         None,
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Battery",
+    ),
+    # STATUS bytes 3-4, published in volts from the millivolt reading
+    (
+        "battery_voltage",
+        "set_battery_voltage_sensor",
+        UNIT_VOLT,
+        2,
+        DEVICE_CLASS_VOLTAGE,
+        STATE_CLASS_MEASUREMENT,
+        None,
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Battery voltage",
     ),
     (
         "last_session_score",
@@ -137,12 +148,48 @@ SENSORS = [
         ENTITY_CATEGORY_DIAGNOSTIC,
         "Volume index",
     ),
-    # unitless on purpose: the unit is unconfirmed, and total-increasing still
-    # gives long-term statistics with the head reset absorbed as a counter reset
+    (
+        "device_mode",
+        "set_device_mode_sensor",
+        UNIT_EMPTY,
+        0,
+        None,
+        None,
+        "mdi:toothbrush-electric",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Device mode",
+    ),
+    # moved together with device mode on the one change seen so far
+    (
+        "mode_number",
+        "set_mode_number_sensor",
+        UNIT_EMPTY,
+        0,
+        None,
+        None,
+        "mdi:numeric",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Mode number",
+    ),
+    # 0314 answer, raw: the app hands it on as an integer, and the brush said 3
+    # while charged on the dock, so it is not a running flag
+    (
+        "running_state",
+        "set_running_state_sensor",
+        UNIT_EMPTY,
+        0,
+        None,
+        None,
+        "mdi:state-machine",
+        ENTITY_CATEGORY_DIAGNOSTIC,
+        "Running state",
+    ),
+    # minutes of valid brushing on this head; total-increasing absorbs the head
+    # reset as a counter reset
     (
         "head_used_time",
         "set_head_used_time_sensor",
-        UNIT_EMPTY,
+        UNIT_MINUTE,
         0,
         None,
         STATE_CLASS_TOTAL_INCREASING,
@@ -168,8 +215,8 @@ SENSORS = [
         (
             f"gesture_zone_{i + 1}",
             # No generic setter: to_code wires these via the indexed
-            # set_gesture_zone_sensor branch. Sentinel None makes a future
-            # copy-paste onto the generic path fail loudly.
+            # set_zone_sensor branch. Sentinel None makes a future copy-paste
+            # onto the generic path fail loudly.
             None,
             UNIT_EMPTY,
             0,
@@ -180,6 +227,64 @@ SENSORS = [
             f"Zone {i + 1}",
         )
         for i in range(8)
+    ],
+    # X Ultra 20 seconds per zone: 1-8 the back teeth in the gesture zone order,
+    # 9-10 the upper front teeth, 11-12 the lower ones, outer surface first in
+    # each pair. Same names as the gesture zones, which this model does not build.
+    *[
+        (
+            f"zone_time_{i + 1}",
+            # wired through set_zone_sensor, like the gesture zones
+            None,
+            UNIT_SECOND,
+            0,
+            DEVICE_CLASS_DURATION,
+            STATE_CLASS_MEASUREMENT,
+            "mdi:gesture-tap",
+            None,
+            f"Zone {i + 1}",
+        )
+        for i in range(12)
+    ],
+    # X Ultra 20 pressure log: 2 s samples over the brush's limit of 400, and the
+    # peak in the brush's own force unit (1000 means 1000 or more)
+    (
+        "last_session_over_pressure_time",
+        "set_session_over_pressure_sensor",
+        UNIT_SECOND,
+        0,
+        DEVICE_CLASS_DURATION,
+        STATE_CLASS_MEASUREMENT,
+        "mdi:gauge-full",
+        None,
+        "Over-pressure time",
+    ),
+    (
+        "last_session_max_pressure",
+        "set_session_max_pressure_sensor",
+        UNIT_EMPTY,
+        0,
+        None,
+        STATE_CLASS_MEASUREMENT,
+        "mdi:gauge",
+        None,
+        "Max pressure",
+    ),
+    # session record bytes 19-22, each the share of one quadrant, summing to 100
+    *[
+        (
+            f"quadrant_{position}",
+            # wired through set_quadrant_sensor, like the zones
+            None,
+            UNIT_PERCENT,
+            0,
+            None,
+            STATE_CLASS_MEASUREMENT,
+            "mdi:tooth-outline",
+            None,
+            f"Quadrant {position.replace('_', ' ')}",
+        )
+        for position in QUADRANT_POSITIONS
     ],
 ]
 
@@ -201,7 +306,9 @@ _DEFAULT_NAMES = [(key, name) for key, *_row, name in SENSORS]
 
 
 def _inject_defaults(config):
-    return inject_entity_defaults(config, _DEFAULT_NAMES, hidden=HIDDEN_SENSOR_KEYS)
+    return inject_entity_defaults(
+        config, _DEFAULT_NAMES, hidden=HIDDEN_SENSOR_KEYS, platform="sensor"
+    )
 
 
 CONFIG_SCHEMA = cv.All(
@@ -230,16 +337,16 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_OCLEAN_ID])
-    expose_dev = hub_expose_dev(config[CONF_OCLEAN_ID])
     for key, setter, *_row in SENSORS:
         if key not in config:
             continue
-        if key in DEV_SENSOR_KEYS and not expose_dev:
-            continue
         sens = await sensor.new_sensor(config[key])
-        if key.startswith("gesture_zone_"):
+        if key.startswith(("gesture_zone_", "zone_time_")):
             index = int(key.rsplit("_", 1)[1]) - 1
-            cg.add(hub.set_gesture_zone_sensor(index, sens))
+            cg.add(hub.set_zone_sensor(index, sens))
+        elif key.startswith("quadrant_"):
+            index = QUADRANT_POSITIONS.index(key.removeprefix("quadrant_"))
+            cg.add(hub.set_quadrant_sensor(index, sens))
         else:
             # Generic setter path requires a setter string. A None sentinel
             # means the row belongs on a dedicated branch above; fail loudly

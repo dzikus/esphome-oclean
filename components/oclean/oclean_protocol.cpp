@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace esphome::oclean {
 
@@ -10,6 +11,86 @@ const char *const WRITE_CHAR_UUID = "9d84b9a3-000c-49d8-9183-855b673fbb85";
 const char *const READ_NOTIFY_CHAR_UUID = "5f78df94-798c-46f5-990a-855b673fbb86";
 const char *const SEND_BRUSH_CMD_UUID = "5f78df94-798c-46f5-990a-855b673fbb89";
 const char *const RECEIVE_BRUSH_UUID = "5f78df94-798c-46f5-990a-855b673fbb90";
+
+std::string dis_printable_text(const uint8_t *data, size_t len) {
+  std::string out;
+  if (data == nullptr)
+    return out;
+  for (size_t i = 0; i < len; i++) {
+    if (data[i] >= 0x20 && data[i] <= 0x7E)
+      out += static_cast<char>(data[i]);
+  }
+  return out;
+}
+
+bool decode_hw_revision_code(const uint8_t *data, size_t len, HwRevisionCode *out) {
+  if (data == nullptr || out == nullptr || len < 6)
+    return false;
+  if (data[0] != 'H' || data[1] != 'H')
+    return false;
+  out->protocol = u16be(data + 2);
+  out->ota_type = u16be(data + 4);
+  return true;
+}
+
+std::string hw_revision_text(const uint8_t *data, size_t len) {
+  HwRevisionCode code{};
+  if (!decode_hw_revision_code(data, len, &code))
+    return dis_printable_text(data, len);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "HH %04X/%04X", static_cast<unsigned>(code.protocol),
+           static_cast<unsigned>(code.ota_type));
+  return buf;
+}
+
+std::string gatt_props_text(uint8_t props) {
+  static constexpr uint8_t PROP_READ = 0x02;
+  static constexpr uint8_t PROP_WRITE_NO_RSP = 0x04;
+  static constexpr uint8_t PROP_WRITE = 0x08;
+  static constexpr uint8_t PROP_NOTIFY = 0x10;
+  static constexpr uint8_t PROP_INDICATE = 0x20;
+  std::string out;
+  if ((props & PROP_READ) != 0)
+    out += 'R';
+  if ((props & PROP_WRITE) != 0)
+    out += 'W';
+  if ((props & PROP_WRITE_NO_RSP) != 0)
+    out += 'w';
+  if ((props & PROP_NOTIFY) != 0)
+    out += 'N';
+  if ((props & PROP_INDICATE) != 0)
+    out += 'I';
+  if (out.empty())
+    out = "-";
+  return out;
+}
+
+std::string ble_uuid_text(const uint8_t *le, size_t len) {
+  if (le == nullptr)
+    return "?";
+  char buf[12];
+  if (len == 2) {
+    snprintf(buf, sizeof(buf), "0x%04X", static_cast<unsigned>(le[0] | (le[1] << 8)));
+    return buf;
+  }
+  if (len == 4) {
+    uint32_t const v = uint32_t(le[0]) | (uint32_t(le[1]) << 8) | (uint32_t(le[2]) << 16) | (uint32_t(le[3]) << 24);
+    snprintf(buf, sizeof(buf), "0x%08X", static_cast<unsigned>(v));
+    return buf;
+  }
+  if (len != 16)
+    return "?";
+  static const char HEX_DIGITS[] = "0123456789abcdef";
+  std::string out;
+  for (size_t k = 0; k < 16; k++) {
+    size_t const i = 15 - k;
+    out += HEX_DIGITS[le[i] >> 4];
+    out += HEX_DIGITS[le[i] & 0x0F];
+    if (i == 12 || i == 10 || i == 8 || i == 6)
+      out += '-';
+  }
+  return out;
+}
 
 bool parse_battery_level(const uint8_t *data, size_t len, uint8_t *out) {
   if (data == nullptr || out == nullptr)
@@ -35,6 +116,7 @@ bool parse_status_response(const uint8_t *data, size_t len, StatusResponse *out)
     return false;
   out->battery = battery;
   out->charging_raw = data[2];
+  out->voltage_mv = u16be(data + 3);
   return true;
 }
 
@@ -130,6 +212,26 @@ void parse_device_settings(const uint8_t *buf, DeviceSettings *out) {
   out->device_language = buf[31];
 }
 
+void parse_device_settings_v20_start(const uint8_t *buf, DeviceSettingsV20Start *out) {
+  if (buf == nullptr || out == nullptr)
+    return;
+  out->battery = buf[0];
+  out->network_status = buf[1];
+  out->raise_wake = buf[2] != 0;
+  out->auto_update = buf[3] != 0;
+  out->auto_mode = buf[4] != 0;
+  out->mode_num = buf[5];
+  out->bus_brushing = buf[6];
+  out->voice = buf[7] != 0;
+  out->voice_fast_brushing = buf[8] != 0;
+  out->voice_pressure = buf[9] != 0;
+  out->festival_reminder = buf[10] != 0;
+  out->mode = buf[11];
+  out->brush_mode_on = buf[12] != 0xEC;
+  out->scheme_type = buf[13];
+  out->head_used_time = u16be(buf + 14);
+}
+
 bool decode_brush_areas_push(const uint8_t *data, size_t len, BrushAreasPush *out) {
   if (data == nullptr || out == nullptr)
     return false;
@@ -158,22 +260,55 @@ bool decode_session_record(const uint8_t *rec, SessionRecord *out) {
   out->scheme = rec[6];
   out->duration_s = u16be(rec + 7);
   out->valid_duration_s = u16be(rec + 9);
-  for (size_t i = 0; i < 5; i++)
-    out->areas[i] = rec[11 + i];
+  out->tz_index = rec[SESSION_TZ_OFFSET];
+  for (size_t i = 0; i < SESSION_QUADRANTS_COUNT; i++)
+    out->quadrants[i] = rec[SESSION_QUADRANTS_OFFSET + i];
+  std::ranges::fill(out->zones, SESSION_ZONE_ABSENT);
   for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
     out->zones[i] = rec[SESSION_ZONES_OFFSET + i];
   uint8_t const s = rec[SESSION_SCORE_OFFSET];
-  out->has_score = (s != SESSION_NO_SCORE);
+  out->has_score = s != SESSION_NO_SCORE && s != SESSION_SCORE_VOID;
   out->score = s;
+  out->over_pressure_s = SESSION_PRESSURE_ABSENT;
+  out->pressure_max = SESSION_PRESSURE_ABSENT;
   return true;
+}
+
+size_t session_zone_count(const SessionRecord &r) {
+  for (size_t i = SESSION_ZONES_COUNT; i < SESSION_ZONES_MAX; i++) {
+    if (r.zones[i] != SESSION_ZONE_ABSENT)
+      return SESSION_ZONES_MAX;
+  }
+  return SESSION_ZONES_COUNT;
+}
+
+SessionRecord session_record_from_v2(const SessionRecordV2 &old) {
+  SessionRecord r{};
+  r.year = old.year;
+  r.month = old.month;
+  r.day = old.day;
+  r.hour = old.hour;
+  r.minute = old.minute;
+  r.second = old.second;
+  r.scheme = old.scheme;
+  r.duration_s = old.duration_s;
+  r.valid_duration_s = old.valid_duration_s;
+  r.tz_index = old.tz_index;
+  std::ranges::copy(old.quadrants, r.quadrants);
+  std::ranges::fill(r.zones, SESSION_ZONE_ABSENT);
+  std::ranges::copy(old.zones, r.zones);
+  r.score = old.score;
+  r.has_score = old.has_score;
+  r.over_pressure_s = SESSION_PRESSURE_ABSENT;
+  r.pressure_max = SESSION_PRESSURE_ABSENT;
+  return r;
 }
 
 bool decode_inline_0307(const uint8_t *data, size_t len, SessionRecord *out) {
   if (data == nullptr || out == nullptr)
     return false;
-  // 0307 marker, *B# magic, record count 0, then the head of the newest
-  // record. The fixed head (date-time, scheme, duration, valid duration) is
-  // 11 bytes; up to two leading area bytes follow within one notify.
+  // 0307 marker, *B# magic, record count 0, then the head of ring slot 0. The
+  // fixed head (date-time, scheme, duration, valid duration) is 11 bytes.
   static const uint8_t HEAD[] = {0x03, 0x07, 0x2A, 0x42, 0x23, 0x00, 0x00};
   static const size_t HEAD_LEN = sizeof(HEAD);
   if (len < HEAD_LEN + 11)
@@ -195,13 +330,14 @@ bool decode_inline_0307(const uint8_t *data, size_t len, SessionRecord *out) {
   out->scheme = r[6];
   out->duration_s = u16be(r + 7);
   out->valid_duration_s = u16be(r + 9);
-  const size_t avail = len - HEAD_LEN;
-  for (size_t i = 0; i < 5; i++)
-    out->areas[i] = (11 + i < avail) ? r[11 + i] : 0;
-  for (unsigned char &zone : out->zones)
-    zone = 0;
+  out->tz_index = 0;
+  std::ranges::fill(out->quadrants, SESSION_ZONE_ABSENT);
+  std::ranges::fill(out->zones, SESSION_ZONE_ABSENT);
+  std::fill_n(out->zones, SESSION_ZONES_COUNT, uint8_t{0});
   out->score = 0;
   out->has_score = false;
+  out->over_pressure_s = SESSION_PRESSURE_ABSENT;
+  out->pressure_max = SESSION_PRESSURE_ABSENT;
   return true;
 }
 
@@ -251,10 +387,14 @@ uint32_t session_record_epoch(const SessionRecord &r) {
   return static_cast<uint32_t>(secs);
 }
 
-bool session_epoch_plausible(uint32_t epoch, int64_t now_local_epoch, uint32_t future_margin_s) {
-  if (now_local_epoch <= 0)
-    return true;  // no trustworthy clock: cannot judge
-  return static_cast<int64_t>(epoch) <= now_local_epoch + static_cast<int64_t>(future_margin_s);
+bool session_epoch_plausible(uint32_t epoch, const SessionClocks &clocks) {
+  auto const e = static_cast<int64_t>(epoch);
+  auto const node_margin = static_cast<int64_t>(SESSION_FUTURE_MARGIN_S);
+  if (clocks.node_local > 0 && e > clocks.node_local + node_margin)
+    return false;
+  bool const brush_usable =
+      clocks.brush > 0 && (clocks.node_local <= 0 || clocks.brush >= clocks.node_local - node_margin);
+  return !brush_usable || e <= clocks.brush + static_cast<int64_t>(SESSION_BRUSH_CLOCK_MARGIN_S);
 }
 
 bool should_resync_clock(int64_t brush_epoch, int64_t local_epoch, uint32_t threshold_s) {
@@ -264,8 +404,31 @@ bool should_resync_clock(int64_t brush_epoch, int64_t local_epoch, uint32_t thre
   return drift > static_cast<int64_t>(threshold_s);
 }
 
+int64_t clock_set_shift(int64_t brush_read, uint32_t ms_since_read, int64_t written) {
+  return brush_read + static_cast<int64_t>(ms_since_read / 1000) - written;
+}
+
+bool clock_shift_applies(int64_t shift_s) {
+  return shift_s > 0 && shift_s <= static_cast<int64_t>(SESSION_FUTURE_MARGIN_S);
+}
+
+bool clock_set_confirmed(int64_t shift_s, int64_t drift_s) {
+  int64_t const magnitude = drift_s < 0 ? -drift_s : drift_s;
+  return shift_s > 0 && magnitude * 2 < shift_s;
+}
+
+uint32_t shift_epoch_back(uint32_t epoch, int64_t shift_s) {
+  if (!clock_shift_applies(shift_s) || static_cast<int64_t>(epoch) <= shift_s)
+    return epoch;
+  return epoch - static_cast<uint32_t>(shift_s);
+}
+
 bool poll_is_due(uint32_t since_ms, bool docked, uint32_t charging_interval_ms, uint32_t battery_interval_ms) {
-  return since_ms >= (docked ? charging_interval_ms : battery_interval_ms);
+  // ticks come every charging interval and the cadence restarts at OPEN, seconds
+  // after its tick: without half a tick of slack each poll would slip one tick
+  uint32_t const interval = docked ? charging_interval_ms : battery_interval_ms;
+  uint32_t const slack = charging_interval_ms / 2;
+  return since_ms >= (interval > slack ? interval - slack : 0);
 }
 
 bool should_hold_link(bool hold_option, bool ble_enabled, bool docked, bool round_status_seen) {
@@ -297,12 +460,37 @@ float session_coverage_percent(uint16_t valid_duration_s, uint16_t duration_s) {
   return pct > 100.0f ? 100.0f : pct;
 }
 
-bool accept_inline_record(uint32_t inline_epoch, uint32_t newest_epoch, int64_t now_local_epoch) {
-  return inline_epoch > newest_epoch && session_epoch_plausible(inline_epoch, now_local_epoch, SESSION_FUTURE_MARGIN_S);
+bool same_session(const SessionRecord &a, const SessionRecord &b) {
+  return a.year == b.year && a.month == b.month && a.day == b.day && a.hour == b.hour && a.minute == b.minute &&
+         a.second == b.second && a.scheme == b.scheme && a.duration_s == b.duration_s;
+}
+
+bool accept_inline_record(const SessionRecord &inl, uint32_t newest_epoch, const SessionRecord *shown,
+                          const SessionClocks &clocks) {
+  uint32_t const epoch = session_record_epoch(inl);
+  if (epoch <= newest_epoch || (shown != nullptr && same_session(inl, *shown)))
+    return false;
+  return session_epoch_plausible(epoch, clocks);
+}
+
+bool should_confirm_sessions(bool profile_confirms, const SessionIngestPlan &plan) {
+  return profile_confirms && plan.implausible.empty();
+}
+
+bool should_clear_inline(bool profile_clears, bool round_status_seen, bool docked, const SessionIngestPlan &plan,
+                         uint32_t inline_epoch, uint32_t cleared_epoch) {
+  return profile_clears && round_status_seen && docked && plan.implausible.empty() && inline_epoch != 0 &&
+         inline_epoch != cleared_epoch;
+}
+
+uint32_t restored_newest_epoch(uint32_t record_epoch, uint32_t watermark) {
+  if (watermark == 0)
+    return record_epoch;
+  return record_epoch < watermark ? record_epoch : watermark;
 }
 
 SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records, uint32_t watermark,
-                                      uint32_t newest_epoch, int64_t now_local_epoch) {
+                                      uint32_t newest_epoch, const SessionClocks &clocks) {
   SessionIngestPlan plan;
   plan.new_watermark = watermark;
   plan.new_newest_epoch = newest_epoch;
@@ -315,7 +503,7 @@ SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
     uint32_t const ts = session_record_epoch(rec);
     if (ts <= watermark)
       continue;  // already emitted, possibly before a reboot
-    if (!session_epoch_plausible(ts, now_local_epoch, SESSION_FUTURE_MARGIN_S)) {
+    if (!session_epoch_plausible(ts, clocks)) {
       // A date far in the future would push the watermark past every real
       // session and mute them for good, so it never advances it.
       plan.implausible.push_back(rec);
@@ -341,7 +529,7 @@ SessionIngestPlan plan_session_ingest(const std::vector<SessionRecord> &records,
   }
   if (plan.have_newest) {
     uint32_t const epoch = session_record_epoch(plan.newest);
-    plan.newest_plausible = session_epoch_plausible(epoch, now_local_epoch, SESSION_FUTURE_MARGIN_S);
+    plan.newest_plausible = session_epoch_plausible(epoch, clocks);
     // strictly newer only. A peer re-serving one ring every poll would grind the
     // flash, and an older epoch would lower the gate that keeps a stale record
     // from overwriting the stored one.
@@ -434,9 +622,204 @@ int SessionAssembler::newest_index() const {
   return best;
 }
 
+static bool is_session_header(const uint8_t *data, size_t len) {
+  return len >= SESSION_V20_HEADER_LEN && data[0] == 0x03 && data[1] == 0x07 && data[2] == SESSION_MAGIC[0] &&
+         data[3] == SESSION_MAGIC[1] && data[4] == SESSION_MAGIC[2];
+}
+
+static void decode_v20_head(const uint8_t *rec, SessionRecord *out) {
+  *out = SessionRecord{};
+  out->year = uint16_t(2000) + rec[2];
+  out->month = rec[3];
+  out->day = rec[4];
+  out->hour = rec[5];
+  out->minute = rec[6];
+  out->second = rec[7];
+  out->scheme = rec[8];
+  out->duration_s = u16be(rec + 9);
+  std::ranges::fill(out->quadrants, SESSION_ZONE_ABSENT);
+  std::ranges::fill(out->zones, SESSION_ZONE_ABSENT);
+  out->score = SESSION_NO_SCORE;
+  out->has_score = false;
+  out->over_pressure_s = SESSION_PRESSURE_ABSENT;
+  out->pressure_max = SESSION_PRESSURE_ABSENT;
+}
+
+bool decode_session_record_v20(const uint8_t *rec, size_t len, SessionRecord *out) {
+  if (rec == nullptr || out == nullptr || len < SESSION_V20_RECORD_MIN)
+    return false;
+  decode_v20_head(rec, out);
+  out->valid_duration_s = u16be(rec + 11);
+  out->tz_index = rec[SESSION_V20_TZ_OFFSET];
+  // only in a full record; the publish path hides 0xFF per zone
+  for (size_t i = 0; i < SESSION_ZONES_COUNT; i++)
+    out->zones[i] = rec[SESSION_V20_ZONES_OFFSET + i];
+  for (size_t i = 0; i < SESSION_V20_FRONT_ZONES_COUNT; i++)
+    out->zones[SESSION_ZONES_COUNT + i] = rec[SESSION_V20_FRONT_ZONES_OFFSET + i];
+  out->score = rec[SESSION_V20_SCORE_OFFSET];
+  out->has_score = out->score != SESSION_NO_SCORE;
+  // the log runs to the record's own length; a shorter buffer cuts it there
+  size_t const declared = u16be(rec);
+  size_t const end = declared < len ? declared : len;
+  uint16_t over_s = 0;
+  uint16_t peak = 0;
+  for (size_t i = SESSION_V20_PRESSURE_OFFSET; i < end; i++) {
+    uint16_t const force = rec[i] == SESSION_V20_PRESSURE_SATURATED ? SESSION_V20_PRESSURE_SATURATED_VALUE
+                                                                    : static_cast<uint16_t>(rec[i] * 4);
+    if (force > SESSION_V20_OVER_PRESSURE)
+      over_s = static_cast<uint16_t>(over_s + SESSION_V20_PRESSURE_SAMPLE_S);
+    if (force > peak)
+      peak = force;
+  }
+  out->over_pressure_s = over_s;
+  out->pressure_max = peak;
+  return true;
+}
+
+uint16_t v20_brushed_seconds(size_t record_len, uint16_t program_s) {
+  if (record_len < SESSION_V20_RECORD_MIN || record_len > SESSION_V20_RECORD_MAX)
+    return 0;
+  if (record_len < SESSION_V20_RECORD_MAX)
+    return static_cast<uint16_t>(2 * (record_len - SESSION_V20_LENGTH_BASE));
+  // a cut record brushed 262 s or more, so a program that short ran to its end
+  auto const cut_s = static_cast<uint16_t>(2 * (SESSION_V20_RECORD_MAX - SESSION_V20_LENGTH_BASE));
+  return program_s <= cut_s ? program_s : 0;
+}
+
+bool decode_inline_0307_v20(const uint8_t *data, size_t len, SessionRecord *out) {
+  if (data == nullptr || out == nullptr || len < SESSION_V20_HEADER_LEN + SESSION_V20_INLINE_LEN)
+    return false;
+  if (!is_session_header(data, len) || u16be(data + 5) != 0)
+    return false;
+  const uint8_t *rec = data + SESSION_V20_HEADER_LEN;
+  uint16_t const rec_len = u16be(rec);
+  if (rec_len < SESSION_V20_RECORD_MIN || rec_len > SESSION_V20_RECORD_MAX)
+    return false;
+  decode_v20_head(rec, out);
+  out->valid_duration_s = v20_brushed_seconds(rec_len, out->duration_s);
+  return true;
+}
+
+void VarSessionAssembler::reset() {
+  buf_.clear();
+  spans_.clear();
+  need_ = 0;
+  count_ = 0;
+  started_ = false;
+  failed_ = false;
+}
+
+bool VarSessionAssembler::feed(const uint8_t *data, size_t len) {
+  if (failed_)
+    return false;
+  if (data == nullptr) {
+    failed_ = true;
+    return false;
+  }
+  if (complete() || this->empty())
+    return complete();
+  size_t skip = 0;
+  if (!started_) {
+    if (!is_session_header(data, len)) {
+      failed_ = true;
+      return false;
+    }
+    count_ = u16be(data + 5);
+    need_ = u16be(data + 7);
+    started_ = true;
+    if (count_ == 0)
+      return false;
+    if (count_ > SESSION_V20_MAX_RECORDS || need_ < SESSION_V20_RECORD_MIN || need_ > SESSION_V20_MAX_BYTES) {
+      failed_ = true;
+      return false;
+    }
+    buf_.reserve(need_);
+    skip = SESSION_V20_HEADER_LEN;
+  }
+  size_t const take = std::min(len - skip, need_ - buf_.size());
+  buf_.insert(buf_.end(), data + skip, data + skip + take);
+  if (complete())
+    this->split_();
+  return complete();
+}
+
+void VarSessionAssembler::split_() {
+  spans_.clear();
+  size_t offset = 0;
+  while (offset + 2 <= buf_.size() && spans_.size() < count_) {
+    size_t const rec_len = u16be(buf_.data() + offset);
+    if (rec_len < SESSION_V20_RECORD_MIN || rec_len > SESSION_V20_RECORD_MAX || offset + rec_len > buf_.size())
+      break;
+    spans_.push_back(Span{.offset = offset, .len = rec_len});
+    offset += rec_len;
+  }
+}
+
+bool VarSessionAssembler::record(size_t i, SessionRecord *out) const {
+  if (i >= spans_.size())
+    return false;
+  return decode_session_record_v20(buf_.data() + spans_[i].offset, spans_[i].len, out);
+}
+
+const uint8_t *VarSessionAssembler::raw_record(size_t i, size_t *len) const {
+  if (i >= spans_.size() || len == nullptr)
+    return nullptr;
+  *len = spans_[i].len;
+  return buf_.data() + spans_[i].offset;
+}
+
+int VarSessionAssembler::newest_index() const {
+  int best = -1;
+  SessionRecord best_rec{};
+  for (size_t i = 0; i < spans_.size(); i++) {
+    SessionRecord cur{};
+    if (!this->record(i, &cur))
+      continue;
+    if (best < 0 || session_record_newer(cur, best_rec)) {
+      best_rec = cur;
+      best = static_cast<int>(i);
+    }
+  }
+  return best;
+}
+
 std::vector<uint8_t> build_toggle_command(uint8_t b0, uint8_t b1, uint8_t on_value, uint8_t off_value, bool state) {
   return {b0, b1, state ? on_value : off_value};
 }
+
+std::vector<uint8_t> build_voice_prompts_command(const std::array<bool, VOICE_PROMPT_COUNT> &flags) {
+  std::vector<uint8_t> cmd = {0x02, 0x31};
+  for (bool const on : flags)
+    cmd.push_back(static_cast<uint8_t>(on));
+  cmd.push_back(0x00);
+  return cmd;
+}
+
+bool parse_status_reply(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1, uint8_t *status) {
+  if (data == nullptr || status == nullptr || len < 3 || data[0] != b0 || data[1] != b1)
+    return false;
+  *status = data[2];
+  return true;
+}
+
+bool is_write_refusal(const uint8_t *data, size_t len) {
+  return data != nullptr && len == 4 && data[0] == 0x02 && data[2] == 0x45 && data[3] == 0x52;
+}
+
+bool is_bare_ack(const uint8_t *data, size_t len, uint8_t b0, uint8_t b1) {
+  return data != nullptr && len == 4 && data[0] == b0 && data[1] == b1 && data[2] == 0x4F && data[3] == 0x4B;
+}
+
+// Seconds per entry, same order as the string table below.
+static const int32_t TZ_OFFSETS[33] = {
+    -43200, -39600, -36000, -32400, -28800,  // -12:00 .. -08:00
+    -25200, -21600, -18000, -14400, -12600,  // -07:00 .. -03:30
+    -10800, -7200,  -3600,  0,               // -03:00 .. +00:00
+    3600,   7200,   10800,  12600,           // +01:00 .. +03:30
+    14400,  16200,  18000,  19800,  20700,   // +04:00 .. +05:45
+    21600,  23400,  25200,  28800,  32400,   // +06:00 .. +09:00
+    34200,  36000,  39600,  43200,  46800,   // +09:30 .. +13:00
+};
 
 const char *timezone_index_to_string(uint8_t wire_index) {
   static const char *const TABLE[33] = {
@@ -452,25 +835,45 @@ const char *timezone_index_to_string(uint8_t wire_index) {
 }
 
 uint8_t tz_index_for_offset_seconds(int32_t offset_seconds) {
-  // Seconds per entry, same order as the string table above.
-  static const int32_t OFFSETS[33] = {
-      -43200, -39600, -36000, -32400, -28800,  // -12:00 .. -08:00
-      -25200, -21600, -18000, -14400, -12600,  // -07:00 .. -03:30
-      -10800, -7200,  -3600,  0,               // -03:00 .. +00:00
-      3600,   7200,   10800,  12600,           // +01:00 .. +03:30
-      14400,  16200,  18000,  19800,  20700,   // +04:00 .. +05:45
-      21600,  23400,  25200,  28800,  32400,   // +06:00 .. +09:00
-      34200,  36000,  39600,  43200,  46800,   // +09:30 .. +13:00
-  };
   for (uint8_t i = 0; i < 33; i++) {
-    if (OFFSETS[i] == offset_seconds)
+    if (TZ_OFFSETS[i] == offset_seconds)
       return static_cast<uint8_t>(i + 1);
   }
   return 0;
 }
 
+bool tz_index_offset_seconds(uint8_t wire_index, int32_t *offset_seconds) {
+  if (offset_seconds == nullptr || wire_index < 1 || wire_index > 33)
+    return false;
+  *offset_seconds = TZ_OFFSETS[wire_index - 1];
+  return true;
+}
+
+int64_t session_utc_offset_seconds(const SessionRecord &r, int64_t node_offset_s) {
+  int32_t offset = 0;
+  if (tz_index_offset_seconds(r.tz_index, &offset))
+    return offset;
+  return node_offset_s;
+}
+
 std::vector<uint8_t> build_language_command(uint8_t lang_id) {
   return {0x02, 0x16, lang_id};
+}
+
+uint8_t max_language_id(const char *model, size_t len) {
+  // firmware 1.0.0.32 and 1.0.0.41; longer prefix first
+  static constexpr struct {
+    std::string_view prefix;
+    uint8_t last;
+  } CAPS[] = {{.prefix = "OCLEANY3PD", .last = 13}, {.prefix = "OCLEANY3P", .last = 14}};
+  if (model == nullptr)
+    return 0;
+  std::string_view const reported(model, len);
+  for (const auto &cap : CAPS) {
+    if (reported.starts_with(cap.prefix))
+      return cap.last;
+  }
+  return 0;
 }
 
 uint8_t encode_scheme_gear(uint8_t gear) {
@@ -542,12 +945,327 @@ std::vector<std::vector<uint8_t>> build_scheme_packets(uint8_t pnum, const std::
   return packets;
 }
 
+std::vector<uint8_t> build_set_cloud_host_command(std::string_view url) {
+  // one-byte length field; clamp to the firmware limit in case called unchecked
+  url = url.substr(0, CLOUD_HOST_MAX_LEN);
+  auto const n = static_cast<uint8_t>(url.size());
+  std::vector<uint8_t> cmd = {0x02, 0x33, 0x2A, n, n};
+  cmd.insert(cmd.end(), url.begin(), url.end());
+  return cmd;
+}
+
+static void split_host_port(std::string_view hp, std::string_view *host, std::string_view *port) {
+  size_t const colon = hp.rfind(':');
+  *host = hp.substr(0, colon);
+  *port = colon == std::string_view::npos ? std::string_view("80") : hp.substr(colon + 1);
+}
+
+bool cloud_host_matches(std::string_view host_header, std::string_view url) {
+  static constexpr std::string_view SCHEME = "http://";
+  if (host_header.empty() || !url.starts_with(SCHEME))
+    return false;
+  url.remove_prefix(SCHEME.size());
+  std::string_view seen_host;
+  std::string_view seen_port;
+  std::string_view want_host;
+  std::string_view want_port;
+  split_host_port(host_header, &seen_host, &seen_port);
+  split_host_port(url, &want_host, &want_port);
+  return seen_host == want_host && seen_port == want_port;
+}
+
+std::vector<uint8_t> build_blufi_frame(uint8_t frame_type, uint8_t subtype, const uint8_t *data, size_t data_len,
+                                       uint8_t seq) {
+  uint8_t const type_byte = static_cast<uint8_t>(((subtype & 0x3F) << 2) | (frame_type & 0x03));
+  // one-byte length field; the provisioning payloads (ssid, password) fit
+  size_t const n = data_len > 255 ? 255 : data_len;
+  std::vector<uint8_t> f = {type_byte, 0x00, seq, static_cast<uint8_t>(n)};
+  f.insert(f.end(), data, data + n);
+  return f;
+}
+
+bool parse_blufi_wifi_status(const uint8_t *data, size_t len, uint8_t *opmode, uint8_t *sta_state) {
+  if (data == nullptr || opmode == nullptr || sta_state == nullptr || len < 6)
+    return false;
+  uint8_t const frame_type = data[0] & 0x03;
+  uint8_t const subtype = static_cast<uint8_t>((data[0] >> 2) & 0x3F);
+  if (frame_type != BLUFI_TYPE_DATA || subtype != BLUFI_DATA_WIFI_STATUS)
+    return false;
+  // data field starts after the 4-byte header: [opmode][sta_state] ...
+  *opmode = data[4];
+  *sta_state = data[5];
+  return true;
+}
+
+uint32_t sync_fingerprint(uint64_t mac, SyncSlot slot, const uint8_t *payload, size_t len) {
+  static constexpr uint32_t FNV_OFFSET = 2166136261U;
+  static constexpr uint32_t FNV_PRIME = 16777619U;
+  uint32_t h = FNV_OFFSET;
+  auto mix = [&h](uint8_t b) {
+    h ^= b;
+    h *= FNV_PRIME;
+  };
+  for (unsigned i = 0; i < 6; i++)
+    mix(static_cast<uint8_t>(mac >> (8 * i)));
+  mix(static_cast<uint8_t>(slot));
+  for (size_t i = 0; i < len; i++)
+    mix(payload[i]);
+  return h != 0 ? h : 1;
+}
+
+bool sync_attempt_due(uint32_t fp, uint32_t confirmed_fp, uint32_t attempted_fp, uint32_t ms_since_attempt,
+                      bool retry) {
+  if (fp == confirmed_fp)
+    return false;
+  if (fp != attempted_fp)
+    return true;
+  return retry && ms_since_attempt >= SYNC_RETRY_MS;
+}
+
 std::vector<uint8_t> build_set_clock_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute,
                                              uint8_t second, uint8_t weekday, uint8_t tz_index) {
   // year is sent as the offset from 2000. Clamp below 2000 to 0 so the byte
   // never underflows; the caller guarantees a valid synced clock before calling.
   uint8_t const year_byte = (year >= 2000) ? static_cast<uint8_t>(year - 2000) : 0;
   return {0x02, 0x01, year_byte, month, day, hour, minute, second, weekday, tz_index};
+}
+
+int64_t set_clock_command_epoch(const uint8_t *cmd, size_t len) {
+  if (cmd == nullptr || len != SET_CLOCK_CMD_LEN || cmd[0] != 0x02 || cmd[1] != 0x01)
+    return 0;
+  return civil_to_epoch(static_cast<uint16_t>(2000 + cmd[2]), cmd[3], cmd[4], cmd[5], cmd[6], cmd[7]);
+}
+
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  return -1;
+}
+
+bool cloud_body_field(const char *body, size_t len, const char *key, std::string *out) {
+  if (body == nullptr || key == nullptr || *key == '\0' || out == nullptr)
+    return false;
+  static constexpr std::string_view BLANK = " \t";
+  std::string_view const hay(body, len);
+  std::string_view const name(key);
+  // the name can also turn up as a value, so every match is tried
+  for (size_t at = hay.find(name); at != std::string_view::npos; at = hay.find(name, at + 1)) {
+    size_t const end = at + name.size();
+    if (at == 0 || hay[at - 1] != '"' || end >= hay.size() || hay[end] != '"')
+      continue;
+    size_t pos = hay.find_first_not_of(BLANK, end + 1);
+    if (pos == std::string_view::npos || hay[pos] != ':')
+      continue;
+    pos = hay.find_first_not_of(BLANK, pos + 1);
+    if (pos == std::string_view::npos || hay[pos] != '"')
+      return false;
+    // values here carry no escapes, so the first quote ends the string
+    size_t const close = hay.find('"', pos + 1);
+    if (close == std::string_view::npos)
+      return false;
+    out->assign(hay.substr(pos + 1, close - pos - 1));
+    return true;
+  }
+  return false;
+}
+
+bool parse_hex_bytes(std::string_view hex, std::vector<uint8_t> *out) {
+  if (out == nullptr || (hex.size() % 2) != 0)
+    return false;
+  out->clear();
+  out->reserve(hex.size() / 2);
+  for (size_t i = 0; i < hex.size(); i += 2) {
+    int const hi = hex_nibble(hex[i]);
+    int const lo = hex_nibble(hex[i + 1]);
+    if (hi < 0 || lo < 0)
+      return false;
+    out->push_back(static_cast<uint8_t>((hi << 4) | lo));
+  }
+  return true;
+}
+
+bool parse_mac_u64(std::string_view mac, uint64_t *out) {
+  if (out == nullptr)
+    return false;
+  uint64_t acc = 0;
+  size_t octets = 0;
+  for (size_t i = 0; i < mac.size();) {
+    int const hi = hex_nibble(mac[i]);
+    if (hi < 0)
+      return false;
+    int const lo = (i + 1 < mac.size()) ? hex_nibble(mac[i + 1]) : -1;
+    // one or two hex digits per octet
+    uint8_t const byte = (lo >= 0) ? static_cast<uint8_t>((hi << 4) | lo) : static_cast<uint8_t>(hi);
+    i += (lo >= 0) ? 2 : 1;
+    acc = (acc << 8) | byte;
+    if (++octets > 6)
+      return false;
+    if (i < mac.size()) {
+      // separator; a trailing one (the firmware's "%02x:" form) is tolerated
+      if (mac[i] != ':')
+        return false;
+      i++;
+    }
+  }
+  if (octets != 6)
+    return false;
+  *out = acc;
+  return true;
+}
+
+BrushWeather brush_weather_code(std::string_view condition) {
+  // the brush has no fog, overcast or night icon, so those take the nearest one
+  static constexpr struct {
+    std::string_view name;
+    BrushWeather code;
+  } MAP[] = {
+      {.name = "sunny", .code = BrushWeather::SUNNY},
+      {.name = "clear-night", .code = BrushWeather::SUNNY},
+      {.name = "partlycloudy", .code = BrushWeather::CLOUDY},
+      {.name = "cloudy", .code = BrushWeather::CLOUDY},
+      {.name = "fog", .code = BrushWeather::CLOUDY},
+      {.name = "rainy", .code = BrushWeather::RAIN},
+      {.name = "pouring", .code = BrushWeather::RAIN},
+      {.name = "lightning", .code = BrushWeather::STORM},
+      {.name = "lightning-rainy", .code = BrushWeather::STORM},
+      {.name = "snowy", .code = BrushWeather::SNOW},
+      {.name = "snowy-rainy", .code = BrushWeather::SNOW},
+      {.name = "hail", .code = BrushWeather::SNOW},
+      {.name = "windy", .code = BrushWeather::WINDY},
+      {.name = "windy-variant", .code = BrushWeather::WINDY},
+      {.name = "exceptional", .code = BrushWeather::DUST},
+  };
+  for (const auto &entry : MAP) {
+    if (entry.name == condition)
+      return entry.code;
+  }
+  return BrushWeather::NONE;
+}
+
+static bool iso_digits(std::string_view text, size_t pos, size_t n, int *out) {
+  if (pos + n > text.size())
+    return false;
+  int v = 0;
+  for (size_t i = pos; i < pos + n; i++) {
+    if (text[i] < '0' || text[i] > '9')
+      return false;
+    v = (v * 10) + (text[i] - '0');
+  }
+  *out = v;
+  return true;
+}
+
+bool parse_iso8601_epoch(std::string_view text, int64_t *out) {
+  // "YYYY-MM-DDTHH:MM" is the shortest form taken
+  if (out == nullptr || text.size() < 16)
+    return false;
+  int year = 0;
+  int month = 0;
+  int day = 0;
+  int hour = 0;
+  int minute = 0;
+  int second = 0;
+  if (!iso_digits(text, 0, 4, &year) || text[4] != '-' || !iso_digits(text, 5, 2, &month) || text[7] != '-' ||
+      !iso_digits(text, 8, 2, &day) || (text[10] != 'T' && text[10] != ' ') || !iso_digits(text, 11, 2, &hour) ||
+      text[13] != ':' || !iso_digits(text, 14, 2, &minute))
+    return false;
+  size_t pos = 16;
+  if (pos < text.size() && text[pos] == ':') {
+    if (!iso_digits(text, pos + 1, 2, &second))
+      return false;
+    pos += 3;
+  }
+  if (pos < text.size() && text[pos] == '.') {
+    pos++;
+    while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
+      pos++;
+  }
+  int64_t offset = 0;
+  if (pos < text.size() && text[pos] != 'Z') {
+    char const sign = text[pos];
+    int off_h = 0;
+    int off_m = 0;
+    if ((sign != '+' && sign != '-') || !iso_digits(text, pos + 1, 2, &off_h))
+      return false;
+    size_t mpos = pos + 3;
+    if (mpos < text.size() && text[mpos] == ':')
+      mpos++;
+    if (mpos < text.size() && !iso_digits(text, mpos, 2, &off_m))
+      return false;
+    offset = (static_cast<int64_t>(off_h) * 3600) + (static_cast<int64_t>(off_m) * 60);
+    if (sign == '-')
+      offset = -offset;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 60)
+    return false;
+  *out = civil_to_epoch(static_cast<uint16_t>(year), static_cast<uint8_t>(month), static_cast<uint8_t>(day),
+                        static_cast<uint8_t>(hour), static_cast<uint8_t>(minute), static_cast<uint8_t>(second)) -
+         offset;
+  return true;
+}
+
+std::vector<uint8_t> build_birthday_command(uint8_t gender, uint8_t age, uint8_t month, uint8_t day) {
+  // the app's clamps: an unknown gender code becomes 1, the age stays in 3-18
+  uint8_t const g = gender > 2 ? 1 : gender;
+  return {0x02, 0x11, g, std::clamp<uint8_t>(age, 3, 18), month, day};
+}
+
+// two digits and a sign is all the page lays out
+static int weather_degrees(float value) {
+  return std::clamp(static_cast<int>(std::lround(value)), -99, 99);
+}
+
+WeatherPick pick_weather(const WeatherSnapshot &s, int32_t local_day, uint8_t local_hour) {
+  const WeatherDay *today = nullptr;
+  const WeatherDay *tomorrow = nullptr;
+  for (size_t i = 0; i < s.day_count && i < s.days.size(); i++) {
+    if (s.days[i].local_day == local_day) {
+      today = &s.days[i];
+    } else if (s.days[i].local_day == local_day + 1) {
+      tomorrow = &s.days[i];
+    }
+  }
+  const WeatherDay *day = local_hour >= WEATHER_TOMORROW_FROM_HOUR ? (tomorrow != nullptr ? tomorrow : today)
+                                                                   : (today != nullptr ? today : tomorrow);
+  WeatherPick pick;
+  if (day != nullptr) {
+    pick.valid = true;
+    pick.tomorrow = day == tomorrow;
+    pick.code = day->code;
+    pick.high = weather_degrees(day->high);
+    pick.low = weather_degrees(day->low);
+  } else if (s.current_code != BrushWeather::NONE && std::isfinite(s.current_temp)) {
+    pick.valid = true;
+    pick.code = s.current_code;
+    pick.high = weather_degrees(s.current_temp);
+    pick.low = pick.high;
+  }
+  return pick;
+}
+
+std::string build_weather_reply(const WeatherPick &pick, std::string_view hhmm) {
+  if (!pick.valid || pick.code == BrushWeather::NONE)
+    return R"({"state":false})";
+  char buf[160];
+  int const n = snprintf(buf, sizeof(buf),
+                         R"({"state":true,"data":{"conditionCode":"%u","todayOrTomorrow":"%u",)"
+                         R"("temperatureMax":"%d","temperatureMin":"%d")",
+                         static_cast<unsigned>(pick.code), pick.tomorrow ? 1U : 0U, pick.high, pick.low);
+  std::string out(buf, static_cast<size_t>(std::clamp(n, 0, static_cast<int>(sizeof(buf)) - 1)));
+  // the firmware strcpy()s it into 8 bytes; digits and colons only, so no escaping
+  bool const time_fits = !hhmm.empty() && hhmm.size() < 8 &&
+                         std::ranges::all_of(hhmm, [](char c) { return (c >= '0' && c <= '9') || c == ':'; });
+  if (time_fits) {
+    out += R"(,"presentTime":")";
+    out.append(hhmm);
+    out += '"';
+  }
+  out += "}}";
+  return out;
 }
 
 }  // namespace esphome::oclean

@@ -15,8 +15,9 @@
 
 namespace esphome::oclean {
 
-// Days, sent as a two-byte big-endian payload after the opcode.
-class OcleanHeadDaysNumber : public number::Number, public Parented<OcleanHub> {
+// Minutes of brushing on one head before the replacement reminder, sent as a
+// two-byte big-endian payload after the opcode.
+class OcleanHeadMaxNumber : public number::Number, public Parented<OcleanHub> {
  protected:
   void control(float value) override {
     // lroundf(Inf/NaN) is undefined
@@ -26,7 +27,7 @@ class OcleanHeadDaysNumber : public number::Number, public Parented<OcleanHub> {
     auto const v = static_cast<uint16_t>(r);
     std::vector<uint8_t> cmd = {0x02, 0x17, static_cast<uint8_t>(v >> 8), static_cast<uint8_t>(v & 0xFF)};
     // a dropped write must not publish, same rule as the command switches
-    if (this->parent_->send_command(std::move(cmd), "head-max-days"))
+    if (this->parent_->send_command(std::move(cmd), "head-max-minutes"))
       this->publish_state(value);
   }
 };

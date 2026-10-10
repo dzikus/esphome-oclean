@@ -1,5 +1,134 @@
 # Changelog
 
+## v2.0.0 (2026-10-10)
+
+- The X Ultra 20 is fully supported without the Oclean app and without the
+  Oclean cloud. The node joins it to Wi-Fi over BluFi, receives every session
+  with the score, the seconds brushed in each of its 12 zones and the pressure
+  log, and keeps its clock, birthday greeting and weather page; the X Ultra 20
+  entries below have the details.
+- Breaking: the number `head_max_days` is now `head_max_minutes`, "Brush head
+  time limit", 1-65535 min. The brush counts the limit in minutes of brushing;
+  the old key fails validation with a pointer to the new one. Home Assistant
+  gets a new entity for it.
+- Breaking: the X Pro Elite no longer builds `fill_brush`, `auto_mode`,
+  `volume_enabled`, `calendar_enabled`, `splash_prevent` and `volume_index`:
+  their settings bytes hold no setting in the firmware.
+- Breaking: `expose_dev_sensors` is gone and naming it fails validation. Every
+  entity a model supports is built: on the X Pro Elite that adds area reminder
+  (the 30 s zone-change signal), brush pause (a press after the first 10 s
+  pauses instead of ending) and brush mode (off: the waking press also starts
+  brushing), plus the capture sessions button, hidden. The GATT map is logged
+  at the logger's `VERBOSE` level.
+- `head_used_time` has the unit `min`. Its long-term statistics were recorded
+  without a unit, so Home Assistant may ask to fix them.
+- `0202` goes out only after a whole session stream is in, the events are sent
+  and the watermark is stored, and never with a record held back as
+  implausible; before, it went on a timer in every poll.
+- A session the firmware voids (score 1) reads as no score.
+- New sensors: battery voltage on every model, and four hidden per-quadrant
+  shares on the X Pro Elite.
+- The session event takes its UTC offset from the record's own time zone,
+  so a session read after a daylight-saving change keeps its real hour.
+- A language past the brush firmware's last one (14 on `OCLEANY3P`, 13 on
+  `OCLEANY3PD`) is refused instead of turning the display English.
+- A write the brush turns down while a session runs is sent once more in the
+  next round.
+- Record packets that follow a count=0 header during a session log at debug
+  level instead of a warning.
+- Polls come at the configured interval. The cadence counts from the moment
+  the brush connects, seconds after the check that started the poll, so each
+  poll used to slip one check: about 70 min off the dock and 20 min on it with
+  the defaults.
+- Coverage card: every tooth of a quadrant is split into an outer (lip-side)
+  and an inner (tongue-side) half, colored by that quadrant's outer and inner
+  zone, with the inner value shown inside the arch. Before, the outer zone
+  colored the four back teeth of the quadrant and the inner zone the four
+  front ones. With 12 zones (`zone_count: 12` or a 12-entity `zones` list) it
+  draws the X Ultra 20 map: the back teeth of each side and the front teeth,
+  canine to canine, as zones of their own. A past session with no recorded
+  value for a zone (an entity newer than the session) shows it as unknown
+  instead of 0.
+- The last session kept in flash across reboots moves to a layout with 12
+  zones and the pressure summary; one stored in the old layout is still read
+  and converted, so no brush loses its last session.
+- X Ultra 20 support (`model: x_ultra_20`): status, settings, clock, voice
+  prompts, auto mode, holiday reminder, language and the other setting writes.
+- X Ultra 20: the record its count=0 reply carries, the oldest in its store,
+  is a session: one event, the brushed time from the record length, and the
+  entities when it is newer than what they show. While the brush is docked the
+  hub clears the store with `0202`, so the next session is read next.
+- X Ultra 20: brushing-mode select with the screen modes and voice teaching as
+  readback and custom programs up to gear 54; voice teaching (`0230`) and the
+  retail display mode (`02A0`) are switches instead of binary sensors.
+- X Ultra 20: the brush-head counters, head limit, head reset and network flag
+  are not built; firmware 0.0.1.6 never fills them. A fast-brushing or
+  over-pressure voice flag is refused while voice prompts are off, as the brush
+  would drop it.
+- X Ultra 20: Wi-Fi over BluFi (service `0xFFFF`, unencrypted variant). With
+  `wifi_provisioning: true` the hub keeps the brush on the `wifi_ssid` /
+  `wifi_password` hub options (baked into the firmware, falling back to the
+  node's own `wifi:`), not entities, so a Wi-Fi password never reaches the
+  recorder. The code is not compiled in otherwise.
+- X Ultra 20: the birthday greeting, the cloud host and the Wi-Fi come from the
+  yaml with no button. None can be read back over BLE, so the hub keeps a
+  fingerprint of what the brush confirmed in the node's flash (never an
+  entity) and writes only when it no longer matches: the birthday frame
+  (`0211`) on the brush's ack, the cloud host (`0233`, this node's address with
+  `cloud_receiver: true`) on the `Host` header of the brush's next request, the
+  Wi-Fi on the brush's BluFi connected report or its first request after the
+  join. A value still unconfirmed is sent again once a day
+  (`retry_unconfirmed`, on by default). A hidden, read-only `cloud_host` text
+  sensor shows the host the brush really uploads to, and one hidden binary
+  sensor per write (`user_info_written`, `wifi_written`, `cloud_host_written`)
+  whether the brush confirmed that value as the yaml holds it now.
+- X Ultra 20: an X Ultra 20 hub option fails validation on an `x_pro_elite`
+  hub, and the birthday frame, the cloud host and the Wi-Fi go only to a brush
+  that reports an X Ultra 20 family model.
+- X Ultra 20: `cloud_receiver: true` takes the brush's cloud session uploads
+  on the node's web server and publishes them as the session entities: score,
+  durations, timestamp and, from the full record, the seconds brushed in each
+  of the brush's 12 zones (`zone_time_1` .. `zone_time_12`: the back teeth in
+  the `gesture_zone` order, then the upper and lower front teeth, each pair
+  outer surface first), the
+  over-pressure time (force over 400, where the brush halves the motor) and the
+  max pressure from the record's force log. BLE never carries the score on
+  this firmware. An upload goes to the
+  hub whose brush MAC it names; a `web_server:` is required. The image request
+  the brush sends at every sleep gets an empty slot; the brush reboots on an
+  empty reply and, off the dock, would never sleep.
+- X Ultra 20: the receiver answers the brush's clock with the node's local
+  time, so the brush clock also corrects over Wi-Fi.
+- X Ultra 20: `cloud_drop_future` (on by default) acks an upload dated
+  implausibly far in the future, from a brush whose clock was not corrected
+  yet, so the brush drops it instead of re-sending it on every connect. Such a
+  record is never published.
+- X Ultra 20: `weather: <weather entity>` answers the brush's weather request
+  through the session receiver, so its clock page shows the Home Assistant
+  condition, Today/Tomorrow and the day's low and high. The forecast needs the
+  node allowed to perform Home Assistant actions; without that the brush gets
+  the current condition and temperature.
+- X Ultra 20: a row whose only source is a hub option is built only with it:
+  the score, the 12 zones and the two pressure sensors (cloud record only),
+  `cloud_host` and
+  `cloud_host_written` with `cloud_receiver: true`, `user_info_written` with
+  `birthday`, `wifi_written` with `wifi_provisioning: true`. Not built: the
+  capture and poll buttons (BLE never hands over the stored sessions), the
+  `auto_update` binary sensor and the `over_pressure` switch (nothing in
+  firmware 0.0.1.6 reads either flag; the pressure prompt is
+  `voice_pressure`).
+- X Ultra 20: birthday greeting. The `birthday` hub option is the greeting date
+  (`0211`), sent with the `gender` and `age` options; on every wake that day the
+  brush shows its birthday screen. All three are yaml options, not entities, so
+  none of them reaches the recorder; use `!secret`.
+- The ESPHome floor is now 2026.6.0: the hub options that hold a secret
+  (`wifi_password`, `birthday`, `gender`, `age`) are marked sensitive with
+  `cv.sensitive` (2026.6.0), the session receiver registers on the web server
+  outside its login, which the brush could not answer (2026.3.0), and the
+  cloud host takes the node's own IP from the network API of 2026.2.0.
+- The X Pro 20 (`OCLEANX20`) and the first X Ultra (`OCLEANV1*`) use the X
+  Ultra 20 reply formats instead of TYPE1.
+
 ## v1.4.1 (2026-09-13)
 
 - No change to the component.

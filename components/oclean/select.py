@@ -5,10 +5,14 @@ from esphome.const import CONF_DEVICE_ID, ENTITY_CATEGORY_CONFIG
 
 from . import (
     CONF_OCLEAN_ID,
+    GEAR_MAX,
+    MODEL_X_ULTRA_20,
     OCLEAN_COMPONENT_SCHEMA,
     OcleanHub,
+    hub_model,
     inject_entity_defaults,
     oclean_ns,
+    raw_hub_model,
 )
 
 DEPENDENCIES = ["oclean"]
@@ -100,6 +104,14 @@ SCHEMES = {
     89: ("Travel", [(17, 30), (17, 30), (35, 30), (35, 30)]),
 }
 
+# X Ultra 20: the modes picked on its screen and the teaching program, numbered
+# as the settings buffer and the session record number them. Shown on readback;
+# no BLE write switches back to any of them.
+X20_FIXED_MODES = {
+    **{i: f"Screen mode {i}" for i in range(1, 6)},
+    6: "Voice teaching",
+}
+
 # Ids outside the preset range: the firmware accepts and persists arbitrary
 # programs there. 120 is the runtime option built from the number entities at
 # selection time; 121+ are the named yaml modes, so reordering that list shifts
@@ -114,10 +126,11 @@ CONF_PROGRAM = "program"
 CONF_GEAR = "gear"
 CONF_DURATION = "duration"
 
-# duration is one byte on the wire; presets stay in the 20-30 s range
+# duration is one byte on the wire; presets stay in the 20-30 s range. The gear
+# cap per model is checked once the hub's model is known.
 STEP_SCHEMA = cv.Schema(
     {
-        cv.Required(CONF_GEAR): cv.int_range(min=1, max=41),
+        cv.Required(CONF_GEAR): cv.int_range(min=1, max=max(GEAR_MAX.values())),
         cv.Required(CONF_DURATION): cv.int_range(min=5, max=120),
     }
 )
@@ -153,22 +166,27 @@ def _scheme_label(pnum):
 
 # Option order shown in Home Assistant: scheme id ascending, Standard Cleaning first.
 SCHEME_OPTIONS = [_scheme_label(pnum) for pnum in sorted(SCHEMES)]
+X20_FIXED_OPTIONS = [X20_FIXED_MODES[pnum] for pnum in sorted(X20_FIXED_MODES)]
+
+
+def fixed_options(model):
+    # the options ahead of the yaml modes: Y3P presets, or what only the brush picks
+    if model == MODEL_X_ULTRA_20:
+        return X20_FIXED_OPTIONS
+    return SCHEME_OPTIONS
+
+
+def _mode_label(mode):
+    steps = [(st[CONF_GEAR], st[CONF_DURATION]) for st in mode[CONF_PROGRAM]]
+    return _label(mode[CONF_NAME], steps)
 
 
 def _validate_unique_labels(modes):
     # The C++ select resolves an option by linear name match, so two options
-    # rendering to the same label make the second one unreachable. Reject
-    # collisions among custom modes and against the preset labels.
-    preset = set(SCHEME_OPTIONS)
+    # rendering to the same label make the second one unreachable.
     seen = set()
     for mode in modes:
-        steps = [(st[CONF_GEAR], st[CONF_DURATION]) for st in mode[CONF_PROGRAM]]
-        label = _label(mode[CONF_NAME], steps)
-        if label in preset:
-            raise cv.Invalid(
-                f"custom_modes entry {label!r} collides with a preset "
-                f"brushing-mode label; rename it or change its duration"
-            )
+        label = _mode_label(mode)
         if label in seen:
             raise cv.Invalid(
                 f"custom_modes has two entries that render as {label!r}; "
@@ -178,6 +196,32 @@ def _validate_unique_labels(modes):
     return modes
 
 
+def _validate_modes_for_model(config):
+    sub = config.get(CONF_BRUSH_SCHEME)
+    if not isinstance(sub, dict):
+        return config
+    model = raw_hub_model(config.get(CONF_OCLEAN_ID))
+    fixed = set(fixed_options(model))
+    gear_max = GEAR_MAX[model]
+    for i, mode in enumerate(sub.get(CONF_CUSTOM_MODES, [])):
+        path = [CONF_BRUSH_SCHEME, CONF_CUSTOM_MODES, i]
+        label = _mode_label(mode)
+        if label in fixed:
+            raise cv.Invalid(
+                f"custom_modes entry {label!r} collides with a built-in "
+                f"brushing-mode label; rename it or change its duration",
+                path=path,
+            )
+        for j, step in enumerate(mode[CONF_PROGRAM]):
+            if step[CONF_GEAR] > gear_max:
+                raise cv.Invalid(
+                    f"gear {step[CONF_GEAR]} is past the {gear_max} gears of "
+                    f"model: {model}",
+                    path=[*path, CONF_PROGRAM, j, CONF_GEAR],
+                )
+    return config
+
+
 _DEFAULT_NAMES = [
     (CONF_BRUSH_SCHEME, DEFAULT_BRUSH_SCHEME_NAME),
     (CONF_DEVICE_LANGUAGE, DEFAULT_DEVICE_LANGUAGE_NAME),
@@ -185,7 +229,7 @@ _DEFAULT_NAMES = [
 
 
 def _inject_defaults(config):
-    return inject_entity_defaults(config, _DEFAULT_NAMES)
+    return inject_entity_defaults(config, _DEFAULT_NAMES, platform="select")
 
 
 CONFIG_SCHEMA = cv.All(
@@ -213,6 +257,7 @@ CONFIG_SCHEMA = cv.All(
             ),
         }
     ),
+    _validate_modes_for_model,
 )
 
 
@@ -221,23 +266,28 @@ async def to_code(config):
 
     sub = config.get(CONF_BRUSH_SCHEME)
     if sub is not None:
+        model = hub_model(config[CONF_OCLEAN_ID])
         # Named yaml modes get ids right after the runtime custom id, in list order.
         modes = []
         for i, mode in enumerate(sub.get(CONF_CUSTOM_MODES, [])):
             steps = [(st[CONF_GEAR], st[CONF_DURATION]) for st in mode[CONF_PROGRAM]]
             modes.append((CUSTOM_PNUM + 1 + i, _label(mode[CONF_NAME], steps), steps))
         options = (
-            SCHEME_OPTIONS
+            fixed_options(model)
             + [label for _pnum, label, _steps in modes]
             + [CUSTOM_OPTION_LABEL]
         )
         sel = await select.new_select(sub, options=options)
         await cg.register_parented(sel, hub)
         cg.add(hub.set_scheme_select(sel))
-        for pnum in sorted(SCHEMES):
-            _name, steps = SCHEMES[pnum]
-            flat = [v for gear_dur in steps for v in gear_dur]
-            cg.add(sel.add_scheme(pnum, _scheme_label(pnum), flat))
+        if model == MODEL_X_ULTRA_20:
+            for pnum in sorted(X20_FIXED_MODES):
+                cg.add(sel.add_readback_option(pnum, X20_FIXED_MODES[pnum]))
+        else:
+            for pnum in sorted(SCHEMES):
+                _name, steps = SCHEMES[pnum]
+                flat = [v for gear_dur in steps for v in gear_dur]
+                cg.add(sel.add_scheme(pnum, _scheme_label(pnum), flat))
         for pnum, label, steps in modes:
             flat = [v for gear_dur in steps for v in gear_dur]
             cg.add(sel.add_scheme(pnum, label, flat))

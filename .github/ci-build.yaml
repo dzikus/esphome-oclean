@@ -6,8 +6,8 @@ substitutions:
 
 esphome:
   name: ci-build
-  # Matches the component floor (select current_option API, 2026.1.0).
-  min_version: 2026.1.0
+  # Matches the component floor (cv.sensitive, 2026.6.0).
+  min_version: 2026.6.0
   devices:
     - id: dev_second
       name: "CI second brush"
@@ -18,6 +18,8 @@ esp32:
     type: esp-idf
 
 logger:
+  # the GATT map dump compiles only at VERBOSE
+  level: VERBOSE
 
 # The component uses api (session-history event) and time (clock); both need a
 # network, so a dummy wifi is here purely to satisfy compile validation. Nothing
@@ -25,6 +27,11 @@ logger:
 wifi:
   ssid: "esphome-ci"
   password: "esphome-ci-password"
+
+# The in-node session receiver (cloud_receiver below) reuses this shared web
+# server, so it compiles the web_server_base handler path.
+web_server:
+  port: 80
 
 api:
   # fire_homeassistant_event() (session-history events) needs this flag.
@@ -55,8 +62,6 @@ oclean:
     # Exercise the charging-aware adaptive-poll codegen.
     update_interval: 3600s
     charging_interval: 600s
-    # Compile the dev-gated branches too.
-    expose_dev_sensors: true
     # Cover the remaining hub options.
     tzindex: 16
     hold_connection_while_docked: true
@@ -68,29 +73,52 @@ oclean:
           args:
             ["(unsigned) x.duration_s", "(unsigned) x.valid_duration_s", "(unsigned) x.score"]
   # hub_test stays without a prefix so the multi-hub warning runs too.
+  # hub_second is the other model, so both entity sets compile.
   - id: hub_second
     ble_client_id: ble_second
+    model: x_ultra_20
     name_prefix: "Second"
+    # Compiles the BluFi provisioning path (USE_OCLEAN_BLUFI); the SSID falls
+    # back to the wifi: block above since no wifi_ssid is set here.
+    wifi_provisioning: true
+    # Compiles the in-node session receiver (USE_OCLEAN_CLOUD_RECEIVER) on the
+    # web_server above.
+    cloud_receiver: true
+    # Compiles the weather answer (USE_OCLEAN_WEATHER): entity subscription and
+    # the forecast action with its response.
+    weather: weather.forecast_home
+    time_id: ci_time
+    # Compiles the birthday greeting the hub keeps on the brush.
+    birthday: "02-29"
+    gender: female
+    age: 9
 
 # Every entity platform auto-creates its full entity set, so a bare platform
-# block compiles every entity codegen path (dev-gated rows included via
-# expose_dev_sensors above).
+# block compiles every entity codegen path.
 sensor:
   - platform: oclean
     oclean_id: hub_test
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
 
 binary_sensor:
   - platform: oclean
     oclean_id: hub_test
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
 
 text_sensor:
   - platform: oclean
     oclean_id: hub_test
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
 
 switch:
   - platform: oclean
     oclean_id: hub_test
-  # Switch and button are enough for hub_second; no need to double every entity.
   - platform: oclean
     oclean_id: hub_second
     device_id: dev_second
@@ -98,6 +126,9 @@ switch:
 number:
   - platform: oclean
     oclean_id: hub_test
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
 
 select:
   - platform: oclean
@@ -114,6 +145,16 @@ select:
             - gear: 8
               duration: 30
             - gear: 8
+              duration: 30
+  - platform: oclean
+    oclean_id: hub_second
+    device_id: dev_second
+    # The X Ultra 20 options: its fixed modes plus a gear past the X Pro Elite's.
+    brush_scheme:
+      custom_modes:
+        - name: CI high gear
+          program:
+            - gear: 54
               duration: 30
 
 button:

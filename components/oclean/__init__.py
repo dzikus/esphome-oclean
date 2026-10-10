@@ -8,6 +8,7 @@ from esphome.components import ble_client, time
 from esphome.const import (
     CONF_DEVICE_ID,
     CONF_DISABLED_BY_DEFAULT,
+    CONF_ICON,
     CONF_ID,
     CONF_NAME,
     CONF_TIME_ID,
@@ -33,6 +34,7 @@ MULTI_CONF = True
 
 CONF_OCLEAN_ID = "oclean_id"
 CONF_EXPOSE_DEV_SENSORS = "expose_dev_sensors"
+CONF_READ_ONLY = "read_only"
 
 # Only reached when the node offset cannot be derived; the hub normally picks
 # the index from its own DST-aware offset. Wire value is 1-based into the
@@ -52,6 +54,184 @@ CONF_CHARGING_INTERVAL = "charging_interval"
 CONF_HOLD_CONNECTION_WHILE_DOCKED = "hold_connection_while_docked"
 
 CONF_NAME_PREFIX = "name_prefix"
+
+# Picks the entity set at build time. The protocol profile still comes from the
+# model id the brush reports, so a mismatch only costs entities, not data.
+CONF_MODEL = "model"
+MODEL_X_PRO_ELITE = "x_pro_elite"
+MODEL_X_ULTRA_20 = "x_ultra_20"
+DEFAULT_MODEL = MODEL_X_PRO_ELITE
+
+# In-node http receiver for the brush's cloud session uploads. It reuses the
+# shared ESPHome web server (web_server_base), so a web_server must be
+# configured. Off unless set true; the C++ is not compiled in otherwise
+# (USE_OCLEAN_CLOUD_RECEIVER). With it on the hub also keeps the brush's cloud
+# host (0233) pointed at this node.
+CONF_CLOUD_RECEIVER = "cloud_receiver"
+# A record dated implausibly far in the future comes from a brush whose clock has
+# not been corrected yet. On (default) the receiver acks it so the brush erases it
+# from its store instead of re-uploading it every connect; off keeps it there for
+# inspection. Never published either way.
+CONF_CLOUD_DROP_FUTURE = "cloud_drop_future"
+
+# Home Assistant weather entity the cloud receiver answers the X Ultra 20's
+# WeatherKit request from (USE_OCLEAN_WEATHER). State and temperature come by
+# state subscription; the daily forecast by the weather.get_forecasts action,
+# which Home Assistant performs only for a device allowed to perform actions.
+CONF_WEATHER = "weather"
+
+# "MM-DD" the hub keeps as the X Ultra 20 birthday greeting date, with gender
+# and age in the same frame (0211). Yaml options baked into the firmware, not
+# entities, so none of it reaches the Home Assistant recorder; use !secret.
+# Gender codes and the 3-18 age range are what the app sends.
+CONF_BIRTHDAY = "birthday"
+CONF_GENDER = "gender"
+CONF_AGE = "age"
+GENDERS = {"unknown": 0, "male": 1, "female": 2}
+DEFAULT_GENDER = "unknown"
+DEFAULT_AGE = 18
+_gender = cv.enum(GENDERS, lower=True)
+_age = cv.int_range(min=3, max=18)
+_DAYS_IN_MONTH = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+
+# A kept value (birthday, cloud host, Wi-Fi) the brush has not confirmed goes
+# out once per boot; with this on, again once a day while still unconfirmed.
+CONF_RETRY_UNCONFIRMED = "retry_unconfirmed"
+
+# With this true the hub keeps the brush on the Wi-Fi below over BluFi. Off by
+# default, and the C++ for it is not compiled in otherwise (USE_OCLEAN_BLUFI).
+CONF_WIFI_PROVISIONING = "wifi_provisioning"
+# Wi-Fi credentials the hub sends to the brush over BluFi. Kept in yaml (baked
+# into the firmware), not as entities, so a password never reaches the Home
+# Assistant recorder. Left unset they fall back to the node's own wifi:.
+CONF_WIFI_SSID = "wifi_ssid"
+CONF_WIFI_PASSWORD = "wifi_password"
+
+
+def resolve_blufi_wifi(hub_ssid, hub_password, wifi_config):
+    # pure so it can be tested without a full config
+    if hub_ssid is not None:
+        return str(hub_ssid), str(hub_password or "")
+    for network in (wifi_config or {}).get("networks") or []:
+        ssid = network.get("ssid")
+        if ssid:
+            return str(ssid), str(network.get("password") or "")
+    return "", ""
+
+
+# session record order, bytes 19-22
+QUADRANT_POSITIONS = ("upper_left", "lower_left", "upper_right", "lower_right")
+_QUADRANT_KEYS = frozenset(f"quadrant_{position}" for position in QUADRANT_POSITIONS)
+_ZONE_KEYS = frozenset(f"gesture_zone_{i}" for i in range(1, 9))
+# X Ultra 20 record only: seconds per zone and the pressure log summary
+_ZONE_TIME_KEYS = frozenset(f"zone_time_{i}" for i in range(1, 13))
+_PRESSURE_KEYS = frozenset(
+    {"last_session_over_pressure_time", "last_session_max_pressure"}
+)
+_X_PRO_ELITE_FLAG_KEYS = frozenset(
+    {"volume_enabled", "calendar_enabled", "splash_prevent", "fill_brush"}
+)
+_X_ULTRA_20_FLAG_KEYS = frozenset(
+    {
+        "auto_update",
+        "network",
+        "voice_teaching",
+        "wifi_configured",
+        "area_guidance",
+        "demo_mode",
+    }
+)
+_HEAD_COUNTER_KEYS = frozenset({"head_used_time", "head_used_days", "head_used_times"})
+# X Ultra 20 only: the cloud host the brush uploads to, read from its requests.
+_X_ULTRA_20_TEXT_SENSOR_KEYS = frozenset({"cloud_host"})
+
+# Highest gear a program step may use. The X Ultra 20 motor table ends at 54; the
+# X Pro Elite one runs to 48, but 42-44 there are the brush's own over-pressure,
+# zone-change and shutdown patterns.
+GEAR_MAX = {MODEL_X_PRO_ELITE: 41, MODEL_X_ULTRA_20: 54}
+
+# Per model and platform. "unavailable": rows the model has no data or opcode
+# for, never built. "needs": rows fed only through hub options, built only when
+# the hub sets all of them. Every other row is built on every model.
+MODEL_ENTITY_SETS = {
+    # Settings bytes 3, 4, 8-10 and 13 hold no setting in the firmware: constant
+    # zero, copies of bytes 0 and 1, a flag nothing writes, and a pause flag the
+    # next session clears. The brush also rejects the auto-mode write.
+    MODEL_X_PRO_ELITE: {
+        "unavailable": {
+            "sensor": frozenset(
+                {"device_mode", "mode_number", "running_state", "volume_index"}
+            )
+            | _ZONE_TIME_KEYS
+            | _PRESSURE_KEYS,
+            "binary_sensor": _X_ULTRA_20_FLAG_KEYS
+            | _X_PRO_ELITE_FLAG_KEYS
+            | {"auto_mode", "user_info_written", "wifi_written", "cloud_host_written"},
+            "switch": frozenset(
+                {
+                    "auto_mode",
+                    "festival_reminder",
+                    "voice_prompts",
+                    "voice_fast_brushing",
+                    "voice_pressure",
+                    "voice_teaching",
+                    "demo_mode",
+                }
+            ),
+            "text_sensor": _X_ULTRA_20_TEXT_SENSOR_KEYS,
+        },
+    },
+    # Settings bytes 0, 1, 3, 8-10 and 13 hold other fields on this brush, its
+    # app family has no 0222 / 0209 setter, and its record has no quadrants and
+    # counts seconds in 12 zones instead of the 8 gesture shares. Nothing in
+    # firmware 0.0.1.6 writes byte 1 or counts head use, so the network flag and
+    # the head counters stay zero, and nothing reads the auto-update flag of byte
+    # 3 or the over-pressure flag of 0212: no update path checks the first, and
+    # the pressure voice follows the 0231 voice flags alone.
+    # Voice teaching and the retail mode are switches here. The download never
+    # streams (count=0 and the head of a stored record), so there is no record
+    # stream to capture, and the score, the zones and the pressure log come only
+    # from the full record of the brush's cloud upload. No capture or poll button
+    # either: BLE never hands over the stored sessions. The clock button stays: a
+    # BLE clock write stamps the sessions until the brush next asks for the time.
+    MODEL_X_ULTRA_20: {
+        "unavailable": {
+            "sensor": frozenset({"device_theme", "volume_index"})
+            | _QUADRANT_KEYS
+            | _ZONE_KEYS
+            | _HEAD_COUNTER_KEYS,
+            "binary_sensor": _X_PRO_ELITE_FLAG_KEYS
+            | {"auto_mode", "auto_update", "network", "voice_teaching", "demo_mode"},
+            "switch": frozenset({"brush_pause", "brush_mode", "over_pressure"}),
+            "number": frozenset({"head_max_minutes"}),
+            "button": frozenset({"reset_head", "capture_sessions", "poll_now"}),
+        },
+        "needs": {
+            "sensor": dict.fromkeys(
+                _ZONE_TIME_KEYS | _PRESSURE_KEYS | {"last_session_score"},
+                (CONF_CLOUD_RECEIVER,),
+            ),
+            "text_sensor": {"cloud_host": (CONF_CLOUD_RECEIVER,)},
+            # the 0211 frame (with gender and age) goes only with a birthday
+            "binary_sensor": {
+                "user_info_written": (CONF_BIRTHDAY,),
+                "wifi_written": (CONF_WIFI_PROVISIONING,),
+                "cloud_host_written": (CONF_CLOUD_RECEIVER,),
+            },
+        },
+    },
+}
+
+MODEL_ENTITY_DEFAULTS = {
+    MODEL_X_ULTRA_20: {
+        "switch": {
+            "area_reminder": ("Voice on zone change", "mdi:swap-horizontal"),
+        },
+        "select": {
+            "device_language": ("Language", None),
+        },
+    },
+}
 
 UNIT_DAY = "d"
 
@@ -78,13 +258,19 @@ HIDDEN_SENSOR_KEYS = frozenset(
         "volume_index",
         "head_used_time",
         "clock_drift",
+        "mode_number",
+        "running_state",
     }
+    | _QUADRANT_KEYS
 )
 
 HIDDEN_BINARY_SENSOR_KEYS = frozenset(
     {
         "connected",
         "auto_mode",
+        "user_info_written",
+        "wifi_written",
+        "cloud_host_written",
     }
 )
 
@@ -96,7 +282,7 @@ def run_data():
 
 
 def _hub_configs():
-    # Fallback for platform to_code resolving expose_dev_sensors by oclean_id;
+    # Fallback for platform to_code resolving hub options by oclean_id;
     # _hub_conf reads CORE.config first.
     return run_data().setdefault("hub_configs", {})
 
@@ -108,8 +294,8 @@ def all_hubs():
 
 def _hub_conf(hub_id):
     # Must not depend on to_code order: under MULTI_CONF a platform's to_code can
-    # run before the hub records itself, which silently dropped dev entities.
-    # CORE.config is complete before any to_code runs.
+    # run before the hub records itself. CORE.config is complete before any
+    # to_code runs.
     target = str(hub_id)
     for hub_conf in CORE.config.get(DOMAIN, []):
         if str(hub_conf.get(CONF_ID)) == target:
@@ -121,8 +307,17 @@ def register_hub_conf(config):
     _hub_configs()[str(config[CONF_ID])] = config
 
 
-def hub_expose_dev(hub_id):
-    return bool(_hub_conf(hub_id).get(CONF_EXPOSE_DEV_SENSORS, False))
+def final_hub_conf(hub_id):
+    # For FINAL_VALIDATE_SCHEMA: CORE.config is only set once validation is over.
+    target = str(hub_id)
+    for hub_conf in fv.full_config.get().get(DOMAIN, []):
+        if str(hub_conf.get(CONF_ID)) == target:
+            return hub_conf
+    return {}
+
+
+def hub_model(hub_id):
+    return str(_hub_conf(hub_id).get(CONF_MODEL, DEFAULT_MODEL))
 
 
 def _raw_hubs():
@@ -158,16 +353,69 @@ def entity_name_prefix(hub_id):
     return str(conf.get(CONF_NAME_PREFIX, "")).strip()
 
 
-def inject_entity_defaults(config, rows, hidden=frozenset(), opt_in=frozenset()):
+def raw_hub_model(hub_id):
+    # An invalid value fails the hub schema; falling back here keeps the
+    # platform blocks from piling their own errors on top of that one.
+    conf = _raw_hub(hub_id) or {}
+    model = str(conf.get(CONF_MODEL, DEFAULT_MODEL)).strip().lower()
+    return model if model in MODEL_ENTITY_SETS else DEFAULT_MODEL
+
+
+def raw_hub_option_set(hub_id, option):
+    # Raw for the same reason as the model; true for a boolean that is on and for
+    # any other value present (a birthday).
+    value = (_raw_hub(hub_id) or {}).get(option)
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "false", "no", "off", "disable")
+    return value is not None and value is not False
+
+
+def inject_entity_defaults(
+    config, rows, hidden=frozenset(), opt_in=frozenset(), platform=None
+):
     # Copy before mutating: the validator may run against a shared dict.
     config = dict(config)
     platform_device = config.get(CONF_DEVICE_ID)
+    hub_id = config.get(CONF_OCLEAN_ID)
     # Prefixed in validation, not in to_code. The duplicate-name check runs off
     # the entity schema, and the resolved config has to show the names the
     # generated code registers.
-    prefix = entity_name_prefix(config.get(CONF_OCLEAN_ID))
+    prefix = entity_name_prefix(hub_id)
+    model = raw_hub_model(hub_id)
+    unavailable = MODEL_ENTITY_SETS[model]["unavailable"].get(platform, frozenset())
+    needs = MODEL_ENTITY_SETS[model].get("needs", {}).get(platform, {})
+    overrides = MODEL_ENTITY_DEFAULTS.get(model, {}).get(platform, {})
     for key, default_name in rows:
         want = config.get(key, ...)
+        if key in unavailable:
+            # An error, not a warning: the entity would be missing from a node
+            # that compiled cleanly, which reads as a bug on the brush side.
+            if want is not ... and want is not False:
+                if all(
+                    key in sets["unavailable"].get(platform, frozenset())
+                    for sets in MODEL_ENTITY_SETS.values()
+                ):
+                    hint = "No supported model has it."
+                else:
+                    hint = "Or set model: on the hub to the brush you have."
+                raise cv.Invalid(
+                    f"'{key}' does not exist on model: {model}. Remove it from "
+                    f"this {platform} block. {hint}",
+                    path=[key],
+                )
+            config.pop(key, None)
+            continue
+        missing = [o for o in needs.get(key, ()) if not raw_hub_option_set(hub_id, o)]
+        if missing:
+            if want is not ... and want is not False:
+                raise cv.Invalid(
+                    f"'{key}' on model: {model} gets its value only through "
+                    f"the hub's {', '.join(missing)}. Set it on the hub or "
+                    f"remove the key from this {platform} block.",
+                    path=[key],
+                )
+            config.pop(key, None)
+            continue
         if want is False or (want is ... and key in opt_in):
             config.pop(key, None)
             continue
@@ -180,9 +428,10 @@ def inject_entity_defaults(config, rows, hidden=frozenset(), opt_in=frozenset())
                 path=[key],
             )
         sub = dict(sub)
-        sub.setdefault(
-            CONF_NAME, f"{prefix} {default_name}" if prefix else default_name
-        )
+        name, icon = overrides.get(key, (default_name, None))
+        sub.setdefault(CONF_NAME, f"{prefix} {name}" if prefix else name)
+        if icon is not None:
+            sub.setdefault(CONF_ICON, icon)
         if platform_device is not None and CONF_DEVICE_ID not in sub:
             sub[CONF_DEVICE_ID] = platform_device
         if key in hidden:
@@ -228,6 +477,105 @@ def _validate_auto_sync_time(config):
     return config
 
 
+def _validate_blufi_wifi(config):
+    if CONF_WIFI_PASSWORD in config and CONF_WIFI_SSID not in config:
+        raise cv.Invalid(
+            f"{CONF_WIFI_PASSWORD} needs {CONF_WIFI_SSID}", path=[CONF_WIFI_PASSWORD]
+        )
+    if not config.get(CONF_WIFI_PROVISIONING):
+        for key in (CONF_WIFI_SSID, CONF_WIFI_PASSWORD):
+            if key in config:
+                raise cv.Invalid(
+                    f"{key} needs {CONF_WIFI_PROVISIONING}: true", path=[key]
+                )
+    return config
+
+
+def parse_month_day(value):
+    # "MM-DD", one or two digits each, to a day that exists in a leap year
+    month, sep, day = str(value).partition("-")
+    if (
+        not sep
+        or not (1 <= len(month) <= 2 and month.isdigit())
+        or not (1 <= len(day) <= 2 and day.isdigit())
+    ):
+        raise cv.Invalid(f"{CONF_BIRTHDAY} takes MM-DD, e.g. 03-07")
+    m, d = int(month), int(day)
+    if not 1 <= m <= 12 or not 1 <= d <= _DAYS_IN_MONTH[m - 1]:
+        raise cv.Invalid(f"{CONF_BIRTHDAY} is not a calendar day")
+    return m, d
+
+
+def _month_day(value):
+    m, d = parse_month_day(value)
+    return f"{m:02d}-{d:02d}"
+
+
+# Options only an x_ultra_20 hub has a use for. Elsewhere they do nothing at
+# best, and cloud_receiver would queue the 0233 cloud host write to a brush
+# whose profile passes every write. None has a schema default, so a key present
+# here was written in the yaml; the defaults are filled in afterwards.
+_X_ULTRA_20_OPTIONS = (
+    CONF_CLOUD_RECEIVER,
+    CONF_CLOUD_DROP_FUTURE,
+    CONF_WEATHER,
+    CONF_BIRTHDAY,
+    CONF_GENDER,
+    CONF_AGE,
+    CONF_RETRY_UNCONFIRMED,
+    CONF_WIFI_PROVISIONING,
+    CONF_WIFI_SSID,
+    CONF_WIFI_PASSWORD,
+)
+_X_ULTRA_20_DEFAULTS = {
+    CONF_CLOUD_RECEIVER: False,
+    CONF_CLOUD_DROP_FUTURE: True,
+    CONF_RETRY_UNCONFIRMED: True,
+    CONF_WIFI_PROVISIONING: False,
+}
+
+
+def _validate_x_ultra_20_options(config):
+    if config[CONF_MODEL] != MODEL_X_ULTRA_20:
+        for key in _X_ULTRA_20_OPTIONS:
+            if key in config:
+                raise cv.Invalid(
+                    f"{key} is an {MODEL_X_ULTRA_20} option and this hub has "
+                    f"model: {config[CONF_MODEL]}",
+                    path=[key],
+                )
+    # Copy before mutating: the validator may run against a shared dict.
+    config = dict(config)
+    for key, value in _X_ULTRA_20_DEFAULTS.items():
+        config.setdefault(key, value)
+    return config
+
+
+def _weather_entity(value):
+    value = cv.entity_id(value)
+    if not value.startswith("weather."):
+        raise cv.Invalid(f"{CONF_WEATHER} takes a weather.* entity, not '{value}'")
+    return value
+
+
+def _validate_weather(config):
+    if CONF_WEATHER not in config:
+        return config
+    if not config.get(CONF_CLOUD_RECEIVER):
+        raise cv.Invalid(
+            f"{CONF_WEATHER} is answered by the cloud receiver; set "
+            f"{CONF_CLOUD_RECEIVER}: true",
+            path=[CONF_WEATHER],
+        )
+    if CONF_TIME_ID not in config:
+        raise cv.Invalid(
+            f"{CONF_WEATHER} needs {CONF_TIME_ID}: the answer picks today's or "
+            f"tomorrow's forecast by the node's local date",
+            path=[CONF_WEATHER],
+        )
+    return config
+
+
 def _validate_adaptive_poll(config):
     # Copy before mutating: the validator may run against a shared dict.
     config = dict(config)
@@ -245,6 +593,12 @@ def _validate_adaptive_poll(config):
 
 oclean_ns = cg.esphome_ns.namespace("oclean")
 OcleanHub = oclean_ns.class_("OcleanHub", ble_client.BLEClientNode, cg.PollingComponent)
+
+BrushModel = oclean_ns.enum("BrushModel", is_class=True)
+MODELS = {
+    MODEL_X_PRO_ELITE: BrushModel.X_PRO_ELITE,
+    MODEL_X_ULTRA_20: BrushModel.X_ULTRA_20,
+}
 
 SessionRecord = oclean_ns.struct("SessionRecord")
 SessionRecordConstRef = SessionRecord.operator("const").operator("ref")
@@ -264,7 +618,12 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(OcleanHub),
-            cv.Optional(CONF_EXPOSE_DEV_SENSORS, default=False): cv.boolean,
+            cv.Optional(CONF_MODEL, default=DEFAULT_MODEL): cv.enum(MODELS, lower=True),
+            cv.Optional(CONF_EXPOSE_DEV_SENSORS): cv.invalid(
+                f"'{CONF_EXPOSE_DEV_SENSORS}' was removed: every entity a model "
+                "supports is now built, and the GATT map is logged at VERBOSE level"
+            ),
+            cv.Optional(CONF_READ_ONLY, default=False): cv.boolean,
             cv.Optional(CONF_UPDATE_INTERVAL, default="3600s"): _min_interval_validator(
                 "update_interval"
             ),
@@ -272,6 +631,18 @@ CONFIG_SCHEMA = cv.All(
                 CONF_CHARGING_INTERVAL, default="600s"
             ): _min_interval_validator(CONF_CHARGING_INTERVAL),
             cv.Optional(CONF_HOLD_CONNECTION_WHILE_DOCKED, default=True): cv.boolean,
+            # No schema default on the x_ultra_20 options:
+            # _validate_x_ultra_20_options fills them in.
+            cv.Optional(CONF_CLOUD_RECEIVER): cv.boolean,
+            cv.Optional(CONF_CLOUD_DROP_FUTURE): cv.boolean,
+            cv.Optional(CONF_WEATHER): _weather_entity,
+            cv.Optional(CONF_BIRTHDAY): cv.sensitive(_month_day),
+            cv.Optional(CONF_GENDER): cv.sensitive(_gender),
+            cv.Optional(CONF_AGE): cv.sensitive(_age),
+            cv.Optional(CONF_RETRY_UNCONFIRMED): cv.boolean,
+            cv.Optional(CONF_WIFI_PROVISIONING): cv.boolean,
+            cv.Optional(CONF_WIFI_SSID): cv.string,
+            cv.Optional(CONF_WIFI_PASSWORD): cv.sensitive(cv.string),
             cv.Optional(CONF_NAME_PREFIX): cv.All(
                 cv.string_strict, cv.Length(max=48), _validate_name_prefix
             ),
@@ -299,7 +670,10 @@ CONFIG_SCHEMA = cv.All(
     _validate_auto_sync_time,
     _validate_adaptive_poll,
     _validate_name_prefix_is_reachable,
-    cv.require_esphome_version(2026, 1, 0),
+    _validate_x_ultra_20_options,
+    _validate_blufi_wifi,
+    _validate_weather,
+    cv.require_esphome_version(2026, 2, 0),
 )
 
 
@@ -377,9 +751,66 @@ def _warn_on_shared_default_names(config):
     return config
 
 
+def _blufi_ssid_available(config, wifi_config):
+    # With wifi_provisioning on, there must be an SSID to send: the hub's
+    # wifi_ssid, or a wifi: network to fall back on. A node on Ethernet has
+    # neither unless wifi_ssid is set, so require it here rather than ship a
+    # hub that can only warn at runtime.
+    if not config.get(CONF_WIFI_PROVISIONING):
+        return
+    ssid, _password = resolve_blufi_wifi(
+        config.get(CONF_WIFI_SSID), config.get(CONF_WIFI_PASSWORD), wifi_config
+    )
+    if not ssid:
+        raise cv.Invalid(
+            f"oclean '{config[CONF_ID]}' has {CONF_WIFI_PROVISIONING}: true but no "
+            f"Wi-Fi SSID to send. Set {CONF_WIFI_SSID} on the hub; this node has "
+            f"no wifi: network to fall back on.",
+            path=[CONF_WIFI_PROVISIONING],
+        )
+
+
+def _cloud_receiver_needs_web_server(config, full):
+    # The receiver reuses the shared ESPHome web server (web_server_base) rather
+    # than starting its own, so a web_server must be configured on the node.
+    if config.get(CONF_CLOUD_RECEIVER) and "web_server" not in full:
+        raise cv.Invalid(
+            f"oclean '{config[CONF_ID]}' has {CONF_CLOUD_RECEIVER}: true, which "
+            f"serves the brush uploads on the node's web server. Add a "
+            f"web_server: block (the receiver reuses it, not a second server).",
+            path=[CONF_CLOUD_RECEIVER],
+        )
+
+
+def _weather_needs_api_and_one_hub(config, full):
+    # The entity comes from Home Assistant over the native API, and the brush's
+    # weather request carries no MAC, so a single hub can answer it.
+    if CONF_WEATHER not in config:
+        return
+    if "api" not in full:
+        raise cv.Invalid(
+            f"oclean '{config[CONF_ID]}' has {CONF_WEATHER}, which reads the entity "
+            f"from Home Assistant: add an api: block",
+            path=[CONF_WEATHER],
+        )
+    for hub in full.get(DOMAIN, []):
+        if str(hub[CONF_ID]) == str(config[CONF_ID]):
+            return
+        if CONF_WEATHER in hub:
+            raise cv.Invalid(
+                f"oclean '{hub[CONF_ID]}' already answers the brush weather request; "
+                f"it names no brush, so only one hub can carry {CONF_WEATHER}",
+                path=[CONF_WEATHER],
+            )
+
+
 def _final_validate(config):
+    full = fv.full_config.get()
     _one_hub_per_ble_client(config)
     _warn_if_session_events_unavailable(config)
+    _blufi_ssid_available(config, full.get("wifi"))
+    _cloud_receiver_needs_web_server(config, full)
+    _weather_needs_api_and_one_hub(config, full)
     return _warn_on_shared_default_names(config)
 
 
@@ -408,7 +839,37 @@ async def to_code(config):
     cg.add(
         var.set_hold_connection_while_docked(config[CONF_HOLD_CONNECTION_WHILE_DOCKED])
     )
-    cg.add(var.set_expose_dev_sensors(config[CONF_EXPOSE_DEV_SENSORS]))
+    if config[CONF_CLOUD_RECEIVER]:
+        cg.add_define("USE_OCLEAN_CLOUD_RECEIVER")
+        cg.add(var.set_cloud_receiver_enabled(True))
+        cg.add(var.set_cloud_drop_future_enabled(config[CONF_CLOUD_DROP_FUTURE]))
+    if (weather := config.get(CONF_WEATHER)) is not None:
+        # the API parts a homeassistant sensor and a homeassistant.action with
+        # capture_response would enable; json comes with the web server
+        cg.add_define("USE_OCLEAN_WEATHER")
+        cg.add_define("USE_API_HOMEASSISTANT_STATES")
+        cg.add_define("USE_API_HOMEASSISTANT_SERVICES")
+        cg.add_define("USE_API_HOMEASSISTANT_ACTION_RESPONSES")
+        cg.add_define("USE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON")
+        cg.add(var.set_weather_entity(weather))
+    if (birthday := config.get(CONF_BIRTHDAY)) is not None:
+        month, day = parse_month_day(birthday)
+        cg.add(var.set_birthday(month, day))
+    if CONF_GENDER in config or CONF_AGE in config:
+        gender = GENDERS[config.get(CONF_GENDER, DEFAULT_GENDER)]
+        cg.add(var.set_user_profile(gender, config.get(CONF_AGE, DEFAULT_AGE)))
+    cg.add(var.set_retry_unconfirmed(config[CONF_RETRY_UNCONFIRMED]))
+    if config[CONF_WIFI_PROVISIONING]:
+        cg.add_define("USE_OCLEAN_BLUFI")
+        blufi_ssid, blufi_password = resolve_blufi_wifi(
+            config.get(CONF_WIFI_SSID),
+            config.get(CONF_WIFI_PASSWORD),
+            CORE.config.get("wifi"),
+        )
+        cg.add(var.set_blufi_ssid(blufi_ssid))
+        cg.add(var.set_blufi_password(blufi_password))
+    cg.add(var.set_model(config[CONF_MODEL]))
+    cg.add(var.set_read_only(config[CONF_READ_ONLY]))
     cg.add(var.set_tz_index(config[CONF_TZINDEX]))
     cg.add(var.set_auto_sync_time(config[CONF_AUTO_SYNC_TIME]))
     cg.add(
