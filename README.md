@@ -14,6 +14,8 @@ hardware, and other models of the family on untested profiles (see
 **Hardware**). One component instance ("hub") per brush; several hubs run on a
 single ESP32 with their first polls staggered so the radio is not contended.
 
+![Coverage card of an X Pro Elite (8 zones) and an X Ultra 20 (12 zones)](https://raw.githubusercontent.com/dzikus/esphome-oclean/main/docs/coverage-cards.png)
+
 The component reads battery, dock/charge state, device settings and the
 brushing sessions, and writes back the brush's controls: brushing mode
 (including custom programs), area reminder, raise-to-wake, display language and
