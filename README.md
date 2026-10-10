@@ -8,20 +8,31 @@
 
 <a href="https://www.buymeacoffee.com/dzikus" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
-ESPHome external component that exposes an **Oclean** BLE electric
-toothbrush to Home Assistant. One component instance ("hub") per brush; several
-hubs run on a single ESP32 with their first polls staggered so the radio is not
-contended.
+ESPHome external component that exposes **Oclean** BLE electric toothbrushes
+to Home Assistant: the **X Pro Elite** and the **X Ultra 20**, both verified on
+hardware, and other models of the family on untested profiles (see
+**Hardware**). One component instance ("hub") per brush; several hubs run on a
+single ESP32 with their first polls staggered so the radio is not contended.
 
-The component reads battery, dock/charge state, device settings and the buffered
-brushing sessions, and writes back a small set of controls: brushing mode
-(including custom programs), over-pressure alert, raise-to-wake, brush-head
-time limit, brush-head counter reset, display language, clock.
+The component reads battery, dock/charge state, device settings and the
+brushing sessions, and writes back the brush's controls: brushing mode
+(including custom programs), area reminder, raise-to-wake, display language and
+clock on both brushes, plus the over-pressure alert, brush pause, brush mode,
+brush-head time limit and counter reset on the X Pro Elite, and the voice
+prompts, auto mode, holiday reminder and voice teaching on the X Ultra 20.
+
+On the X Ultra 20 the node also stands in for the Oclean cloud
+(`cloud_receiver`): the brush uploads each session to it over Wi-Fi, the only
+way to the score, the seconds brushed in each of its 12 zones and its pressure
+log, none of which BLE carries. From the yaml the hub keeps the brush on your
+Wi-Fi (BluFi) and sets its birthday greeting; the node answers the brush's
+clock and fills its weather page from a Home Assistant weather entity.
 
 It connects only to poll and then disconnects (connect-poll-disconnect), so it
 does not hold the brush's BLE radio open and keeps brush battery drain low. The
 brush buffers sessions internally and never streams while brushing; the
-component downloads the records after the fact.
+component reads the records after the fact, over BLE or, on the X Ultra 20,
+from the brush's upload.
 
 The document is split in two:
 
@@ -93,7 +104,7 @@ because ESPHome creates entities at build time, so it comes from the hub's
 | Line | Model id (DIS 0x2A24) | Profile | Status |
 |---|---|---|---|
 | X / X Pro / Pro Elite | `OCLEANY3`, `OCLEANY3M*`, `OCLEANY3P*` | TYPE1 | X Pro Elite verified on hardware with `OCLEANY3P` firmware 1.0.0.30 and `OCLEANY3PD` firmware 1.0.0.31; other models and firmware versions untested |
-| X Ultra 20 | `OCLEANV20*` | TYPE_V20 | status, settings, the clock and the setting writes verified on hardware (firmware 0.0.2.1). The brush never streams its sessions: each poll reads the oldest stored one, without score or zones (see **Session stream and record**). The program, voice-teaching and retail-mode writes follow the firmware image and are not yet tried on the brush |
+| X Ultra 20 | `OCLEANV20*` | TYPE_V20 | verified on hardware with firmware 0.0.2.1: status, settings, the clock, the setting, program and voice-teaching writes, the session receiver (score, 12 zone times, pressure), Wi-Fi over BluFi, the cloud host, the weather page and the birthday greeting. Over BLE the brush never streams its sessions: each poll reads the oldest stored one, without score or zones (see **Session stream and record**). The retail-mode write is acked, but the mode did not come on with the brush docked |
 | X Pro 20, X Ultra (first generation) | `OCLEANX20`, `OCLEANV1*` | TYPE_V20_FAMILY | untested; captures from both show the X Ultra 20 reply shapes. Use `model: x_ultra_20`. The store is never cleared, so only its oldest session shows up |
 | Z1 | `OCLEANY5` | TYPE_Z1 | untested (needs a capture to freeze the record layout) |
 | other / new firmware | unmatched | UNKNOWN fallback | battery + status only |
@@ -496,8 +507,9 @@ the node only through another address (a NAT on a router) is not supported.
 On X Ultra 20 firmware the brushing score and the full per-session record never
 come over BLE; the brush only uploads them to its cloud host. `cloud_receiver:
 true` stands in for that cloud: it takes the brush's `UploadBrushRecord`, decodes
-the record, and publishes the same session entities a BLE download would (score,
-durations, timestamp). A record is routed to the hub whose brush MAC matches the
+the record, and publishes it as the session entities (score, durations,
+timestamp, the 12 zone times, over-pressure time and max pressure) and the
+session event. A record is routed to the hub whose brush MAC matches the
 upload, so several hubs on one node share it.
 
 It does not start its own HTTP server. It registers a handler on the shared
@@ -1103,11 +1115,10 @@ pre-commit.
 | Constraint | Effect / workaround |
 |---|---|
 | Passive advertisements carry no data | Only name / MAC / RSSI; even battery needs an active GATT connection, hence connect-poll-disconnect. |
-| The brush does not stream while brushing | Sessions are buffered and downloaded after the fact; expect them at the next poll, or press Poll now. |
+| The brush does not stream while brushing | Sessions are buffered and downloaded after the fact; expect them at the next poll, or press Poll now. The X Ultra 20 uploads each session once it joins Wi-Fi after brushing (`cloud_receiver`). |
 | One BLE central at a time | The official app cannot connect while the component holds the link. Use the `bluetooth` switch to release it. |
 | Session timestamps use the brush clock | Drift shifts session times; `auto_sync_time` (with a `time_id`) keeps the clock within `sync_drift_threshold`. |
 | Write No Response is dropped | All writes go out as Write With Response. |
-| Some toggle opcodes are rejected by firmware | Fill brush and auto mode read back fine but their writes return an error stub; they are exposed as binary sensors, not switches. |
 | The brush intensity level (display button) has no BLE representation | It can be neither read nor written; no entity exists for it. |
 | Holding the link drains the brush | `hold_connection_while_docked` only ever holds while docked (charging, so no drain); off the dock the component always disconnects after each poll. On by default. |
 
