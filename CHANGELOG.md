@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.0.0 (2026-10-10)
 
 - The X Ultra 20 is fully supported without the Oclean app and without the
   Oclean cloud. The node joins it to Wi-Fi over BluFi, receives every session
