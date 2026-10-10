@@ -226,9 +226,9 @@ static constexpr size_t SESSION_V20_MAX_BYTES = size_t(SESSION_V20_MAX_RECORDS) 
 static constexpr size_t SESSION_V20_TZ_OFFSET = 19;
 // Seconds brushed per zone, low byte only: the back teeth 0-7 at [20-27] (left
 // 0-3, right 4-7, upper pair first, as on the X Pro Elite), the front teeth 8-11
-// at [32-35] (upper pair first). Only in a full record, never the count=0
-// inline. Firmware 0.0.1.6 fills [20] and [32-35] alone and leaves 0xFF in
-// [21-27].
+// at [32-35] (upper pair first); every pair is outer surface, inner surface.
+// Only in a full record, never the count=0 inline. Firmware 0.0.1.6 fills [20]
+// and [32-35] alone and leaves 0xFF in [21-27].
 static constexpr size_t SESSION_V20_ZONES_OFFSET = 20;
 static constexpr size_t SESSION_V20_SCORE_OFFSET = 28;
 static constexpr size_t SESSION_V20_FRONT_ZONES_OFFSET = 32;

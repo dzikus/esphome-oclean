@@ -78,7 +78,7 @@ const SURFACES = [
 
 // 12 zones: each arch splits into the back teeth of either side (premolars and
 // molars, 5 a side) and the 6 front teeth (canine to canine) across the
-// midline. Even zones are drawn on the outer cell, as on the X Pro Elite.
+// midline. Even zones are the outer surface on both brushes.
 const TOOTH_DEG = 90 / TEETH_PER_QUADRANT;
 const BACK_DEG = 5 * TOOTH_DEG;
 const SURFACES_12 = [

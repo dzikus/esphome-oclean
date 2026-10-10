@@ -84,7 +84,8 @@
   on the node's web server and publishes them as the session entities: score,
   durations, timestamp and, from the full record, the seconds brushed in each
   of the brush's 12 zones (`zone_time_1` .. `zone_time_12`: the back teeth in
-  the `gesture_zone` order, then the upper and lower front teeth), the
+  the `gesture_zone` order, then the upper and lower front teeth, each pair
+  outer surface first), the
   over-pressure time (force over 400, where the brush halves the motor) and the
   max pressure from the record's force log. BLE never carries the score on
   this firmware. An upload goes to the

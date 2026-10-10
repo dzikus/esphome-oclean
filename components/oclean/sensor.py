@@ -229,8 +229,8 @@ SENSORS = [
         for i in range(8)
     ],
     # X Ultra 20 seconds per zone: 1-8 the back teeth in the gesture zone order,
-    # 9-10 the upper front teeth, 11-12 the lower ones. Same names as the gesture
-    # zones, which this model does not build.
+    # 9-10 the upper front teeth, 11-12 the lower ones, outer surface first in
+    # each pair. Same names as the gesture zones, which this model does not build.
     *[
         (
             f"zone_time_{i + 1}",
