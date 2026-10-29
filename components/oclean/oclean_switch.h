@@ -65,7 +65,7 @@ class OcleanBleSwitch : public switch_::Switch, public Parented<OcleanHub>, publ
   void setup() override {
     bool const state = this->get_initial_state_with_restore_mode().value_or(true);
     this->publish_state(state);
-    this->defer([this, state]() { this->parent_->set_ble_user_enabled(state); });
+    this->defer([this, state] { this->parent_->set_ble_user_enabled(state); });
   }
 
  protected:

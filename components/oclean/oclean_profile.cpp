@@ -11,14 +11,18 @@ static const uint8_t TYPE1_DOWNLOAD_BYTES[] = {0x03, 0x07};
 
 static const ProfileCmd TYPE1_QUERY_CMDS[] = {
     {.bytes = TYPE1_STATUS_BYTES, .len = sizeof(TYPE1_STATUS_BYTES), .target = WriteTarget::TX_MAIN, .name = "STATUS"},
-    {.bytes = TYPE1_SETTINGS_BYTES,
-     .len = sizeof(TYPE1_SETTINGS_BYTES),
-     .target = WriteTarget::TX_MAIN,
-     .name = "SETTINGS"},
-    {.bytes = TYPE1_DOWNLOAD_BYTES,
-     .len = sizeof(TYPE1_DOWNLOAD_BYTES),
-     .target = WriteTarget::TX_SESSION,
-     .name = "SESSION_DOWNLOAD"},
+    {
+        .bytes = TYPE1_SETTINGS_BYTES,
+        .len = sizeof(TYPE1_SETTINGS_BYTES),
+        .target = WriteTarget::TX_MAIN,
+        .name = "SETTINGS",
+    },
+    {
+        .bytes = TYPE1_DOWNLOAD_BYTES,
+        .len = sizeof(TYPE1_DOWNLOAD_BYTES),
+        .target = WriteTarget::TX_SESSION,
+        .name = "SESSION_DOWNLOAD",
+    },
 };
 
 // === X Ultra 20 query sequence ===
@@ -32,27 +36,37 @@ static const uint8_t V20_WIFI_CONFIG_BYTES[] = {0x02, 0x34};
 
 static const ProfileCmd V20_QUERY_CMDS[] = {
     {.bytes = TYPE1_STATUS_BYTES, .len = sizeof(TYPE1_STATUS_BYTES), .target = WriteTarget::TX_MAIN, .name = "STATUS"},
-    {.bytes = TYPE1_SETTINGS_BYTES,
-     .len = sizeof(TYPE1_SETTINGS_BYTES),
-     .target = WriteTarget::TX_MAIN,
-     .name = "SETTINGS"},
-    {.bytes = TYPE1_DOWNLOAD_BYTES,
-     .len = sizeof(TYPE1_DOWNLOAD_BYTES),
-     .target = WriteTarget::TX_SESSION,
-     .name = "SESSION_DOWNLOAD"},
+    {
+        .bytes = TYPE1_SETTINGS_BYTES,
+        .len = sizeof(TYPE1_SETTINGS_BYTES),
+        .target = WriteTarget::TX_MAIN,
+        .name = "SETTINGS",
+    },
+    {
+        .bytes = TYPE1_DOWNLOAD_BYTES,
+        .len = sizeof(TYPE1_DOWNLOAD_BYTES),
+        .target = WriteTarget::TX_SESSION,
+        .name = "SESSION_DOWNLOAD",
+    },
     {.bytes = V20_RUNNING_BYTES, .len = sizeof(V20_RUNNING_BYTES), .target = WriteTarget::TX_MAIN, .name = "RUNNING"},
-    {.bytes = V20_AREA_GUIDANCE_BYTES,
-     .len = sizeof(V20_AREA_GUIDANCE_BYTES),
-     .target = WriteTarget::TX_MAIN,
-     .name = "AREA_GUIDANCE"},
-    {.bytes = V20_DEMO_MODE_BYTES,
-     .len = sizeof(V20_DEMO_MODE_BYTES),
-     .target = WriteTarget::TX_MAIN,
-     .name = "DEMO_MODE"},
-    {.bytes = V20_WIFI_CONFIG_BYTES,
-     .len = sizeof(V20_WIFI_CONFIG_BYTES),
-     .target = WriteTarget::TX_MAIN,
-     .name = "WIFI_CONFIG"},
+    {
+        .bytes = V20_AREA_GUIDANCE_BYTES,
+        .len = sizeof(V20_AREA_GUIDANCE_BYTES),
+        .target = WriteTarget::TX_MAIN,
+        .name = "AREA_GUIDANCE",
+    },
+    {
+        .bytes = V20_DEMO_MODE_BYTES,
+        .len = sizeof(V20_DEMO_MODE_BYTES),
+        .target = WriteTarget::TX_MAIN,
+        .name = "DEMO_MODE",
+    },
+    {
+        .bytes = V20_WIFI_CONFIG_BYTES,
+        .len = sizeof(V20_WIFI_CONFIG_BYTES),
+        .target = WriteTarget::TX_MAIN,
+        .name = "WIFI_CONFIG",
+    },
 };
 
 // 0233 and 0211 have no read-back. 0206 moves the brush off the mode picked on
@@ -83,10 +97,12 @@ static const uint8_t V20_WRITE_OPCODES[][2] = {
 static const uint8_t UNKNOWN_STATUS_BYTES[] = {0x03, 0x03};
 
 static const ProfileCmd UNKNOWN_QUERY_CMDS[] = {
-    {.bytes = UNKNOWN_STATUS_BYTES,
-     .len = sizeof(UNKNOWN_STATUS_BYTES),
-     .target = WriteTarget::TX_MAIN,
-     .name = "STATUS"},
+    {
+        .bytes = UNKNOWN_STATUS_BYTES,
+        .len = sizeof(UNKNOWN_STATUS_BYTES),
+        .target = WriteTarget::TX_MAIN,
+        .name = "STATUS",
+    },
 };
 
 const OcleanProfile PROFILE_TYPE1 = {
@@ -246,7 +262,7 @@ static const size_t PROFILE_TABLE_SIZE = sizeof(PROFILE_TABLE) / sizeof(PROFILE_
 const OcleanProfile *profile_for_model(const char *model, size_t len) {
   if (model == nullptr || len == 0)
     return &PROFILE_UNKNOWN;
-  for (auto i : PROFILE_TABLE) {
+  for (auto const i : PROFILE_TABLE) {
     size_t const plen = strlen(i.prefix);
     if (len < plen)
       continue;
