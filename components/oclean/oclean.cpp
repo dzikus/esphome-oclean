@@ -75,10 +75,12 @@ void OcleanHub::setup() {
     PersistedSessionV2 old{};
     if (old_pref.load(&old) && old.magic == PERSISTED_SESSION_MAGIC &&
         (old.version == PERSISTED_SESSION_VERSION_V1 || old.version == PERSISTED_SESSION_VERSION_V2)) {
-      last = {.magic = PERSISTED_SESSION_MAGIC,
-              .version = old.version,
-              .partial = old.partial,
-              .record = session_record_from_v2(old.record)};
+      last = {
+          .magic = PERSISTED_SESSION_MAGIC,
+          .version = old.version,
+          .partial = old.partial,
+          .record = session_record_from_v2(old.record),
+      };
       loaded = true;
     }
   }
@@ -119,14 +121,14 @@ void OcleanHub::setup() {
   if (this->weather_enabled()) {
     this->subscribe_homeassistant_state(&OcleanHub::weather_on_state_, this->weather_entity_);
     this->subscribe_homeassistant_state(&OcleanHub::weather_on_temperature_, this->weather_entity_, "temperature");
-    this->set_interval("weather_tick", 10000, [this]() { this->weather_tick_(); });
+    this->set_interval("weather_tick", 10000, [this] { this->weather_tick_(); });
   }
 #endif
 #endif
   // BLEClient sets up later (AFTER_BLUETOOTH) and leaves itself enabled, so a
   // plain set_enabled(false) here is overridden and the client auto-connects at
   // boot, outside any poll cycle.
-  this->defer([this]() {
+  this->defer([this] {
     if (this->state_ == State::IDLE && this->parent_ != nullptr) {
       this->parent_->set_enabled(false);
     }
@@ -149,7 +151,7 @@ void OcleanHub::dump_config() {
     ESP_LOGCONFIG(TAG, "  Weather: %s", this->weather_entity_.c_str());
 #endif
   // whether, not which: the values are personal
-  auto confirmed = [this](SyncSlot slot) {
+  auto const confirmed = [this](SyncSlot slot) {
     return this->value_confirmed_(slot) ? "confirmed by the brush" : "not confirmed yet";
   };
   bool keeps = this->birthday_month_ != BIRTHDAY_UNSET;
@@ -280,7 +282,7 @@ void OcleanHub::update() {
       // re-defer a hub that has been running for weeks
       this->boot_stagger_done_ = true;
       ESP_LOGI(TAG, "[%s] first poll deferred %ums (boot stagger)", this->parent_->address_str(), (unsigned)d.defer_ms);
-      this->set_timeout("boot_stagger", d.defer_ms, [this]() { this->update(); });
+      this->set_timeout("boot_stagger", d.defer_ms, [this] { this->update(); });
       return;
     case PollAction::SKIP_NOT_DUE:
       ESP_LOGV(TAG, "[%s] poll skipped (off-dock, battery interval not due)", this->parent_->address_str());
@@ -324,7 +326,7 @@ void OcleanHub::begin_connect_cycle_(bool stamp_cadence) {
 }
 
 void OcleanHub::start_watchdog_() {
-  this->set_timeout("poll_watchdog", WHOLE_POLL_TIMEOUT_MS, [this]() {
+  this->set_timeout("poll_watchdog", WHOLE_POLL_TIMEOUT_MS, [this] {
     if (this->state_ == State::IDLE)
       return;
     // out of range or asleep otherwise reads in HA like "nothing changed"
@@ -450,7 +452,7 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
       // Settle before issuing reads; some firmware drops early requests. By
       // now every handle is cached, so the callback only reads and never looks
       // characteristics up again.
-      this->set_timeout("settle", POST_CONNECT_SETTLE_MS, [this]() {
+      this->set_timeout("settle", POST_CONNECT_SETTLE_MS, [this] {
         if (this->node_state != espbt::ClientState::ESTABLISHED)
           return;
         this->set_state_(State::POLLING);
@@ -502,7 +504,7 @@ void OcleanHub::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t ga
       }
       this->cccd_writes_pending_--;
       if (this->cccd_writes_pending_ == 0)
-        this->set_timeout("notify_reg_wait", QUERY_STAGGER_MS, [this]() { this->start_query_round_(); });
+        this->set_timeout("notify_reg_wait", QUERY_STAGGER_MS, [this] { this->start_query_round_(); });
       break;
     }
     case ESP_GATTC_READ_CHAR_EVT: {
@@ -582,12 +584,12 @@ void OcleanHub::resolve_handles_() {
   static const auto TX_SESSION = espbt::ESPBTUUID::from_raw(SEND_BRUSH_CMD_UUID);
   static const auto TX_MAIN = espbt::ESPBTUUID::from_raw(WRITE_CHAR_UUID);
 
-  auto resolve16 = [this](uint16_t svc, uint16_t chr) -> uint16_t {
-    auto *c = this->parent_->get_characteristic(svc, chr);
+  auto const resolve16 = [this](uint16_t svc, uint16_t chr) -> uint16_t {
+    const auto *c = this->parent_->get_characteristic(svc, chr);
     return c == nullptr ? 0 : c->handle;
   };
-  auto resolve_full = [this](const espbt::ESPBTUUID &chr) -> uint16_t {
-    auto *c = this->parent_->get_characteristic(oclean_service_uuid(), chr);
+  auto const resolve_full = [this](const espbt::ESPBTUUID &chr) -> uint16_t {
+    const auto *c = this->parent_->get_characteristic(oclean_service_uuid(), chr);
     return c == nullptr ? 0 : c->handle;
   };
 
@@ -649,7 +651,7 @@ uint16_t OcleanHub::lookup_cccd_(uint16_t char_handle) {
 
 bool OcleanHub::write_cccd_(uint16_t cccd_handle) {
   uint8_t notify_on[] = {0x01, 0x00};
-  auto status =
+  auto const status =
       esp_ble_gattc_write_char_descr(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), cccd_handle,
                                      sizeof(notify_on), notify_on, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
   if (status != ESP_OK) {
@@ -661,7 +663,7 @@ bool OcleanHub::write_cccd_(uint16_t cccd_handle) {
 
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
 void OcleanHub::dump_gatt_map_() {
-  auto uuid_text = [](const esp_bt_uuid_t &u) {
+  auto const uuid_text = [](const esp_bt_uuid_t &u) {
     return ble_uuid_text(reinterpret_cast<const uint8_t *>(&u.uuid), u.len);
   };
   for (uint16_t s = 0;; s++) {
@@ -729,7 +731,7 @@ void OcleanHub::begin_queries_() {
     this->start_query_round_();
     return;
   }
-  this->set_timeout("notify_reg_wait", NOTIFY_REG_TIMEOUT_MS, [this]() {
+  this->set_timeout("notify_reg_wait", NOTIFY_REG_TIMEOUT_MS, [this] {
     ESP_LOGW(TAG, "[%s] %u CCCD write(s) unconfirmed, querying anyway", this->parent_->address_str(),
              (unsigned)this->cccd_writes_pending_);
     this->start_query_round_();
@@ -758,8 +760,8 @@ bool OcleanHub::read_handle_(uint16_t handle, const char *name) {
     ESP_LOGD(TAG, "[%s] no handle for %s, skipping read", this->parent_->address_str(), name);
     return false;
   }
-  auto status = esp_ble_gattc_read_char(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), handle,
-                                        ESP_GATT_AUTH_REQ_NONE);
+  auto const status = esp_ble_gattc_read_char(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), handle,
+                                              ESP_GATT_AUTH_REQ_NONE);
   if (status != ESP_OK) {
     ESP_LOGW(TAG, "[%s] read %s failed status=%d", this->parent_->address_str(), name, status);
     return false;
@@ -772,7 +774,7 @@ bool OcleanHub::register_notify_handle_(uint16_t handle, const char *name) {
     ESP_LOGD(TAG, "[%s] notify char %s not found, skipping", this->parent_->address_str(), name);
     return false;
   }
-  auto status =
+  auto const status =
       esp_ble_gattc_register_for_notify(this->parent_->get_gattc_if(), this->parent_->get_remote_bda(), handle);
   if (status != ESP_OK) {
     ESP_LOGD(TAG, "[%s] register_for_notify %s failed status=%d", this->parent_->address_str(), name, status);
@@ -802,8 +804,9 @@ bool OcleanHub::write_raw_(uint16_t handle, const uint8_t *bytes, size_t len, co
   }
   ESP_LOGI(TAG, "[%s] write %s -> %s", this->parent_->address_str(), name, format_hex_pretty(bytes, len).c_str());
   // Write With Response is mandatory; the device drops Write No Response.
-  auto status = esp_ble_gattc_write_char(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), handle, len,
-                                         const_cast<uint8_t *>(bytes), ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+  auto const status =
+      esp_ble_gattc_write_char(this->parent_->get_gattc_if(), this->parent_->get_conn_id(), handle, len,
+                               const_cast<uint8_t *>(bytes), ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
   if (status != ESP_OK) {
     ESP_LOGW(TAG, "[%s] write %s failed status=%d", this->parent_->address_str(), name, status);
     return false;
@@ -1049,7 +1052,7 @@ uint32_t OcleanHub::flush_pending_writes_() {
   for (size_t i = 0; i < this->round_writes_.size(); i++) {
     // Nameless timeout: these are fire-once and must not cancel one another, so
     // they cannot share a name.
-    this->set_timeout(offset, [this, write_handle, gen, i]() {
+    this->set_timeout(offset, [this, write_handle, gen, i] {
       if (gen != this->round_write_gen_ || i >= this->round_writes_.size())
         return;
       const PendingWrite &pw = this->round_writes_[i];
@@ -1201,7 +1204,7 @@ void OcleanHub::schedule_next_session_publish_() {
   // Publish one queued backfill record per loop iteration. Spacing past the API
   // batch delay guarantees each record's entity states flush (landing their own
   // recorder row) before the next record overwrites them.
-  this->set_timeout("session_publish", SESSION_PUBLISH_STAGGER_MS, [this]() {
+  this->set_timeout("session_publish", SESSION_PUBLISH_STAGGER_MS, [this] {
     if (this->pending_session_publish_.empty())
       return;
     SessionRecord const rec = this->pending_session_publish_.front();
@@ -1391,7 +1394,11 @@ void OcleanHub::ingest_session_records_(const std::vector<SessionRecord> &record
     // this a reboot blanks the session entities until the next brushing.
     if (plan.persist_newest) {
       PersistedSession const ps{
-          .magic = PERSISTED_SESSION_MAGIC, .version = PERSISTED_SESSION_VERSION, .partial = 0, .record = r};
+          .magic = PERSISTED_SESSION_MAGIC,
+          .version = PERSISTED_SESSION_VERSION,
+          .partial = 0,
+          .record = r,
+      };
       this->session_last_pref_.save(&ps);
       this->newest_record_epoch_ = plan.new_newest_epoch;
     }
@@ -1419,7 +1426,7 @@ void OcleanHub::ingest_session_records_(const std::vector<SessionRecord> &record
   // brush-areas enrichment push (021f), which the device sends after the stream
   // only when fresh sessions are present, then disconnect.
   this->cancel_timeout("capture_hold");
-  this->set_timeout("enrichment_wait", ENRICHMENT_WAIT_MS, [this]() {
+  this->set_timeout("enrichment_wait", ENRICHMENT_WAIT_MS, [this] {
     ESP_LOGI(TAG, "[%s] enrichment window ended", this->parent_->address_str());
     // maybe_finish_poll_ may have already torn the link down by now. Only act
     // if the link is still up, to avoid a spurious second teardown.
@@ -1449,10 +1456,12 @@ void OcleanHub::ingest_inline_session_(const SessionRecord &inl) {
   // the entities move only forward: the oldest stored record can predate the
   // session they show
   if (plan.persist_newest) {
-    PersistedSession const ps{.magic = PERSISTED_SESSION_MAGIC,
-                              .version = PERSISTED_SESSION_VERSION,
-                              .partial = static_cast<uint8_t>(detail),
-                              .record = inl};
+    PersistedSession const ps{
+        .magic = PERSISTED_SESSION_MAGIC,
+        .version = PERSISTED_SESSION_VERSION,
+        .partial = static_cast<uint8_t>(detail),
+        .record = inl,
+    };
     this->session_last_pref_.save(&ps);
     this->newest_record_epoch_ = plan.new_newest_epoch;
     this->publish_session_record_(inl, detail);
@@ -1799,14 +1808,14 @@ bool OcleanHub::handle_write_refusal_(const uint8_t *data, size_t len) {
   if (!is_write_refusal(data, len))
     return false;
   auto &writes = this->round_writes_;
-  auto it = std::ranges::find_if(writes, [data](const PendingWrite &pw) {
+  auto const it = std::ranges::find_if(writes, [data](const PendingWrite &pw) {
     return !pw.settled && pw.bytes.size() >= 2 && pw.bytes[0] == data[0] && pw.bytes[1] == data[1];
   });
   if (it == writes.end()) {
     ESP_LOGW(TAG, "[%s] write %02X%02X refused while brushing", this->parent_->address_str(), data[0], data[1]);
     return true;
   }
-  auto first = static_cast<size_t>(it - writes.begin());
+  auto const first = static_cast<size_t>(it - writes.begin());
   size_t last = first;
   // a program split over 0206 and 020B goes again as a pair
   if (data[1] == 0x06 && first + 1 < writes.size() && writes[first + 1].bytes.size() >= 2 &&
@@ -1817,10 +1826,12 @@ bool OcleanHub::handle_write_refusal_(const uint8_t *data, size_t len) {
   for (size_t i = first; i <= last; i++) {
     writes[i].settled = true;
     if (retry) {
-      this->pending_writes_.push_back(PendingWrite{.bytes = writes[i].bytes,
-                                                   .name = writes[i].name,
-                                                   .retries = static_cast<uint8_t>(writes[i].retries + 1),
-                                                   .settled = false});
+      this->pending_writes_.push_back(PendingWrite{
+          .bytes = writes[i].bytes,
+          .name = writes[i].name,
+          .retries = static_cast<uint8_t>(writes[i].retries + 1),
+          .settled = false,
+      });
     }
   }
   if (retry) {
@@ -1903,7 +1914,7 @@ bool OcleanHub::value_confirmed_(SyncSlot slot) const {
 }
 
 void OcleanHub::publish_written_() {
-  auto publish = [this](binary_sensor::BinarySensor *s, SyncSlot slot) {
+  auto const publish = [this](binary_sensor::BinarySensor *s, SyncSlot slot) {
     uint32_t const fp = this->yaml_value_fingerprint_(slot);
     if (s != nullptr && fp != 0)
       s->publish_state(this->synced_.fp[static_cast<size_t>(slot)] == fp);
@@ -1943,7 +1954,7 @@ void OcleanHub::queue_value_sync_() {
   if (this->read_only_ || !this->ble_user_enabled_ || !kept_values_permitted(*this->profile_))
     return;
   // pushed straight into this round's queue: send_command would kick the link
-  auto queue = [this](SyncSlot slot, std::vector<uint8_t> bytes, const char *name) {
+  auto const queue = [this](SyncSlot slot, std::vector<uint8_t> bytes, const char *name) {
     auto const i = static_cast<size_t>(slot);
     uint32_t const fp = this->yaml_value_fingerprint_(slot);
     if (!this->sync_due_(slot, fp))
@@ -2214,7 +2225,7 @@ void OcleanHub::weather_request_forecast_() {
   req.wants_response = true;
   api::global_api_server->send_homeassistant_action(req);
   this->weather_waiting_ = true;
-  this->set_timeout("weather_wait", WEATHER_REPLY_TIMEOUT_MS, [this]() {
+  this->set_timeout("weather_wait", WEATHER_REPLY_TIMEOUT_MS, [this] {
     this->weather_waiting_ = false;
     this->weather_next_ask_ms_ = millis() + WEATHER_REFUSED_RETRY_MS;
     if (!this->weather_refusal_warned_) {
@@ -2294,7 +2305,11 @@ void OcleanHub::ingest_cloud_record_(const SessionRecord &rec) {
   if (plan.have_newest && plan.persist_newest) {
     const SessionRecord &r = plan.newest;
     PersistedSession const ps{
-        .magic = PERSISTED_SESSION_MAGIC, .version = PERSISTED_SESSION_VERSION, .partial = 0, .record = r};
+        .magic = PERSISTED_SESSION_MAGIC,
+        .version = PERSISTED_SESSION_VERSION,
+        .partial = 0,
+        .record = r,
+    };
     this->session_last_pref_.save(&ps);
     this->newest_record_epoch_ = plan.new_newest_epoch;
     this->publish_session_record_(r, SessionDetail::FULL);
@@ -2351,21 +2366,21 @@ void OcleanHub::start_blufi_provision_() {
   // Distinct literal timer names: the scheduler keys const char* by pointer.
   uint32_t const base = QUERY_STAGGER_MS;
   uint32_t const step = PENDING_WRITE_STAGGER_MS;
-  this->set_timeout("blufi0", base, [this]() {
+  this->set_timeout("blufi0", base, [this] {
     if (this->state_ != State::POLLING)
       return;
     const uint8_t sec = 0x00;
     this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_SET_SEC_MODE, &sec, 1, this->blufi_seq_++),
                              "blufi set-sec");
   });
-  this->set_timeout("blufi1", base + step, [this]() {
+  this->set_timeout("blufi1", base + step, [this] {
     if (this->state_ != State::POLLING)
       return;
     const uint8_t opmode = BLUFI_OPMODE_STA;
     this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_SET_OPMODE, &opmode, 1, this->blufi_seq_++),
                              "blufi set-opmode");
   });
-  this->set_timeout("blufi2", base + (2 * step), [this]() {
+  this->set_timeout("blufi2", base + (2 * step), [this] {
     if (this->state_ != State::POLLING)
       return;
     this->write_blufi_frame_(
@@ -2373,7 +2388,7 @@ void OcleanHub::start_blufi_provision_() {
                           this->blufi_ssid_.size(), this->blufi_seq_++),
         "blufi ssid");
   });
-  this->set_timeout("blufi3", base + (3 * step), [this]() {
+  this->set_timeout("blufi3", base + (3 * step), [this] {
     if (this->state_ != State::POLLING)
       return;
     this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_DATA, BLUFI_DATA_PASSWORD,
@@ -2381,20 +2396,20 @@ void OcleanHub::start_blufi_provision_() {
                                                this->blufi_password_.size(), this->blufi_seq_++),
                              "blufi password", true);
   });
-  this->set_timeout("blufi4", base + (4 * step), [this]() {
+  this->set_timeout("blufi4", base + (4 * step), [this] {
     if (this->state_ != State::POLLING)
       return;
     this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_CONNECT_AP, nullptr, 0, this->blufi_seq_++),
                              "blufi connect");
   });
   // give the brush ~2 s to attempt the join, then ask for a status report
-  this->set_timeout("blufi5", base + (4 * step) + 2000, [this]() {
+  this->set_timeout("blufi5", base + (4 * step) + 2000, [this] {
     if (this->state_ != State::POLLING)
       return;
     this->write_blufi_frame_(build_blufi_frame(BLUFI_TYPE_CTRL, BLUFI_CTRL_GET_STATUS, nullptr, 0, this->blufi_seq_++),
                              "blufi get-status");
   });
-  this->set_timeout("capture_hold", base + (4 * step) + 2000 + CAPTURE_HOLD_MS, [this]() {
+  this->set_timeout("capture_hold", base + (4 * step) + 2000 + CAPTURE_HOLD_MS, [this] {
     ESP_LOGI(TAG, "[%s] BluFi provisioning window ended", this->parent_->address_str());
     this->end_query_window_("blufi provisioning done");
   });
@@ -2415,9 +2430,9 @@ bool OcleanHub::write_blufi_frame_(const std::vector<uint8_t> &frame, const char
     ESP_LOGI(TAG, "[%s] %s -> %s", this->parent_->address_str(), name,
              format_hex_pretty(frame.data(), frame.size()).c_str());
   }
-  auto status = esp_ble_gattc_write_char(this->parent_->get_gattc_if(), this->parent_->get_conn_id(),
-                                         this->blufi_write_handle_, frame.size(), const_cast<uint8_t *>(frame.data()),
-                                         ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+  auto const status = esp_ble_gattc_write_char(
+      this->parent_->get_gattc_if(), this->parent_->get_conn_id(), this->blufi_write_handle_, frame.size(),
+      const_cast<uint8_t *>(frame.data()), ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
   if (status != ESP_OK) {
     ESP_LOGW(TAG, "[%s] %s write failed status=%d", this->parent_->address_str(), name, status);
     return false;
@@ -2471,7 +2486,7 @@ void OcleanHub::set_custom_scheme_param(uint8_t kind, uint8_t index, uint8_t val
     return;
   // Debounce: slider edits fire one control() per step, but only the final
   // program needs to reach the brush.
-  this->set_timeout("custom-scheme-resend", CUSTOM_SCHEME_DEBOUNCE_MS, [this]() {
+  this->set_timeout("custom-scheme-resend", CUSTOM_SCHEME_DEBOUNCE_MS, [this] {
     if (this->scheme_select_ != nullptr && this->scheme_select_->custom_active())
       this->scheme_select_->send_custom_program();
   });
@@ -2564,8 +2579,9 @@ void OcleanHub::query_device_(bool capture_mode) {
   // The scheduler keys const char* timeouts by pointer identity, so a reused
   // buffer would make every query cancel the previous one and leave only the
   // last running. String literals have distinct stable addresses.
-  static const char *const QUERY_TIMERS[] = {"query0", "query1", "query2", "query3",
-                                             "query4", "query5", "query6", "query7"};
+  static const char *const QUERY_TIMERS[] = {
+      "query0", "query1", "query2", "query3", "query4", "query5", "query6", "query7",
+  };
   const uint8_t query_timer_count = sizeof(QUERY_TIMERS) / sizeof(QUERY_TIMERS[0]);
   const OcleanProfile *prof = this->profile_;
   for (uint8_t i = 0; i < prof->query_cmd_count; i++) {
@@ -2583,7 +2599,7 @@ void OcleanHub::query_device_(bool capture_mode) {
     uint8_t const len = qc.len;
     const char *wname = qc.name;
     const char *tname = QUERY_TIMERS[i];
-    this->set_timeout(tname, base + (uint32_t(i) * QUERY_STAGGER_MS), [this, handle, bytes, len, wname]() {
+    this->set_timeout(tname, base + (uint32_t(i) * QUERY_STAGGER_MS), [this, handle, bytes, len, wname] {
       // Skip the query if the watchdog tore the link down
       // before it fired.
       if (this->state_ != State::POLLING)
@@ -2594,7 +2610,7 @@ void OcleanHub::query_device_(bool capture_mode) {
   // Capture mode only extends the hold below; every read query above already
   // runs on a normal poll. The longer window catches late or pushed responses.
   uint32_t const hold_ms = capture_mode ? CAPTURE_HOLD_MS : POLL_QUERY_HOLD_MS;
-  this->set_timeout("capture_hold", base + hold_ms, [this]() {
+  this->set_timeout("capture_hold", base + hold_ms, [this] {
     ESP_LOGI(TAG, "[%s] query window ended", this->parent_->address_str());
     this->end_query_window_("query window ended");
   });
@@ -2605,13 +2621,13 @@ void OcleanHub::end_query_window_(const char *reason) {
     // read the new clock back on this link, so the clock entities do not wait a
     // whole poll interval for it; the round stays open until then
     this->settings_asm_.reset();
-    this->set_timeout("clock_readback", QUERY_STAGGER_MS, [this]() {
+    this->set_timeout("clock_readback", QUERY_STAGGER_MS, [this] {
       const ProfileCmd *q = settings_query(*this->profile_);
       if (this->state_ != State::POLLING || q == nullptr)
         return;
       this->write_raw_(this->tx_handle_(q->target), q->bytes, q->len, q->name);
     });
-    this->set_timeout("capture_hold", CLOCK_READBACK_MS, [this, reason]() {
+    this->set_timeout("capture_hold", CLOCK_READBACK_MS, [this, reason] {
       this->capture_active_ = false;
       if (this->state_ != State::IDLE && this->state_ != State::DISCONNECTING)
         this->finish_or_hold_(reason);
@@ -2655,7 +2671,7 @@ void OcleanHub::enter_hold_() {
   this->last_poll_ms_ = millis();
   // Re-query on the live link one charging interval out. Cancelled on every exit.
   this->clear_hold_();
-  this->set_timeout("hold_requery", this->charging_interval_ms_, [this]() { this->held_requery_(); });
+  this->set_timeout("hold_requery", this->charging_interval_ms_, [this] { this->held_requery_(); });
 }
 
 void OcleanHub::held_requery_() {
@@ -2669,7 +2685,7 @@ void OcleanHub::held_requery_() {
   ESP_LOGI(TAG, "[%s] held re-query", this->parent_->address_str());
   // Re-arm a watchdog for this round only: if the re-query hangs, disconnect and
   // fall back to the normal cadence rather than leave a zombie held link.
-  this->set_timeout("poll_watchdog", WHOLE_POLL_TIMEOUT_MS, [this]() {
+  this->set_timeout("poll_watchdog", WHOLE_POLL_TIMEOUT_MS, [this] {
     ESP_LOGW(TAG, "[%s] held re-query timed out, leaving held mode", this->parent_->address_str());
     // a brush that goes quiet on a held link is what this warning is for
     this->status_set_warning("held re-query timed out");

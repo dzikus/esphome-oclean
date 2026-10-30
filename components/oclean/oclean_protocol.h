@@ -360,7 +360,7 @@ static constexpr uint32_t SESSION_PUBLISH_STAGGER_MS = 1500;
 
 // === Decode helpers ===
 inline uint16_t u16be(const uint8_t *buf) {
-  return (uint16_t(buf[0]) << 8) | uint16_t(buf[1]);
+  return uint16_t((uint32_t(buf[0]) << 8) | uint32_t(buf[1]));
 }
 
 // one byte, 0-100; a longer buffer is tolerated and only the first byte read

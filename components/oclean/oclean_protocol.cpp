@@ -70,7 +70,7 @@ std::string ble_uuid_text(const uint8_t *le, size_t len) {
     return "?";
   char buf[12];
   if (len == 2) {
-    snprintf(buf, sizeof(buf), "0x%04X", static_cast<unsigned>(le[0] | (le[1] << 8)));
+    snprintf(buf, sizeof(buf), "0x%04X", static_cast<unsigned>(le[0] | (static_cast<unsigned>(le[1]) << 8)));
     return buf;
   }
   if (len == 4) {
@@ -579,7 +579,7 @@ bool SessionAssembler::feed(const uint8_t *data, size_t len) {
       failed_ = true;
       return false;
     }
-    count_ = (uint16_t(data[5]) << 8) | data[6];
+    count_ = uint16_t((uint32_t(data[5]) << 8) | data[6]);
     if (count_ == 0 || count_ > SESSION_MAX_RECORDS) {
       failed_ = true;
       return false;
@@ -976,7 +976,7 @@ bool cloud_host_matches(std::string_view host_header, std::string_view url) {
 
 std::vector<uint8_t> build_blufi_frame(uint8_t frame_type, uint8_t subtype, const uint8_t *data, size_t data_len,
                                        uint8_t seq) {
-  uint8_t const type_byte = static_cast<uint8_t>(((subtype & 0x3F) << 2) | (frame_type & 0x03));
+  uint8_t const type_byte = static_cast<uint8_t>(((subtype & 0x3FU) << 2) | (frame_type & 0x03U));
   // one-byte length field; the provisioning payloads (ssid, password) fit
   size_t const n = data_len > 255 ? 255 : data_len;
   std::vector<uint8_t> f = {type_byte, 0x00, seq, static_cast<uint8_t>(n)};
@@ -988,7 +988,7 @@ bool parse_blufi_wifi_status(const uint8_t *data, size_t len, uint8_t *opmode, u
   if (data == nullptr || opmode == nullptr || sta_state == nullptr || len < 6)
     return false;
   uint8_t const frame_type = data[0] & 0x03;
-  uint8_t const subtype = static_cast<uint8_t>((data[0] >> 2) & 0x3F);
+  uint8_t const subtype = static_cast<uint8_t>(data[0] >> 2);
   if (frame_type != BLUFI_TYPE_DATA || subtype != BLUFI_DATA_WIFI_STATUS)
     return false;
   // data field starts after the 4-byte header: [opmode][sta_state] ...
@@ -1001,7 +1001,7 @@ uint32_t sync_fingerprint(uint64_t mac, SyncSlot slot, const uint8_t *payload, s
   static constexpr uint32_t FNV_OFFSET = 2166136261U;
   static constexpr uint32_t FNV_PRIME = 16777619U;
   uint32_t h = FNV_OFFSET;
-  auto mix = [&h](uint8_t b) {
+  auto const mix = [&h](uint8_t b) {
     h ^= b;
     h *= FNV_PRIME;
   };
@@ -1083,7 +1083,7 @@ bool parse_hex_bytes(std::string_view hex, std::vector<uint8_t> *out) {
     int const lo = hex_nibble(hex[i + 1]);
     if (hi < 0 || lo < 0)
       return false;
-    out->push_back(static_cast<uint8_t>((hi << 4) | lo));
+    out->push_back(static_cast<uint8_t>((hi * 16) + lo));
   }
   return true;
 }
@@ -1099,7 +1099,7 @@ bool parse_mac_u64(std::string_view mac, uint64_t *out) {
       return false;
     int const lo = (i + 1 < mac.size()) ? hex_nibble(mac[i + 1]) : -1;
     // one or two hex digits per octet
-    uint8_t const byte = (lo >= 0) ? static_cast<uint8_t>((hi << 4) | lo) : static_cast<uint8_t>(hi);
+    uint8_t const byte = (lo >= 0) ? static_cast<uint8_t>((hi * 16) + lo) : static_cast<uint8_t>(hi);
     i += (lo >= 0) ? 2 : 1;
     acc = (acc << 8) | byte;
     if (++octets > 6)
