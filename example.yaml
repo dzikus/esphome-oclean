@@ -11,8 +11,8 @@
 
 esphome:
   name: oclean-example
-  # Component requires ESPHome 2026.6.0 or newer (sensitive config options).
-  min_version: 2026.6.0
+  # Component requires ESPHome 2026.11.0 or newer.
+  min_version: 2026.11.0
 
 esp32:
   board: esp32dev
