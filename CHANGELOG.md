@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.1.0 (2026-11-24)
 
 - The ESPHome floor is now 2026.11.0. ESPHome 2026.11 requires a `relation` on
   every entry under `esphome: devices:` and 2026.10 rejects that key, so one
