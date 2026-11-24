@@ -20,6 +20,7 @@
 
 #ifdef USE_ESP32
 
+#include "esphome/core/alloc_helpers.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #ifdef USE_NETWORK
