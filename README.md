@@ -188,8 +188,8 @@ the same catch: on selects the teaching program, off selects screen mode 5.
 ### Minimum config
 
 This component uses the ESPHome sub-device API and current entity APIs, so it
-needs **ESPHome 2026.6.0 or newer**. Pin it with
-`esphome: { min_version: 2026.6.0 }` so an older install fails fast instead of
+needs **ESPHome 2026.11.0 or newer**. Pin it with
+`esphome: { min_version: 2026.11.0 }` so an older install fails fast instead of
 erroring deep in code generation.
 
 Replace the MAC with the brush's MAC (any BLE scanner shows it while the brush
@@ -589,15 +589,22 @@ defaults. If you do not set `name`, the default in the tables above is used.
 ### Two brushes on one ESP32
 
 Two `ble_client` entries and two `oclean` hubs. Use `device_id` to put each
-brush's entities under a separate sub-device in HA:
+brush's entities under a separate sub-device in HA. ESPHome 2026.11 requires a
+`relation` on every device, and the component works the same with either value:
+`via` keeps each brush a device of its own, linked to the node, as in earlier
+releases; `child` (Home Assistant 2026.11+) makes it a part of the node, which
+follows the node's area unless it has its own and is targeted together with the
+node:
 
 ```yaml
 esphome:
   devices:
     - id: dev_brush_a
       name: "Oclean A"
+      relation: via
     - id: dev_brush_b
       name: "Oclean B"
+      relation: via
 
 ble_client:
   - id: ble_a

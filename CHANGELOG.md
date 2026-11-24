@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.1.0 (2026-11-24)
+
+- The ESPHome floor is now 2026.11.0. ESPHome 2026.11 requires a `relation` on
+  every entry under `esphome: devices:` and 2026.10 rejects that key, so one
+  yaml cannot serve both. `relation: via` keeps each brush a device of its own
+  as before; `child` makes it a part of the node in Home Assistant 2026.11+.
+- Builds on ESPHome 2026.11, where `helpers.h` no longer pulls in
+  `format_hex_pretty` and `str_sprintf` and the Home Assistant action request
+  behind the X Ultra 20 `weather` option takes `ProgmemStringRef` fields.
+
 ## v2.0.0 (2026-10-10)
 
 - The X Ultra 20 is fully supported without the Oclean app and without the

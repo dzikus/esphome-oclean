@@ -20,6 +20,7 @@
 
 #ifdef USE_ESP32
 
+#include "esphome/core/alloc_helpers.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #ifdef USE_NETWORK
@@ -2213,14 +2214,14 @@ void OcleanHub::weather_request_forecast_() {
     this->weather_callback_armed_ = true;
   }
   api::HomeassistantActionRequest req;
-  req.service = StringRef("weather.get_forecasts");
+  req.service = ProgmemStringRef::from_lit("weather.get_forecasts");
   req.data.init(2);
   auto &entity = req.data.emplace_back();
-  entity.key = StringRef("entity_id");
-  entity.value = StringRef(this->weather_entity_);
+  entity.key = ProgmemStringRef::from_lit("entity_id");
+  entity.value = ProgmemStringRef(StringRef(this->weather_entity_));
   auto &type = req.data.emplace_back();
-  type.key = StringRef("type");
-  type.value = StringRef("daily");
+  type.key = ProgmemStringRef::from_lit("type");
+  type.value = ProgmemStringRef::from_lit("daily");
   req.call_id = WEATHER_CALL_ID;
   req.wants_response = true;
   api::global_api_server->send_homeassistant_action(req);
